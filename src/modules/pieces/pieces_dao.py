@@ -80,6 +80,7 @@ def piece_to_dict(piece: Piece) -> dict:
         "currency": piece.currency,
         "dimensions": piece.dimensions,
         "shippingRegion": piece.shipping_region,
+        "location": piece.location,
         "yearCreated": piece.year_created,
         "framingMounting": piece.framing_mounting,
         "provenance": piece.provenance,

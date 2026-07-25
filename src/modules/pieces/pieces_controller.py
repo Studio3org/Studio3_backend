@@ -64,6 +64,7 @@ def create():
             currency=body.get("currency", "USD"),
             dimensions=body.get("dimensions"),
             shipping_region=body.get("shippingRegion"),
+            location=body.get("location"),
             year_created=body.get("yearCreated"),
             framing_mounting=body.get("framingMounting"),
             provenance=body.get("provenance"),
@@ -121,6 +122,7 @@ def patch(piece_id: str):
         for attr, key in [
             ("title", "title"), ("caption", "caption"), ("medium", "medium"),
             ("alt_text", "altText"), ("shipping_region", "shippingRegion"),
+            ("location", "location"),
             ("year_created", "yearCreated"), ("framing_mounting", "framingMounting"),
             ("provenance", "provenance"), ("handling_notes", "handlingNotes"),
         ]:

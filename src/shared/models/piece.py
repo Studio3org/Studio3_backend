@@ -31,6 +31,7 @@ class Piece(Base):
     currency = Column(String(3), default="USD", nullable=False)
     dimensions = Column(JSONB, nullable=True)
     shipping_region = Column(String(64), nullable=True)
+    location = Column(String(255), nullable=True)
     year_created = Column(Integer, nullable=True)
     framing_mounting = Column(Text, nullable=True)
     provenance = Column(Text, nullable=True)

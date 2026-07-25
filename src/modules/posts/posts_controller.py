@@ -50,6 +50,7 @@ def create():
             media_url=media_url,
             media_type=media_type,
             caption=body.get("caption"),
+            location=body.get("location"),
             is_process=bool(is_process),
             linked_piece_id=linked_uuid,
             status="live",
@@ -101,6 +102,8 @@ def patch(post_id: str):
             raise AppError("Post not found.", 404)
         if "caption" in body:
             post.caption = body["caption"]
+        if "location" in body:
+            post.location = body["location"]
         if "linkedPieceId" in body:
             if body["linkedPieceId"]:
                 piece = get_piece(db, uuid.UUID(body["linkedPieceId"]))

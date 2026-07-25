@@ -20,6 +20,7 @@ class Post(Base):
     media_url = Column(String(1024), nullable=False)
     media_type = Column(String(32), nullable=False)
     caption = Column(Text, nullable=True)
+    location = Column(String(255), nullable=True)
     is_process = Column(Boolean, default=True, nullable=False)
     linked_piece_id = Column(UUID(as_uuid=True), ForeignKey("pieces.id", ondelete="SET NULL"), nullable=True, index=True)
     status = Column(String(32), default="live", nullable=False)
