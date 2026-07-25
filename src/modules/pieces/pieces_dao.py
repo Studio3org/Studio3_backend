@@ -23,21 +23,28 @@ def get_piece(db: Session, piece_id: uuid.UUID) -> Optional[Piece]:
     ).scalar_one_or_none()
 
 
-def list_user_pieces(db: Session, user_id: uuid.UUID, for_sale_only: bool = False) -> list[Piece]:
-    q = select(Piece).where(Piece.user_id == user_id, Piece.deleted_at.is_(None), Piece.status != "draft")
+def list_user_pieces(
+    db: Session,
+    user_id: uuid.UUID,
+    for_sale_only: bool = False,
+    include_drafts: bool = False,
+) -> list[Piece]:
+    q = select(Piece).where(Piece.user_id == user_id, Piece.deleted_at.is_(None))
+    if not include_drafts:
+        q = q.where(Piece.status != "draft")
     if for_sale_only:
         q = q.where(Piece.is_for_sale == True, Piece.status == "live")
     return list(db.execute(q.order_by(Piece.created_at.desc())).scalars().all())
 
 
-def count_user_pieces(db: Session, user_id: uuid.UUID) -> int:
-    return db.execute(
-        select(func.count(Piece.id)).where(
-            Piece.user_id == user_id,
-            Piece.deleted_at.is_(None),
-            Piece.status != "draft",
-        )
-    ).scalar_one()
+def count_user_pieces(db: Session, user_id: uuid.UUID, include_drafts: bool = False) -> int:
+    q = select(func.count(Piece.id)).where(
+        Piece.user_id == user_id,
+        Piece.deleted_at.is_(None),
+    )
+    if not include_drafts:
+        q = q.where(Piece.status != "draft")
+    return db.execute(q).scalar_one()
 
 
 def list_saved_pieces(db: Session, user_id: uuid.UUID) -> list[Piece]:

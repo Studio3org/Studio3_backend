@@ -57,7 +57,7 @@ def create():
             thumbnail_url=body.get("thumbnailUrl"),
             is_process=bool(is_process),
             linked_piece_id=linked_uuid,
-            status="live",
+            status="draft" if body.get("status") == "draft" else "live",
         )
         return post_to_dict(post), 201
     finally:
@@ -108,6 +108,8 @@ def patch(post_id: str):
             post.caption = body["caption"]
         if "location" in body:
             post.location = body["location"]
+        if "status" in body:
+            post.status = body["status"]
         if "linkedPieceId" in body:
             if body["linkedPieceId"]:
                 piece = get_piece(db, uuid.UUID(body["linkedPieceId"]))
@@ -145,7 +147,7 @@ def list_for_user(username: str):
         viewer_id = uuid.UUID(g.user["id"]) if getattr(g, "user", None) else None
         if not social_dao.can_view_content(db, user, viewer_id):
             raise AppError("This account is private.", 403)
-        posts = list_user_posts(db, user.id)
+        posts = list_user_posts(db, user.id, include_drafts=viewer_id == user.id)
         return [post_to_dict(p) for p in posts], 200
     finally:
         db.close()

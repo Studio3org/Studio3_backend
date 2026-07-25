@@ -89,6 +89,7 @@ def seed(data: dict) -> None:
                     media_url=piece_data["mediaUrl"],
                     media_type="image",
                     caption=piece_data["caption"],
+                    medium=account["medium"],
                     materials=account["materials"],
                     style_tags=account["styleTags"],
                     is_for_sale=piece_data["isForSale"],

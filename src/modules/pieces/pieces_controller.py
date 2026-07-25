@@ -72,7 +72,7 @@ def create():
             framing_mounting=body.get("framingMounting"),
             provenance=body.get("provenance"),
             handling_notes=body.get("handlingNotes"),
-            status="live",
+            status="draft" if body.get("status") == "draft" else "live",
         )
         return piece_to_dict(piece), 201
     finally:
@@ -173,7 +173,12 @@ def list_for_user(username: str, for_sale_only: bool = False):
         viewer_id = uuid.UUID(g.user["id"]) if getattr(g, "user", None) else None
         if not social_dao.can_view_content(db, user, viewer_id):
             raise AppError("This account is private.", 403)
-        pieces = list_user_pieces(db, user.id, for_sale_only=for_sale_only)
+        pieces = list_user_pieces(
+            db,
+            user.id,
+            for_sale_only=for_sale_only,
+            include_drafts=viewer_id == user.id,
+        )
         return [piece_to_dict(p) for p in pieces], 200
     finally:
         db.close()

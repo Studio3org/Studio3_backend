@@ -23,11 +23,18 @@ def get_post(db: Session, post_id: uuid.UUID) -> Optional[Post]:
     ).scalar_one_or_none()
 
 
-def list_user_posts(db: Session, user_id: uuid.UUID) -> list[Post]:
+def list_user_posts(
+    db: Session, user_id: uuid.UUID, include_drafts: bool = False
+) -> list[Post]:
+    statuses = ["live", "draft"] if include_drafts else ["live"]
     return list(
         db.execute(
             select(Post)
-            .where(Post.user_id == user_id, Post.deleted_at.is_(None), Post.status == "live")
+            .where(
+                Post.user_id == user_id,
+                Post.deleted_at.is_(None),
+                Post.status.in_(statuses),
+            )
             .order_by(Post.created_at.desc())
         ).scalars().all()
     )
