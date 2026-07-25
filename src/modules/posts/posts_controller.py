@@ -52,6 +52,7 @@ def create():
             caption=body.get("caption"),
             location=body.get("location"),
             media_aspect_ratio=body.get("mediaAspectRatio"),
+            thumbnail_url=body.get("thumbnailUrl"),
             is_process=bool(is_process),
             linked_piece_id=linked_uuid,
             status="live",

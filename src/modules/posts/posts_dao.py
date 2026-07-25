@@ -72,6 +72,7 @@ def post_to_dict(post: Post) -> dict:
         "caption": post.caption,
         "location": post.location,
         "mediaAspectRatio": post.media_aspect_ratio,
+        "thumbnailUrl": post.thumbnail_url,
         "isProcess": post.is_process,
         "linkedPieceId": str(post.linked_piece_id) if post.linked_piece_id else None,
         "status": post.status,
