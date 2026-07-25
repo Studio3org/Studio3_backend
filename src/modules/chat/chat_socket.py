@@ -163,3 +163,28 @@ def on_message_send(data):
 
     emit("message:new", payload, room=_conversation_room(conversation_id))
     emit("message:new", payload, room=_user_room(str(other_id)))
+
+
+def _target_room(target_type: str, target_id: str) -> str:
+    return f"target:{target_type}:{target_id}"
+
+
+@socketio.on("target:join")
+def on_target_join(data):
+    """Join a post/piece room to receive live `comment:new` events."""
+    user_id = _authenticate()
+    target_type = (data or {}).get("targetType")
+    target_id = (data or {}).get("targetId")
+    if not user_id or not target_type or not target_id:
+        return
+    if target_type not in ("post", "piece"):
+        return
+    join_room(_target_room(target_type, str(target_id)))
+
+
+@socketio.on("target:leave")
+def on_target_leave(data):
+    target_type = (data or {}).get("targetType")
+    target_id = (data or {}).get("targetId")
+    if target_type and target_id:
+        leave_room(_target_room(target_type, str(target_id)))

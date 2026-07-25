@@ -38,6 +38,14 @@ def search_users():
     return _ok("OK", data, status)
 
 
+@chat_bp.get("/unread-count")
+@auth_required
+@async_handler
+def unread_count():
+    data, status = chat_controller.unread_count()
+    return _ok("OK", data, status)
+
+
 @chat_bp.get("/with/<username>")
 @auth_required
 @async_handler

@@ -27,6 +27,16 @@ def _broadcast_new_message(conversation_id, recipient_id, message_dict):
     socketio.emit("message:new", payload, room=f"user:{recipient_id}")
 
 
+def _broadcast_conversation_read(conversation_id, reader_id, other_id, read_at):
+    payload = {
+        "conversationId": str(conversation_id),
+        "readerId": str(reader_id),
+        "readAt": read_at.isoformat(),
+    }
+    socketio.emit("conversation:read", payload, room=f"conversation:{conversation_id}")
+    socketio.emit("conversation:read", payload, room=f"user:{other_id}")
+
+
 def _encode_cursor(created_at, item_id) -> str:
     raw = f"{created_at.isoformat()}|{item_id}"
     return base64.urlsafe_b64encode(raw.encode()).decode()
@@ -85,9 +95,10 @@ def find_with_user(username: str):
             last_msg[0].body[:140] if last_msg and last_msg[0].body
             else ("Photo" if last_msg and last_msg[0].image_url else None)
         )
+        last_sender = last_msg[0].sender_id if last_msg else None
         return {
             "conversation": chat_dao.conversation_to_inbox_dict(
-                existing, me_id, other, preview
+                existing, me_id, other, preview, last_sender_id=last_sender
             )
         }, 200
     finally:
@@ -113,7 +124,12 @@ def list_inbox():
                 last_msg[0].body[:140] if last_msg and last_msg[0].body
                 else ("Photo" if last_msg and last_msg[0].image_url else None)
             )
-            items.append(chat_dao.conversation_to_inbox_dict(conversation, me_id, other_user, preview))
+            last_sender = last_msg[0].sender_id if last_msg else None
+            items.append(
+                chat_dao.conversation_to_inbox_dict(
+                    conversation, me_id, other_user, preview, last_sender_id=last_sender
+                )
+            )
         next_cursor = (
             _encode_cursor(conversations[-1].last_message_at, conversations[-1].id)
             if has_more and conversations
@@ -143,7 +159,12 @@ def list_requests():
                 last_msg[0].body[:140] if last_msg and last_msg[0].body
                 else ("Photo" if last_msg and last_msg[0].image_url else None)
             )
-            items.append(chat_dao.conversation_to_inbox_dict(conversation, me_id, other_user, preview))
+            last_sender = last_msg[0].sender_id if last_msg else None
+            items.append(
+                chat_dao.conversation_to_inbox_dict(
+                    conversation, me_id, other_user, preview, last_sender_id=last_sender
+                )
+            )
         next_cursor = (
             _encode_cursor(conversations[-1].last_message_at, conversations[-1].id)
             if has_more and conversations
@@ -172,12 +193,14 @@ def get_thread(conversation_id: str):
             senders = {u.id: u for u in db.execute(select(User).where(User.id.in_(sender_ids))).scalars()}
         items = [chat_dao.message_to_dict(m, senders.get(m.sender_id)) for m in messages]
         next_cursor = messages[-1].created_at.isoformat() if has_more and messages else None
-        chat_dao.mark_read(db, conversation, me_id)
+        read_at = chat_dao.mark_read(db, conversation, me_id)
         other_id = chat_dao.other_participant_id(conversation, me_id)
+        _broadcast_conversation_read(conversation.id, me_id, other_id, read_at)
         other_user = get_user_by_id(db, other_id)
         other_party = None
+        other_read = chat_dao.other_party_read_at(conversation, me_id)
         if other_user:
-            from src.modules.pieces.pieces_dao import list_user_pieces
+            from src.modules.pieces.pieces_dao import count_user_pieces
 
             other_party = {
                 "id": str(other_user.id),
@@ -185,15 +208,25 @@ def get_thread(conversation_id: str):
                 "name": other_user.name,
                 "profilePhotoUrl": other_user.image,
                 "followersCount": social_dao.count_followers(db, other_user.id),
-                "piecesCount": len(list_user_pieces(db, other_user.id)),
+                "piecesCount": count_user_pieces(db, other_user.id),
                 "isFollowing": social_dao.user_follows(db, me_id, other_user.id),
             }
         return {
             "id": str(conversation.id),
             "otherParty": other_party,
+            "otherPartyReadAt": other_read.isoformat() if other_read else None,
             "status": conversation.status,
             "messages": {"items": items, "nextCursor": next_cursor},
         }, 200
+    finally:
+        db.close()
+
+
+def unread_count():
+    db = SessionLocal()
+    try:
+        me_id = uuid.UUID(g.user["id"])
+        return {"count": chat_dao.count_unread_inbox(db, me_id)}, 200
     finally:
         db.close()
 
@@ -324,7 +357,9 @@ def mark_read(conversation_id: str):
         me_id = uuid.UUID(g.user["id"])
         conversation = chat_dao.get_conversation(db, uuid.UUID(conversation_id))
         _require_participant(conversation, me_id)
-        chat_dao.mark_read(db, conversation, me_id)
-        return {"read": True}, 200
+        read_at = chat_dao.mark_read(db, conversation, me_id)
+        other_id = chat_dao.other_participant_id(conversation, me_id)
+        _broadcast_conversation_read(conversation.id, me_id, other_id, read_at)
+        return {"read": True, "readAt": read_at.isoformat()}, 200
     finally:
         db.close()

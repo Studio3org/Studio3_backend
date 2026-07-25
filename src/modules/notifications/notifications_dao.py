@@ -10,6 +10,10 @@ from src.shared.models.notification import Notification
 from src.shared.models.user import User
 from src.shared.notification.push_service import send_push
 
+# Activity types that belong in the Notifications tab. Chat DMs (`message`) are
+# excluded — they surface as phone push + Chats unread badge only (Instagram-style).
+_ACTIVITY_FEED_EXCLUDED_TYPES = ("message",)
+
 
 def create_notification(
     db: Session,
@@ -56,6 +60,19 @@ def create_and_push(
     push_prefs = (recipient.notification_preferences or {}).get("push", {}) if recipient else {}
     if push_prefs.get(type, True):
         send_push(user_id, title, body, data=push_data)
+    # Live in-app activity (not for DMs — those use push_only).
+    if type not in _ACTIVITY_FEED_EXCLUDED_TYPES:
+        try:
+            from src.shared.realtime.socketio_instance import socketio
+
+            actor = db.get(User, actor_id) if actor_id else None
+            socketio.emit(
+                "notification:new",
+                notification_to_dict(notification, actor),
+                room=f"user:{user_id}",
+            )
+        except Exception:
+            pass
     return notification
 
 
@@ -76,11 +93,6 @@ def push_only(
     push_prefs = (recipient.notification_preferences or {}).get("push", {}) if recipient else {}
     if push_prefs.get(type, True):
         send_push(user_id, title, body, data=push_data)
-
-
-# Activity types that belong in the Notifications tab. Chat DMs (`message`) are
-# excluded — they surface as phone push + Chats unread badge only (Instagram-style).
-_ACTIVITY_FEED_EXCLUDED_TYPES = ("message",)
 
 
 def list_notifications(

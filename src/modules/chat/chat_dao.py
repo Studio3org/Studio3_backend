@@ -129,7 +129,8 @@ def create_message(
         id=uuid.uuid4(), conversation_id=conversation.id, sender_id=sender_id, body=body, image_url=image_url
     )
     db.add(message)
-    conversation.last_message_at = utc_now()
+    db.flush()  # assign created_at before aligning last_message_at
+    conversation.last_message_at = message.created_at
     db.commit()
     db.refresh(message)
     return message
@@ -146,16 +147,31 @@ def list_messages(
     )
 
 
-def mark_read(db: Session, conversation: Conversation, reader_id: uuid.UUID) -> None:
+def mark_read(db: Session, conversation: Conversation, reader_id: uuid.UUID) -> datetime:
+    """Mark conversation read for reader; returns the new read_at timestamp."""
     now = utc_now()
     if conversation.participant_one_id == reader_id:
         conversation.participant_one_read_at = now
     elif conversation.participant_two_id == reader_id:
         conversation.participant_two_read_at = now
     db.commit()
+    return now
 
 
-def is_unread_for(conversation: Conversation, viewer_id: uuid.UUID) -> bool:
+def other_party_read_at(conversation: Conversation, viewer_id: uuid.UUID) -> Optional[datetime]:
+    if conversation.participant_one_id == viewer_id:
+        return conversation.participant_two_read_at
+    return conversation.participant_one_read_at
+
+
+def is_unread_for(
+    conversation: Conversation,
+    viewer_id: uuid.UUID,
+    last_sender_id: Optional[uuid.UUID] = None,
+) -> bool:
+    """Unread only when the latest message is from the other party and newer than my read_at."""
+    if last_sender_id is not None and last_sender_id == viewer_id:
+        return False
     my_read_at = (
         conversation.participant_one_read_at
         if conversation.participant_one_id == viewer_id
@@ -166,9 +182,33 @@ def is_unread_for(conversation: Conversation, viewer_id: uuid.UUID) -> bool:
     return conversation.last_message_at > my_read_at
 
 
+def count_unread_inbox(db: Session, user_id: uuid.UUID) -> int:
+    """Count open conversations with unread messages from the other party."""
+    conversations = list(
+        db.execute(
+            select(Conversation).where(
+                or_(Conversation.participant_one_id == user_id, Conversation.participant_two_id == user_id),
+                Conversation.status == "open",
+            )
+        ).scalars().all()
+    )
+    total = 0
+    for conversation in conversations:
+        last = list_messages(db, conversation.id, limit=1)
+        last_sender = last[0].sender_id if last else None
+        if is_unread_for(conversation, user_id, last_sender):
+            total += 1
+    return total
+
+
 def conversation_to_inbox_dict(
-    conversation: Conversation, viewer_id: uuid.UUID, other_user: Optional[User], preview: Optional[str]
+    conversation: Conversation,
+    viewer_id: uuid.UUID,
+    other_user: Optional[User],
+    preview: Optional[str],
+    last_sender_id: Optional[uuid.UUID] = None,
 ) -> dict:
+    other_read = other_party_read_at(conversation, viewer_id)
     return {
         "id": str(conversation.id),
         "otherParty": (
@@ -183,8 +223,9 @@ def conversation_to_inbox_dict(
         ),
         "preview": preview,
         "updatedAt": conversation.last_message_at.isoformat(),
-        "unread": is_unread_for(conversation, viewer_id),
+        "unread": is_unread_for(conversation, viewer_id, last_sender_id),
         "status": conversation.status,
+        "otherPartyReadAt": other_read.isoformat() if other_read else None,
     }
 
 

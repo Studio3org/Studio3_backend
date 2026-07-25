@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
 from src.shared.models.piece import Piece
@@ -28,6 +28,16 @@ def list_user_pieces(db: Session, user_id: uuid.UUID, for_sale_only: bool = Fals
     if for_sale_only:
         q = q.where(Piece.is_for_sale == True, Piece.status == "live")
     return list(db.execute(q.order_by(Piece.created_at.desc())).scalars().all())
+
+
+def count_user_pieces(db: Session, user_id: uuid.UUID) -> int:
+    return db.execute(
+        select(func.count(Piece.id)).where(
+            Piece.user_id == user_id,
+            Piece.deleted_at.is_(None),
+            Piece.status != "draft",
+        )
+    ).scalar_one()
 
 
 def list_saved_pieces(db: Session, user_id: uuid.UUID) -> list[Piece]:

@@ -291,6 +291,7 @@ def add_comment(target_type: str, target_id: str):
         )
         db.add(comment)
         db.commit()
+        db.refresh(comment)
         owner_id = _get_target_owner_id(db, target_type, comment.target_id)
         if owner_id and owner_id != me.id:
             notifications_dao.create_and_push(
@@ -304,6 +305,19 @@ def add_comment(target_type: str, target_id: str):
                 title="New comment",
                 body=f"{me.name} commented: {text[:100]}",
             )
+        comment_dict = social_dao.comment_to_dict(comment, me)
+        comment_dict["targetType"] = target_type
+        comment_dict["targetId"] = str(comment.target_id)
+        try:
+            from src.shared.realtime.socketio_instance import socketio
+
+            socketio.emit(
+                "comment:new",
+                comment_dict,
+                room=f"target:{target_type}:{comment.target_id}",
+            )
+        except Exception:
+            pass
         return {
             "id": str(comment.id),
             "body": comment.body,
