@@ -1,0 +1,23 @@
+[Unit]
+Description=Studiothree Discover API (gunicorn gevent)
+After=network.target
+
+[Service]
+Type=simple
+User=ec2-user
+Group=ec2-user
+WorkingDirectory=/opt/studio3
+Environment=FLASK_ENV=production
+EnvironmentFile=/opt/studio3/.env.production
+ExecStartPre=/opt/studio3/.venv/bin/alembic upgrade head
+ExecStart=/opt/studio3/.venv/bin/gunicorn -k gevent -w 1 -b 127.0.0.1:9000 wsgi:app \
+  --access-logfile /opt/studio3/logs/access.log \
+  --error-logfile /opt/studio3/logs/error.log \
+  --capture-output
+Restart=always
+RestartSec=5
+# Socket.IO long-lived connections
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

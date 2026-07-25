@@ -5,6 +5,10 @@ env/
 .env
 .env.*
 !.env.example
+
+# Deploy secrets / generated infra output
+deploy/config.env
+deploy/infra-output.env
 *.pyc
 __pycache__/
 *.py[cod]
