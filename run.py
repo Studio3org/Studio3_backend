@@ -1,6 +1,5 @@
 """Entry: load env (by FLASK_ENV), connect DB + Redis, then run Flask app. Exit on connection failure."""
-# Must run before any other import (sockets/threading) — gunicorn's `-k eventlet` worker does
-# this automatically in production, but this dev entrypoint doesn't go through gunicorn.
+# Must run before any other import (sockets/threading). Production wsgi.py does the same.
 import eventlet
 eventlet.monkey_patch()
 
@@ -12,11 +11,13 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 from dotenv import load_dotenv
 
-load_dotenv(BASE_DIR / ".env")
+load_dotenv(BASE_DIR / ".env", override=False)
 env_name = os.getenv("FLASK_ENV", "development")
 env_file = BASE_DIR / f".env.{env_name}"
 if env_file.exists():
-    load_dotenv(env_file, override=True)
+    # Local only: .env.development may intentionally override shell exports.
+    # Production (wsgi.py) uses override=False so Render secrets are never wiped.
+    load_dotenv(env_file, override=(env_name != "production"))
 
 # Ensure project root on path
 sys.path.insert(0, str(BASE_DIR))

@@ -44,6 +44,14 @@ def presign_put(username: str, purpose: str, content_type: str, content_id: str 
     url = public_url(_effective_base_url(), key)
 
     if not s3_configured():
+        # Partial S3 env (e.g. bucket set on Render but keys missing) used to
+        # fall through to boto3 and blow up as a generic 500. Fail clearly.
+        if get_bucket():
+            raise AppError(
+                "Media storage is misconfigured on the server "
+                "(S3_BUCKET is set but AWS credentials are missing).",
+                503,
+            )
         # Dev fallback — PUT the bytes to this same server's local media store.
         return {
             "presignedPutUrl": url,
@@ -52,12 +60,22 @@ def presign_put(username: str, purpose: str, content_type: str, content_id: str 
             "devMode": True,
         }
 
-    client = get_s3_client()
-    presigned = client.generate_presigned_url(
-        "put_object",
-        Params={"Bucket": get_bucket(), "Key": key, "ContentType": content_type.split(";")[0].strip()},
-        ExpiresIn=3600,
-    )
+    try:
+        client = get_s3_client()
+        presigned = client.generate_presigned_url(
+            "put_object",
+            Params={
+                "Bucket": get_bucket(),
+                "Key": key,
+                "ContentType": content_type.split(";")[0].strip(),
+            },
+            ExpiresIn=3600,
+        )
+    except Exception as exc:
+        raise AppError(
+            f"Could not create upload URL: {exc}",
+            503,
+        ) from exc
     return {"presignedPutUrl": presigned, "url": url, "key": key, "devMode": False}
 
 

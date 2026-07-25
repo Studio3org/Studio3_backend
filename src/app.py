@@ -52,10 +52,25 @@ def create_app():
     socketio.init_app(app)
     from src.modules.chat import chat_socket  # noqa: F401
 
-    # Health at root
+    # Health at root — includes S3 env presence (booleans only, no secret values)
+    # so Render misconfig is visible without digging through logs.
     @app.get("/")
     def health():
-        return {"message": "Studiothree Discover API running"}, 200
+        from src.shared.storage.s3_client import s3_configured, get_bucket
+
+        return {
+            "message": "Studiothree Discover API running",
+            "s3": {
+                "configured": s3_configured(),
+                "bucketSet": bool(get_bucket()),
+                "accessKeySet": bool((os.getenv("AWS_ACCESS_KEY_ID") or "").strip()),
+                "secretKeySet": bool((os.getenv("AWS_SECRET_ACCESS_KEY") or "").strip()),
+                "publicBaseUrlSet": bool(
+                    (os.getenv("S3_PUBLIC_BASE_URL") or "").strip()
+                ),
+            },
+        }, 200
+
 
     # Global error handler (register last)
     register_error_handler(app)

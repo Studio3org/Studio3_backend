@@ -34,11 +34,15 @@ def get_logger(name: str) -> logging.Logger:
     combined_handler.setFormatter(_formatter)
     logger.addHandler(combined_handler)
 
-    # Console in development
-    if os.getenv("FLASK_ENV", "development") == "development":
-        console = logging.StreamHandler()
-        console.setLevel(logging.DEBUG)
-        console.setFormatter(_formatter)
-        logger.addHandler(console)
+    # Always log to stderr so hosts like Render surface stack traces.
+    # DEBUG on console only in development to avoid noisy prod logs.
+    console = logging.StreamHandler()
+    console.setLevel(
+        logging.DEBUG
+        if os.getenv("FLASK_ENV", "development") == "development"
+        else logging.ERROR
+    )
+    console.setFormatter(_formatter)
+    logger.addHandler(console)
 
     return logger
