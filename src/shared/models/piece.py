@@ -32,6 +32,7 @@ class Piece(Base):
     dimensions = Column(JSONB, nullable=True)
     shipping_region = Column(String(64), nullable=True)
     location = Column(String(255), nullable=True)
+    media_aspect_ratio = Column(String(8), nullable=True)
     year_created = Column(Integer, nullable=True)
     framing_mounting = Column(Text, nullable=True)
     provenance = Column(Text, nullable=True)

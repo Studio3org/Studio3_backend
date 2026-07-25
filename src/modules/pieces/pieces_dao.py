@@ -81,6 +81,7 @@ def piece_to_dict(piece: Piece) -> dict:
         "dimensions": piece.dimensions,
         "shippingRegion": piece.shipping_region,
         "location": piece.location,
+        "mediaAspectRatio": piece.media_aspect_ratio,
         "yearCreated": piece.year_created,
         "framingMounting": piece.framing_mounting,
         "provenance": piece.provenance,

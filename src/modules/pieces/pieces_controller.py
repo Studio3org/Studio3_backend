@@ -65,6 +65,7 @@ def create():
             dimensions=body.get("dimensions"),
             shipping_region=body.get("shippingRegion"),
             location=body.get("location"),
+            media_aspect_ratio=body.get("mediaAspectRatio"),
             year_created=body.get("yearCreated"),
             framing_mounting=body.get("framingMounting"),
             provenance=body.get("provenance"),
