@@ -24,5 +24,5 @@ socketio = SocketIO(
     cors_allowed_origins=os.getenv("FRONTEND_URL", "http://localhost:3000"),
     # Fans messages out across multiple gunicorn workers/instances via Redis pub/sub.
     client_manager=_client_manager,
-    async_mode="eventlet",
+    async_mode="gevent",
 )

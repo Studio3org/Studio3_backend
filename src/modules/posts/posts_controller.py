@@ -3,8 +3,10 @@ import uuid
 from typing import Optional
 
 from flask import request, g
+from sqlalchemy import select
 
 from src.shared.config.database import SessionLocal
+from src.shared.models.user import User
 from src.shared.storage.s3_service import validate_user_media_url
 from src.shared.utils.app_error import AppError
 from src.modules.auth.auth_dao import find_user_by_username
@@ -150,10 +152,39 @@ def list_for_user(username: str):
 
 
 def list_saved_for_me(user_id: uuid.UUID):
+    """Lightweight saved-posts list — batched engagement, no linked-piece N+1."""
     db = SessionLocal()
     try:
         posts = list_saved_posts(db, user_id)
-        return [enrich_post_dict(db, p, user_id) for p in posts], 200
+        if not posts:
+            return [], 200
+
+        post_ids = [p.id for p in posts]
+        like_counts = social_dao.batch_like_counts(db, "post", post_ids)
+        liked_ids = social_dao.batch_user_likes(db, "post", post_ids, user_id)
+        author_ids = {p.user_id for p in posts}
+        authors = {
+            u.id: u
+            for u in db.execute(select(User).where(User.id.in_(author_ids))).scalars()
+        } if author_ids else {}
+
+        result = []
+        for post in posts:
+            base = post_to_dict(post)
+            author = authors.get(post.user_id)
+            base["author"] = {
+                "username": author.username if author else None,
+                "name": author.name if author else None,
+                "profilePhotoUrl": author.image if author else None,
+                "isFollowing": False,
+            }
+            base["likeCount"] = like_counts.get(post.id, 0)
+            base["commentCount"] = 0
+            base["isLiked"] = post.id in liked_ids
+            base["isSaved"] = True
+            base["piece"] = None
+            result.append(base)
+        return result, 200
     finally:
         db.close()
 

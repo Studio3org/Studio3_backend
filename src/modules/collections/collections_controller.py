@@ -102,25 +102,95 @@ def delete(collection_id: str):
 
 
 def get_detail(collection_id: str):
-    from src.modules.pieces.pieces_controller import enrich_piece_dict
-    from src.modules.posts.posts_controller import enrich_post_dict
+    """Collection detail with batched engagement — avoids per-item enrich_* N+1."""
+    from sqlalchemy import select
+
+    from src.shared.models.user import User
+    from src.modules.pieces.pieces_dao import piece_to_dict
+    from src.modules.posts.posts_dao import post_to_dict
+    from src.modules.social import social_dao
 
     db = SessionLocal()
     try:
         viewer_id = uuid.UUID(g.user["id"])
         collection = _require_owned_collection(db, uuid.UUID(collection_id), viewer_id)
         items = collections_dao.list_items(db, collection.id)
+
+        piece_ids = [i.target_id for i in items if i.target_type == "piece"]
+        post_ids = [i.target_id for i in items if i.target_type == "post"]
+        pieces_by_id = {}
+        posts_by_id = {}
+        if piece_ids:
+            from src.shared.models.piece import Piece
+            pieces_by_id = {
+                p.id: p
+                for p in db.execute(
+                    select(Piece).where(Piece.id.in_(piece_ids), Piece.deleted_at.is_(None))
+                ).scalars()
+            }
+        if post_ids:
+            from src.shared.models.post import Post
+            posts_by_id = {
+                p.id: p
+                for p in db.execute(
+                    select(Post).where(Post.id.in_(post_ids), Post.deleted_at.is_(None))
+                ).scalars()
+            }
+
+        piece_like_counts = social_dao.batch_like_counts(db, "piece", list(pieces_by_id.keys()))
+        post_like_counts = social_dao.batch_like_counts(db, "post", list(posts_by_id.keys()))
+        piece_comment_counts = social_dao.batch_comment_counts(db, "piece", list(pieces_by_id.keys()))
+        post_comment_counts = social_dao.batch_comment_counts(db, "post", list(posts_by_id.keys()))
+        liked_pieces = social_dao.batch_user_likes(db, "piece", list(pieces_by_id.keys()), viewer_id)
+        liked_posts = social_dao.batch_user_likes(db, "post", list(posts_by_id.keys()), viewer_id)
+        saved_pieces = social_dao.batch_user_saves(db, "piece", list(pieces_by_id.keys()), viewer_id)
+        saved_posts = social_dao.batch_user_saves(db, "post", list(posts_by_id.keys()), viewer_id)
+
+        author_ids = {p.user_id for p in pieces_by_id.values()} | {p.user_id for p in posts_by_id.values()}
+        authors = {
+            u.id: u for u in db.execute(select(User).where(User.id.in_(author_ids))).scalars()
+        } if author_ids else {}
+        following_authors = social_dao.batch_accepted_following(db, viewer_id, list(author_ids))
+
+        def _author(user_id):
+            author = authors.get(user_id)
+            if not author:
+                return None
+            return {
+                "username": author.username,
+                "name": author.name,
+                "profilePhotoUrl": author.image,
+                "isFollowing": user_id in following_authors,
+            }
+
         enriched = []
         for item in items:
-            target = _get_target(db, item.target_type, item.target_id)
-            if not target:
-                continue
             if item.target_type == "piece":
-                target_dict = enrich_piece_dict(db, target, viewer_id)
+                target = pieces_by_id.get(item.target_id)
+                if not target:
+                    continue
+                d = piece_to_dict(target)
+                d["author"] = _author(target.user_id)
+                d["likeCount"] = piece_like_counts.get(target.id, 0)
+                d["commentCount"] = piece_comment_counts.get(target.id, 0)
+                d["isLiked"] = target.id in liked_pieces
+                d["isSaved"] = target.id in saved_pieces
+                d["series"] = None
+                d["relatedPosts"] = []
             else:
-                target_dict = enrich_post_dict(db, target, viewer_id)
-            target_dict["targetType"] = item.target_type
-            enriched.append(target_dict)
+                target = posts_by_id.get(item.target_id)
+                if not target:
+                    continue
+                d = post_to_dict(target)
+                d["author"] = _author(target.user_id)
+                d["likeCount"] = post_like_counts.get(target.id, 0)
+                d["commentCount"] = post_comment_counts.get(target.id, 0)
+                d["isLiked"] = target.id in liked_posts
+                d["isSaved"] = target.id in saved_posts
+                d["piece"] = None
+            d["targetType"] = item.target_type
+            enriched.append(d)
+
         return {
             "id": str(collection.id),
             "name": collection.name,

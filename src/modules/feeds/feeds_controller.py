@@ -61,6 +61,8 @@ def _enrich_items(db, pieces, posts, viewer_id: Optional[uuid.UUID]):
     post_ids = [p.id for p in posts]
     piece_like_counts = social_dao.batch_like_counts(db, "piece", piece_ids)
     post_like_counts = social_dao.batch_like_counts(db, "post", post_ids)
+    piece_comment_counts = social_dao.batch_comment_counts(db, "piece", piece_ids)
+    post_comment_counts = social_dao.batch_comment_counts(db, "post", post_ids)
     liked_pieces = social_dao.batch_user_likes(db, "piece", piece_ids, viewer_id)
     liked_posts = social_dao.batch_user_likes(db, "post", post_ids, viewer_id)
     saved_pieces = social_dao.batch_user_saves(db, "piece", piece_ids, viewer_id)
@@ -70,12 +72,18 @@ def _enrich_items(db, pieces, posts, viewer_id: Optional[uuid.UUID]):
     authors = {}
     if author_ids:
         authors = {u.id: u for u in db.execute(select(User).where(User.id.in_(author_ids))).scalars()}
+    following_authors = social_dao.batch_accepted_following(db, viewer_id, list(author_ids))
 
     def _author_block(user_id):
         author = authors.get(user_id)
         if not author:
             return None
-        return {"username": author.username, "name": author.name, "profilePhotoUrl": author.image}
+        return {
+            "username": author.username,
+            "name": author.name,
+            "profilePhotoUrl": author.image,
+            "isFollowing": user_id in following_authors,
+        }
 
     items = []
     for p in pieces:
@@ -83,6 +91,7 @@ def _enrich_items(db, pieces, posts, viewer_id: Optional[uuid.UUID]):
         d["type"] = "piece"
         d["author"] = _author_block(p.user_id)
         d["likeCount"] = piece_like_counts.get(p.id, 0)
+        d["commentCount"] = piece_comment_counts.get(p.id, 0)
         d["isLiked"] = p.id in liked_pieces
         d["isSaved"] = p.id in saved_pieces
         items.append((p.created_at, p.id, d))
@@ -91,6 +100,7 @@ def _enrich_items(db, pieces, posts, viewer_id: Optional[uuid.UUID]):
         d["type"] = "post"
         d["author"] = _author_block(p.user_id)
         d["likeCount"] = post_like_counts.get(p.id, 0)
+        d["commentCount"] = post_comment_counts.get(p.id, 0)
         d["isLiked"] = p.id in liked_posts
         d["isSaved"] = p.id in saved_posts
         items.append((p.created_at, p.id, d))
@@ -115,7 +125,11 @@ def following_feed():
     try:
         me = get_user_by_id(db, uuid.UUID(g.user["id"]))
         following_ids = list(
-            db.execute(select(Follow.following_id).where(Follow.follower_id == me.id)).scalars().all()
+            db.execute(
+                select(Follow.following_id).where(
+                    Follow.follower_id == me.id, Follow.status == "accepted"
+                )
+            ).scalars().all()
         )
         following_ids.append(me.id)
         piece_query = select(Piece).where(

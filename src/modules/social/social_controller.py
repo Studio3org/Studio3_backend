@@ -4,6 +4,7 @@ from datetime import datetime
 
 from flask import request, g
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from src.shared.config.database import SessionLocal
 from src.shared.models.social import Follow, Like, Comment, Save, Collection, CollectionItem
@@ -18,10 +19,24 @@ from src.modules.social import block_dao
 from src.modules.notifications import notifications_dao
 
 
-def _get_target_owner_id(db, target_type: str, target_id):
+def _get_target(db, target_type: str, target_id):
     model = Piece if target_type == "piece" else Post
     row = db.get(model, target_id)
+    if not row or getattr(row, "deleted_at", None) is not None:
+        return None
+    return row
+
+
+def _get_target_owner_id(db, target_type: str, target_id):
+    row = _get_target(db, target_type, target_id)
     return row.user_id if row else None
+
+
+def _require_target(db, target_type: str, target_id):
+    row = _get_target(db, target_type, target_id)
+    if not row:
+        raise AppError(f"{target_type.capitalize()} not found.", 404)
+    return row
 
 
 def follow(username: str):
@@ -191,28 +206,40 @@ def _toggle_like(target_type: str, target_id: str, like: bool):
     try:
         me = get_user_by_id(db, uuid.UUID(g.user["id"]))
         tid = uuid.UUID(target_id)
+        _require_target(db, target_type, tid)
         q = db.query(Like).filter_by(user_id=me.id, target_type=target_type, target_id=tid)
         if like:
             if not q.first():
-                db.add(Like(id=uuid.uuid4(), user_id=me.id, target_type=target_type, target_id=tid))
-                db.commit()
-                owner_id = _get_target_owner_id(db, target_type, tid)
-                if owner_id and owner_id != me.id:
-                    notifications_dao.create_and_push(
-                        db,
-                        user_id=owner_id,
-                        type="like",
-                        actor_id=me.id,
-                        target_type=target_type,
-                        target_id=tid,
-                        payload={"likerUsername": me.username, "likerName": me.name},
-                        title="New like",
-                        body=f"{me.name} liked your {target_type}",
-                    )
-            return {"liked": True}, 200
+                try:
+                    db.add(Like(id=uuid.uuid4(), user_id=me.id, target_type=target_type, target_id=tid))
+                    db.commit()
+                except IntegrityError:
+                    # Concurrent duplicate like — treat as already liked.
+                    db.rollback()
+                else:
+                    owner_id = _get_target_owner_id(db, target_type, tid)
+                    if owner_id and owner_id != me.id:
+                        notifications_dao.create_and_push(
+                            db,
+                            user_id=owner_id,
+                            type="like",
+                            actor_id=me.id,
+                            target_type=target_type,
+                            target_id=tid,
+                            payload={"likerUsername": me.username, "likerName": me.name},
+                            title="New like",
+                            body=f"{me.name} liked your {target_type}",
+                        )
+            return {
+                "liked": True,
+                "likeCount": social_dao.count_likes(db, target_type, tid),
+            }, 200
         q.delete()
         db.commit()
-        return {"liked": False}, 200
+        return {
+            "liked": False,
+            "likeCount": social_dao.count_likes(db, target_type, tid),
+        }, 200
     finally:
         db.close()
 
@@ -238,11 +265,22 @@ def save_target(target_type: str, target_id: str):
     try:
         me = get_user_by_id(db, uuid.UUID(g.user["id"]))
         tid = uuid.UUID(target_id)
+        _require_target(db, target_type, tid)
         existing = db.query(Save).filter_by(user_id=me.id, target_type=target_type, target_id=tid).first()
         if existing:
-            return {"saved": True}, 200
-        db.add(Save(id=uuid.uuid4(), user_id=me.id, target_type=target_type, target_id=tid))
-        db.commit()
+            return {
+                "saved": True,
+                "saveCount": social_dao.count_saves(db, target_type, tid),
+            }, 200
+        try:
+            db.add(Save(id=uuid.uuid4(), user_id=me.id, target_type=target_type, target_id=tid))
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            return {
+                "saved": True,
+                "saveCount": social_dao.count_saves(db, target_type, tid),
+            }, 200
         owner_id = _get_target_owner_id(db, target_type, tid)
         if owner_id and owner_id != me.id:
             notifications_dao.create_and_push(
@@ -256,7 +294,10 @@ def save_target(target_type: str, target_id: str):
                 title="New save",
                 body=f"{me.name} saved your {target_type}",
             )
-        return {"saved": True}, 200
+        return {
+            "saved": True,
+            "saveCount": social_dao.count_saves(db, target_type, tid),
+        }, 200
     finally:
         db.close()
 
@@ -265,11 +306,16 @@ def unsave_target(target_type: str, target_id: str):
     db = SessionLocal()
     try:
         me = get_user_by_id(db, uuid.UUID(g.user["id"]))
+        tid = uuid.UUID(target_id)
+        _require_target(db, target_type, tid)
         db.query(Save).filter_by(
-            user_id=me.id, target_type=target_type, target_id=uuid.UUID(target_id)
+            user_id=me.id, target_type=target_type, target_id=tid
         ).delete()
         db.commit()
-        return {"saved": False}, 200
+        return {
+            "saved": False,
+            "saveCount": social_dao.count_saves(db, target_type, tid),
+        }, 200
     finally:
         db.close()
 

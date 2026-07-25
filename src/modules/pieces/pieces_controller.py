@@ -3,8 +3,10 @@ import uuid
 from typing import Optional
 
 from flask import request, g
+from sqlalchemy import select
 
 from src.shared.config.database import SessionLocal
+from src.shared.models.user import User
 from src.shared.storage.s3_service import validate_user_media_url
 from src.shared.utils.app_error import AppError
 from src.modules.auth.auth_dao import find_user_by_username
@@ -178,9 +180,39 @@ def list_for_user(username: str, for_sale_only: bool = False):
 
 
 def list_saved_for_me(user_id: uuid.UUID):
+    """Lightweight saved-pieces list — batched engagement, no relatedPosts/series N+1."""
     db = SessionLocal()
     try:
         pieces = list_saved_pieces(db, user_id)
-        return [enrich_piece_dict(db, p, user_id) for p in pieces], 200
+        if not pieces:
+            return [], 200
+
+        piece_ids = [p.id for p in pieces]
+        like_counts = social_dao.batch_like_counts(db, "piece", piece_ids)
+        liked_ids = social_dao.batch_user_likes(db, "piece", piece_ids, user_id)
+        author_ids = {p.user_id for p in pieces}
+        authors = {
+            u.id: u
+            for u in db.execute(select(User).where(User.id.in_(author_ids))).scalars()
+        } if author_ids else {}
+
+        result = []
+        for piece in pieces:
+            base = piece_to_dict(piece)
+            author = authors.get(piece.user_id)
+            base["author"] = {
+                "username": author.username if author else None,
+                "name": author.name if author else None,
+                "profilePhotoUrl": author.image if author else None,
+                "isFollowing": False,
+            }
+            base["likeCount"] = like_counts.get(piece.id, 0)
+            base["commentCount"] = 0
+            base["isLiked"] = piece.id in liked_ids
+            base["isSaved"] = True
+            base["series"] = None
+            base["relatedPosts"] = []
+            result.append(base)
+        return result, 200
     finally:
         db.close()

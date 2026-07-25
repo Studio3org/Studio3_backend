@@ -5,6 +5,7 @@ Python Flask backend for **Studiothree Discover** (mobile + web). PostgreSQL (SQ
 **Documentation:** See the [`docs/`](docs/) folder:
 - [**Project setup**](docs/README.md) – prerequisites, env, DB, Redis, run, troubleshooting
 - [**API reference**](docs/API.md) – endpoints, request/response format, auth
+- [**Postman collection**](postman/Studiothree_Discover_API.postman_collection.json) – importable requests aligned with live routes
 
 ## Stack
 
@@ -12,11 +13,13 @@ Python Flask backend for **Studiothree Discover** (mobile + web). PostgreSQL (SQ
 - **SQLAlchemy 2** – engine, session, models (no Flask-SQLAlchemy)
 - **Alembic** – migrations (`alembic/`)
 - **PostgreSQL** – `psycopg2-binary`
-- **Redis** – sessions, OTP
+- **Redis** – sessions, OTP, Socket.IO pub/sub
 - **JWT** – access tokens; refresh token in httpOnly cookie
-- **boto3 / S3** – media presign uploads (images + video); dev-mode placeholder URLs when unconfigured
+- **boto3 / S3** – media presign uploads (images + video); local/dev fallback when unconfigured
+- **AWS SES** – OTP and password-reset email (skipped when `SES_FROM_EMAIL` unset)
 - **firebase-admin** – push notifications (iOS/Android/Web via FCM); skipped (fail-open) when unconfigured
-- **Gunicorn** – production WSGI
+- **Flask-SocketIO + gevent** – real-time chat
+- **Gunicorn** – production WSGI with **`-k gevent -w 1`** (required for Socket.IO)
 
 ## Env
 
@@ -24,7 +27,7 @@ Python Flask backend for **Studiothree Discover** (mobile + web). PostgreSQL (SQ
 - **`.env.development`** – when `FLASK_ENV=development`
 - **`.env.production`** – when `FLASK_ENV=production`
 
-Copy `.env.example` and set `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, `SECRET_KEY` (and SMTP / Firebase / Stripe if used — Firebase and Stripe are both optional today: push sends fail open when unconfigured, and checkout auto-confirms in dev mode until `STRIPE_SECRET_KEY` is set).
+Copy `.env.example` and set `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, `SECRET_KEY` (and SES / S3 / Firebase / Stripe if used — Firebase and Stripe are both optional today: push sends fail open when unconfigured, and checkout auto-confirms in dev mode until `STRIPE_SECRET_KEY` is set).
 
 ## Setup
 
@@ -39,28 +42,32 @@ alembic upgrade head
 ## Run
 
 - **Dev:** `FLASK_ENV=development python run.py` (or `python run.py`; default env is development)
-- **Prod:** `FLASK_ENV=production gunicorn -w 4 -b 0.0.0.0:9000 wsgi:app`
+- **Prod:** `FLASK_ENV=production gunicorn -k gevent -w 1 -b 0.0.0.0:9000 wsgi:app`
+
+Render/EC2 should use Python **3.12** (`runtime.txt`) — not 3.14 — with the gevent worker above.
 
 ## Layout
 
 ```
 project_root/
-├── run.py                 # Entry: load env, check DB+Redis, create app
-├── wsgi.py                # Gunicorn entry
+├── run.py                 # Entry: load env, check DB+Redis, create app (gevent monkey-patch)
+├── wsgi.py                # Gunicorn entry (gevent monkey-patch)
+├── runtime.txt            # Render Python version pin (3.12.x)
 ├── src/
-│   ├── app.py             # Flask app, CORS, blueprints, error handler
+│   ├── app.py             # Flask app, CORS, blueprints, Socket.IO, error handler
 │   ├── middlewares/       # error_handler, auth_middleware (JWT + Redis session)
 │   ├── shared/
 │   │   ├── config/         # database.py, redis_client.py
 │   │   ├── models/         # SQLAlchemy models: users, accounts, sessions, refresh_tokens,
 │   │   │                    # password_reset_tokens, username_history, pieces, posts,
 │   │   │                    # follows/likes/comments/saves/collections, series/series_pieces,
-│   │   │                    # notifications, devices, inquiries/inquiry_messages,
-│   │   │                    # addresses, orders/order_items
+│   │   │                    # notifications, devices, conversations/messages,
+│   │   │                    # inquiries (schema kept; API deferred), addresses, orders
+│   │   ├── realtime/       # SocketIO instance (gevent + RedisManager)
 │   │   ├── utils/          # AppError, api_response, messages, jwt_utils, logger, rate_limit, async_handler
 │   │   ├── storage/        # s3_client, s3_paths, s3_service (presign, media URL validation)
 │   │   ├── username/       # normalize, validate, allocate, claim, blocklist, suggest
-│   │   ├── notification/  # email_service, push_service (FCM)
+│   │   ├── notification/  # email_service (SES), push_service (FCM)
 │   │   └── templates/     # OTP, password-reset HTML
 │   └── modules/
 │       ├── auth/           # auth_routes, auth_controller, auth_dao, services (OTP, password_reset)
@@ -73,31 +80,35 @@ project_root/
 │       ├── feeds/           # following/explore/for-you, cursor pagination
 │       ├── series/          # series_routes, series_controller, series_dao
 │       ├── notifications/   # activity feed + read state (notifications_dao/controller/routes)
-│       ├── inquiries/        # structured piece-scoped chat threads
+│       ├── chat/            # 1:1 conversations REST + Socket.IO handlers
+│       ├── collections/     # Instagram-style saved folders
+│       ├── inquiries/       # deferred v2 — blueprint not registered (use chat)
 │       ├── addresses/        # saved address book (Zomato/Swiggy-style)
 │       ├── orders/           # checkout lifecycle, shipping quote, devMode confirm
 │       └── sessions/       # session_service (Redis), refresh_token_dao
 ├── alembic/
 │   ├── env.py
 │   ├── script.py.mako
-│   └── versions/           # 001–014; see docs/API.md for the current endpoint contract
+│   └── versions/           # through 020+; see docs/API.md for the current endpoint contract
 └── .env.development / .env.production / .env.example
 ```
 
 ## API
 
-- **Health:** `GET /` → `{ "message": "Studiothree Discover API running" }`
-- **Auth** (`/api/auth`): OTP generate/resend, register (`phone` optional), login (username or email), refresh, logout, logout-all, forget/reset password, username availability check
+- **Health:** `GET /` → `{ "message": "...", "s3": { configured, bucketSet, ... } }`
+- **Auth** (`/api/auth`): OTP generate/resend/verify, register (`phone` optional), login (username or email), refresh, logout, logout-all, forget/reset password, username availability check
 - **User** (`/api/user`): profile get/update (incl. `latitude`/`longitude`), username change, role/onboarding, seller enable/disable/status/analytics, saved pieces/scenes, device push-token register/unregister, address book CRUD, order/sales history, public profile by username
-- **Media** (`/api/media`): S3 presign (image + video)
-- **Pieces / Posts** (`/api/pieces`, `/api/posts`): create/edit/detail (enriched with author, likes, comments, series), comments GET, related posts, shipping quote, checkout (`collect`) — UI "Scenes" map to the `posts` resource
-- **Social** (`/api`): follow/unfollow (instant for public accounts; pending follow-request + accept/decline for private accounts, Instagram-style — private accounts also hide their pieces/posts/series grids from non-approved viewers), like/unlike, save/unsave, comment create — each emits a notification (+ push) to the target's owner
-- **Feeds** (`/api/feed`): following, explore, for-you — cursor-paginated
+- **Media** (`/api/media`): S3 presign (image + video); local PUT/GET fallback when S3 unset
+- **Pieces / Posts** (`/api/pieces`, `/api/posts`): create/edit/delete/detail, comments, related posts, shipping quote, checkout (`collect`) — UI "Scenes" map to the `posts` resource
+- **Social** (`/api`): follow/unfollow (instant for public accounts; pending follow-request + accept/decline for private accounts), block/unblock, like/unlike, save/unsave, comment create
+- **Feeds** (`/api/feed`): following, explore, for-you — cursor-paginated (`for-you` is currently a stub over explore)
 - **Series** (`/api/series`, `/api/users/:username/series`): group a user's pieces into a series
 - **Notifications** (`/api/notifications`): activity feed, read state, unread count
-- **Inquiries** (`/api/inquiries`): structured, piece-scoped buyer↔seller chat threads (not open DMs)
+- **Conversations** (`/api/conversations` + Socket.IO): general-purpose 1:1 DMs (Instagram-style message requests)
+- **Collections** (`/api/collections`): saved folders for pieces/scenes
 - **Orders** (`/api/orders`): checkout lifecycle (`pending_payment → paid → shipped → completed`/`cancelled`) — real payment capture (Stripe) not yet integrated; `confirm` auto-succeeds in dev mode until `STRIPE_SECRET_KEY` is set
 - **Geo discovery**: `GET /api/users/nearby` — haversine-based "sellers near me" (no PostGIS on this Postgres instance)
+- **Inquiries** (`/api/inquiries`): **deferred** — blueprint not registered; use Conversations
 
 Full endpoint reference with request/response shapes: [`docs/API.md`](docs/API.md).
 

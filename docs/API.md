@@ -89,7 +89,22 @@ Authorization: Bearer {{accessToken}}
 
 ### Health
 
-**GET** `{{baseUrl}}/` → `{ "message": "Studiothree Discover API running" }`
+**GET** `{{baseUrl}}/` → running banner plus S3 config booleans (no secret values):
+
+```json
+{
+  "message": "Studiothree Discover API running",
+  "s3": {
+    "configured": true,
+    "bucketSet": true,
+    "accessKeySet": true,
+    "secretKeySet": true,
+    "publicBaseUrlSet": true
+  }
+}
+```
+
+Production should run: `gunicorn -k gevent -w 1 wsgi:app` (Python 3.12). Sync/`-w 4` and eventlet are not supported for Socket.IO.
 
 ---
 
@@ -205,7 +220,7 @@ Same response shape as Register. Errors: `400` (missing fields), `401` (invalid 
 
 ### Privacy & blocking
 
-- `messagePermission` (on `PATCH /api/user/me`) controls who can start an [inquiry](#inquiries) with you: `"everyone"` (default, Instagram-style — see Inquiries), `"following"` (only people you already follow — `403` otherwise, no request fallback), `"no_one"` (`403` always).
+- `messagePermission` (on `PATCH /api/user/me`) controls who can start a [conversation](#conversations--direct-messages) with you: `"everyone"` (default, Instagram-style message requests — see Conversations), `"following"` (only people you already follow — `403` otherwise, no request fallback), `"no_one"` (`403` always).
 - **Blocked accounts:**
 
 | Method | URL | Notes |
@@ -214,7 +229,7 @@ Same response shape as Register. Errors: `400` (missing fields), `401` (invalid 
 | POST | `/api/users/:username/block` | Block a user |
 | DELETE | `/api/users/:username/block` | Unblock |
 
-Blocking (a) deletes any existing follow relationship (including a pending request) between the two accounts in either direction, (b) makes `POST /api/users/:username/follow` and `POST /api/inquiries` (new threads) return `403`/`404` between the two accounts, (c) makes `GET /api/user/:username` return `404` between the two accounts. Existing likes/comments/saves are **not** retroactively removed.
+Blocking (a) deletes any existing follow relationship (including a pending request) between the two accounts in either direction, (b) makes `POST /api/users/:username/follow` and `POST /api/conversations` (new threads) return `403`/`404` between the two accounts, (c) makes `GET /api/user/:username` return `404` between the two accounts. Existing likes/comments/saves are **not** retroactively removed.
 
 ### Onboarding (protected)
 
@@ -243,12 +258,12 @@ Blocking (a) deletes any existing follow relationship (including a pending reque
 ```json
 { "data": { "savesCount": 42, "likesCount": 128, "inquiriesCount": 7, "salesCount": 3, "period": "all_time" } }
 ```
-`savesCount`/`likesCount` aggregate across all of the caller's pieces. `inquiriesCount` is the number of inquiry threads received (see [Inquiries](#inquiries)). `salesCount` is the number of completed sales (orders in `paid`/`shipped`/`completed` status, see [Orders](#orders--checkout--addresses)).
+`savesCount`/`likesCount` aggregate across all of the caller's pieces. `inquiriesCount` still counts rows in the deferred inquiries tables (legacy field — the `/api/inquiries` HTTP API is **not** registered; messaging is via [Conversations](#conversations--direct-messages)). `salesCount` is the number of completed sales (orders in `paid`/`shipped`/`completed` status, see [Orders](#orders--checkout--addresses)).
 
 ### Saved pieces / Saved scenes (protected)
 
-- **GET** `{{baseUrl}}/api/user/me/saved/pieces` — pieces the caller has saved, each enriched like `GET /api/pieces/:id`.
-- **GET** `{{baseUrl}}/api/user/me/saved/posts` — scenes the caller has saved, each enriched like `GET /api/posts/:id`.
+- **GET** `{{baseUrl}}/api/user/me/saved/pieces` — lightweight list (batched): base piece fields + `author` (`isFollowing` always `false` here), `likeCount`, `isLiked`, `isSaved: true`. `commentCount` is `0`; `series`/`relatedPosts` are empty — use detail GET for full enrichment.
+- **GET** `{{baseUrl}}/api/user/me/saved/posts` — same lightweight pattern for scenes.
 
 ### Devices (push notifications, protected)
 
@@ -350,7 +365,7 @@ Create/edit routes require completed onboarding (`onboardingComplete: true`). De
   "relatedPosts": []
 }
 ```
-`series` is `null` if the piece doesn't belong to one. `GET /api/user/me/saved/pieces` and `GET /api/users/:username/pieces` / `.../pieces/for-sale` return arrays of this same shape without the enrichment fields (`isLiked`/`isSaved`/`author.isFollowing` are always `false` there). The `/api/users/:username/*` list endpoints (`pieces`, `pieces/for-sale`, `posts`, `series`) accept an optional Bearer token and return `403` if the target account is `private` and the caller isn't the owner or an accepted follower — see [Instagram-style private accounts](#instagram-style-private-accounts--follow-requests).
+`series` is `null` if the piece doesn't belong to one. `GET /api/users/:username/pieces` / `.../pieces/for-sale` return base piece arrays without engagement enrichment (`isLiked`/`isSaved`/`author.isFollowing` absent or false). Saved lists use a **lightweight** shape — see [Saved pieces](#saved-pieces--saved-scenes-protected). The `/api/users/:username/*` list endpoints accept an optional Bearer token and return `403` if the target account is `private` and the caller isn't the owner or an accepted follower — see [Instagram-style private accounts](#instagram-style-private-accounts--follow-requests).
 
 ### Scenes (API: posts)
 
@@ -381,10 +396,12 @@ Like/save/comment-create/follow mutation routes require Bearer + completed onboa
 | GET | `/api/users/follow-requests` | Pending requests to follow you |
 | POST | `/api/users/follow-requests/:username/accept` | Approve a pending request |
 | POST | `/api/users/follow-requests/:username/decline` | Reject a pending request |
-| POST/DELETE | `/api/pieces/:id/like`, `/api/posts/:id/like` | Like/unlike piece or scene |
-| POST/DELETE | `/api/pieces/:id/save`, `/api/posts/:id/save` | Save/unsave piece or scene |
+| POST/DELETE | `/api/pieces/:id/like`, `/api/posts/:id/like` | Like/unlike — `404` if target missing. Response `{ "liked": true\|false, "likeCount": N }` |
+| POST/DELETE | `/api/pieces/:id/save`, `/api/posts/:id/save` | Save/unsave — `404` if target missing. Response `{ "saved": true\|false, "saveCount": N }` |
 | POST | `/api/pieces/:id/comments`, `/api/posts/:id/comments` | `{ "body" }` |
 | GET | `/api/pieces/:id/comments`, `/api/posts/:id/comments` | Query: `cursor?`, `limit?` (default 50, max 100) |
+
+Like/unlike and save/unsave are idempotent (re-like while already liked still returns `liked: true`). Concurrent duplicate inserts are treated as success.
 
 **Get comments response:**
 ```json
@@ -413,9 +430,20 @@ Follow/like/save/comment each emit a [notification](#notifications) (with push) 
 
 All three are cursor-paginated: `?cursor=&limit=` (default 20, max 50). Response:
 ```json
-{ "data": { "items": [{ "type": "piece"|"post", "...": "full enriched piece or scene fields (author, likeCount, isLiked, isSaved)" }], "nextCursor": "<opaque-cursor-string-or-null>" } }
+{
+  "data": {
+    "items": [{
+      "type": "piece"|"post",
+      "...": "base piece or scene fields",
+      "author": { "username", "name", "profilePhotoUrl", "isFollowing" },
+      "likeCount": 12, "commentCount": 3, "isLiked": false, "isSaved": false
+    }],
+    "nextCursor": "<opaque-cursor-string-or-null>",
+    "stub": true
+  }
+}
 ```
-`type` is `"piece"` or `"post"`. Default `explore` (no `medium`) returns pieces and scenes merged by recency; `?medium=<piece medium>` returns pieces of that medium only; `?medium=video` returns video scenes only. Pass `nextCursor` back as `?cursor=` for the next page; `null` means no more items. Anonymous requests get `isLiked`/`isSaved`/`author.isFollowing` defaulted to `false`; send a Bearer token for viewer-specific values.
+`stub` is only present on **for-you** (always `true` until personalization ships). Feed items include batched `likeCount`, `commentCount`, `isLiked`, `isSaved`, and `author.isFollowing` (false when anonymous). They do **not** include full detail-only fields such as `series` / `relatedPosts` / linked `piece`. `type` is `"piece"` or `"post"`. Default `explore` (no `medium`) returns pieces and scenes merged by recency; `?medium=<piece medium>` returns pieces of that medium only; `?medium=video` returns video scenes only. Following feed only includes **accepted** follows (plus the caller). Pass `nextCursor` back as `?cursor=` for the next page; `null` means no more items.
 
 ---
 
@@ -468,33 +496,69 @@ General activity feed. Every entry may also trigger a push via [Devices](#device
 }
 ```
 
-Emitted automatically by: follow (or `follow_request` for a private-account request — see [Instagram-style private accounts](#instagram-style-private-accounts--follow-requests)), like, save, comment (see [Social](#social)), new inquiry message (see [Inquiries](#inquiries)), and order confirmation (see [Orders](#orders--checkout--addresses)).
+Emitted automatically by: follow (or `follow_request` for a private-account request — see [Instagram-style private accounts](#instagram-style-private-accounts--follow-requests)), like, save, comment (see [Social](#social)), new chat messages (see [Conversations](#conversations--direct-messages)), and order confirmation (see [Orders](#orders--checkout--addresses)).
 
 ---
 
-## Inquiries
+## Conversations (direct messages)
 
-Structured, **piece-scoped** chat — a buyer asks about a specific piece, the seller replies. Not open/general DMs. Mutations require Bearer + onboarding; reads require Bearer (participant-only). Blocked-either-way pairs get `403`/`404` (see [Privacy & blocking](#privacy--blocking)).
+General-purpose **1:1 DMs** at `/api/conversations`. Mutations that start/reply require Bearer + onboarding; reads require Bearer (participant-only). Blocked-either-way pairs get `403`/`404` (see [Privacy & blocking](#privacy--blocking)).
 
-**Instagram-style message requests**: a thread has three states — `open` (both sides can read/reply), `pending` (buyer messaged a seller who doesn't yet follow them back — sits in the seller's Requests folder until accepted, declined, or replied to), `closed` (declined, or explicitly closed). See [`messagePermission`](#privacy--blocking) for the stricter override modes.
+**Instagram-style message requests**: a thread has three states — `open` (both sides can read/reply), `pending` (recipient does not yet follow the sender — sits in their Requests folder until accepted, declined, or replied to), `closed` (declined). See [`messagePermission`](#privacy--blocking).
+
+| Method | URL | Body / notes |
+|--------|-----|--------------|
+| GET | `/api/conversations` | Primary inbox, cursor-paginated |
+| GET | `/api/conversations/requests` | Incoming `pending` requests folder |
+| GET | `/api/conversations/search-users` | Query `q` — find users to message |
+| GET | `/api/conversations/unread-count` | `{ "count": N }` |
+| GET | `/api/conversations/with/:username` | Existing open/pending thread with user, if any |
+| GET | `/api/conversations/:id` | Thread + messages; auto-marks read |
+| POST | `/api/conversations` | `{ "username", "message"? , "imageUrl"? }` — message or imageUrl required |
+| POST | `/api/conversations/:id/messages` | `{ "body"? , "imageUrl"? }` — body or imageUrl required; seller/recipient reply to `pending` auto-accepts |
+| POST | `/api/conversations/:id/accept` | Recipient only, `pending → open` |
+| POST | `/api/conversations/:id/decline` | Recipient only, `pending → closed` |
+| PATCH | `/api/conversations/:id/read` | Explicit mark-read |
+
+**`POST /api/conversations`:** `403` if the recipient's `messagePermission` is `"no_one"`, or `"following"` and they don't already follow the sender. `400` if messaging yourself. Reuses a non-closed thread with `200` (`{"id", "reused": true}`) or creates with `201` (`{"id", "reused": false, "status": "open"|"pending"}`).
+
+### Socket.IO (real-time)
+
+Connect to the same host's Socket.IO endpoint with the access token as a query param: `?token={{accessToken}}`. Invalid/missing token → handshake rejected.
+
+**Client → server events:**
+
+| Event | Payload |
+|-------|---------|
+| `conversation:join` | `{ "conversationId" }` |
+| `conversation:leave` | `{ "conversationId" }` |
+| `typing:start` / `typing:stop` | `{ "conversationId" }` |
+| `message:send` | `{ "conversationId", "body"?, "imageUrl"? }` |
+| `target:join` / `target:leave` | `{ "targetType": "piece"|"post", "targetId" }` — live comments room |
+
+**Server → client events:** `message:new`, `message:error`, `conversation:read`, `typing:start`/`typing:stop`, `presence:update`, and `comment:new` on target rooms. Production uses **gevent** + Redis pub/sub (`REDIS_URL`).
+
+---
+
+## Collections
+
+Instagram-style saved folders for pieces and scenes. All routes require Bearer; create/mutate require onboarding.
 
 | Method | URL | Body |
 |--------|-----|------|
-| GET | `/api/inquiries` | — Primary inbox, cursor-paginated by last activity. Includes all of the caller's own outgoing threads (`open` or `pending`) plus `open` threads where the caller is the seller. Pending seller-side threads are **not** here — see `/requests`. |
-| GET | `/api/inquiries/requests` | — Seller-only "requests" folder: `pending` threads awaiting accept/decline. Same shape/pagination as the main inbox. |
-| GET | `/api/inquiries/:id` | — Thread + messages; auto-marks caller's read state (does **not** accept a pending request — only replying or explicit accept does) |
-| POST | `/api/inquiries` | `{ "pieceId", "message" }` |
-| POST | `/api/inquiries/:id/messages` | `{ "body" }` — if the seller replies to a `pending` thread, it auto-flips to `open` first (mirrors Instagram: replying accepts) |
-| POST | `/api/inquiries/:id/accept` | — Seller only, `pending → open` |
-| POST | `/api/inquiries/:id/decline` | — Seller only, `pending → closed` |
-| PATCH | `/api/inquiries/:id/read` | — Explicit mark-read (in addition to auto-mark on GET) |
+| GET | `/api/collections` | — list caller's collections (summary + cover) |
+| POST | `/api/collections` | `{ "name" }` |
+| GET | `/api/collections/:id` | — detail with enriched `items` |
+| PATCH | `/api/collections/:id` | `{ "name" }` |
+| DELETE | `/api/collections/:id` | — |
+| POST | `/api/collections/:id/items` | `{ "targetType": "piece"|"post", "targetId" }` |
+| DELETE | `/api/collections/:id/items/:targetType/:targetId` | — |
 
-**Inbox / requests item:**
-```json
-{ "id", "piece": {"id","title","thumbnailUrl"}, "otherParty": {...}, "preview": "...", "updatedAt": "...", "unread": true, "status": "open"|"pending"|"closed" }
-```
+---
 
-**`POST /api/inquiries`:** `403` if the seller's `messagePermission` is `"no_one"`, or `"following"` and the seller doesn't already follow the buyer. `400` if inquiring on your own piece. If a non-closed thread already exists for this buyer+piece, returns the **existing** thread with `200` (`{"id", "reused": true}`) instead of erroring — otherwise creates one and returns `201` (`{"id", "reused": false, "status": "open"|"pending"}`): `"open"` if the seller already follows the buyer, `"pending"` otherwise (default `messagePermission: "everyone"`). Every new message notifies the other participant (push included).
+## Inquiries (deferred v2)
+
+The piece-scoped `/api/inquiries` blueprint is **not registered**. Schema/migrations may still exist, but HTTP calls return **404**. Use [Conversations](#conversations--direct-messages) for messaging.
 
 ---
 
@@ -548,6 +612,7 @@ Validates the piece is for-sale and `status == "live"` (else `409`), the caller 
 | GET | `{{baseUrl}}/` | — | — |
 | GET | `{{baseUrl}}/api/auth/username/check` | Optional | Query: `username`, `for_user_id=me` |
 | POST | `{{baseUrl}}/api/auth/otp/generate` \| `/otp/resend` | — | `{ "email" }` |
+| POST | `{{baseUrl}}/api/auth/otp/verify` | — | `{ "email", "otp" }` |
 | POST | `{{baseUrl}}/api/auth/register` | — | `{ "username", "name", "email", "password", "otp", "phone"? }` |
 | POST | `{{baseUrl}}/api/auth/login` | — | `{ "username", "password" }` — `username` accepts username or email |
 | POST | `{{baseUrl}}/api/auth/refresh` | Cookie | — |
@@ -565,23 +630,24 @@ Validates the piece is for-sale and `status == "live"` (else `409`), the caller 
 | GET | `{{baseUrl}}/api/users/nearby` | Optional Bearer | Query: `lat`, `lng`, `radiusKm?`, `limit?` |
 | POST | `{{baseUrl}}/api/user/me/onboarding/*` | Bearer | See above |
 | POST/GET | `{{baseUrl}}/api/user/me/seller/*` | Bearer | See above (disable is state-checked, see above) |
-| GET | `{{baseUrl}}/api/user/me/saved/pieces` \| `/saved/posts` \| `/orders` \| `/sales` | Bearer | — |
+| GET | `{{baseUrl}}/api/user/me/saved/pieces` \| `/saved/posts` \| `/orders` \| `/sales` \| `/series` | Bearer | — |
 | GET/POST/PATCH/DELETE | `{{baseUrl}}/api/user/me/addresses/*` | Bearer | See above |
 | POST/DELETE | `{{baseUrl}}/api/user/me/devices` | Bearer | `{ "platform", "pushToken" }` |
 | POST | `{{baseUrl}}/api/media/presign` | Bearer | `{ "purpose", "contentType" }` |
-| POST/PATCH/GET | `{{baseUrl}}/api/pieces/*` | Varies | See above |
+| POST/PATCH/GET/DELETE | `{{baseUrl}}/api/pieces/*` | Varies | See above |
 | GET/POST | `{{baseUrl}}/api/pieces/:id/{comments,shipping-quote,collect,related-posts}` | Varies | See above |
-| POST/PATCH/GET | `{{baseUrl}}/api/posts/*` | Varies | See above |
+| POST/PATCH/GET/DELETE | `{{baseUrl}}/api/posts/*` | Varies | See above |
 | GET | `{{baseUrl}}/api/posts/:id/comments` | — | Query: `cursor?`, `limit?` |
-| GET | `{{baseUrl}}/api/users/:username/{pieces,posts,series}` | — | — |
+| GET | `{{baseUrl}}/api/users/:username/{pieces,posts,series,followers,following}` | Optional Bearer | Private accounts gate grids |
 | POST/DELETE | `{{baseUrl}}/api/users/:username/follow` | Bearer | — |
 | POST/DELETE | `{{baseUrl}}/api/pieces/:id/{like,save}` \| `/api/posts/:id/{like,save}` | Bearer | — |
 | GET | `{{baseUrl}}/api/feed/following` | Bearer | Query: `cursor?`, `limit?` |
 | GET | `{{baseUrl}}/api/feed/explore` | Optional Bearer | Query: `medium?`, `cursor?`, `limit?` |
-| GET | `{{baseUrl}}/api/feed/for-you` | Bearer | Query: `cursor?`, `limit?` |
+| GET | `{{baseUrl}}/api/feed/for-you` | Bearer | Query: `cursor?`, `limit?` (stub) |
 | POST/PATCH/GET/DELETE | `{{baseUrl}}/api/series/*` | Varies | See above |
 | GET/PATCH/POST | `{{baseUrl}}/api/notifications/*` | Bearer | See above |
-| GET/POST/PATCH | `{{baseUrl}}/api/inquiries/*` | Bearer | See above |
+| GET/POST/PATCH | `{{baseUrl}}/api/conversations/*` | Bearer | See Conversations |
+| GET/POST/PATCH/DELETE | `{{baseUrl}}/api/collections/*` | Bearer | See Collections |
 | GET/PATCH/POST | `{{baseUrl}}/api/orders/*` | Bearer | See above |
 
 **Auth column:** "Bearer" = `Authorization: Bearer {{accessToken}}` required; "Optional Bearer" = works without a token but returns viewer-specific fields (`isLiked`/`isSaved`/`isFollowing`) when one is sent; "Cookie" = sent automatically by Postman after login/register/refresh.

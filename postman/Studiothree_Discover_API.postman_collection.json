@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "7f8b9e6a-1c5d-4f3b-8d2e-9c7b0a8e1d2f",
     "name": "Studiothree Discover API",
-    "description": "Postman collection for the Studiothree Discover backend (Phases 1–6). Import and set collection variables: baseUrl, accessToken, username, pieceId, postId, seriesId, addressId, orderId.",
+    "description": "Postman collection for the Studiothree Discover backend. Live routes include Conversations (chat) and Collections. Inquiries (/api/inquiries) are deferred and not registered. Set collection variables: baseUrl, accessToken, username, pieceId, postId, seriesId, addressId, orderId, notificationId, conversationId, collectionId.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -33,7 +33,9 @@
         {
           "name": "Health Check",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "header": [],
             "url": "{{baseUrl}}/"
@@ -47,16 +49,32 @@
         {
           "name": "Username Check",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/auth/username/check?username={{username}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "auth", "username", "check"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "username",
+                "check"
+              ],
               "query": [
-                { "key": "username", "value": "{{username}}" },
-                { "key": "for_user_id", "value": "me", "disabled": true }
+                {
+                  "key": "username",
+                  "value": "{{username}}"
+                },
+                {
+                  "key": "for_user_id",
+                  "value": "me",
+                  "disabled": true
+                }
               ]
             },
             "description": "Check username availability. Enable for_user_id=me and add Bearer token when changing username."
@@ -65,9 +83,16 @@
         {
           "name": "OTP Generate",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"email\": \"user@example.com\"\n}"
@@ -78,14 +103,50 @@
         {
           "name": "OTP Resend",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"email\": \"user@example.com\"\n}"
             },
             "url": "{{baseUrl}}/api/auth/otp/resend"
+          }
+        },
+        {
+          "name": "OTP Verify",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/otp/verify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "otp",
+                "verify"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"otp\": \"123456\"\n}"
+            }
           }
         },
         {
@@ -108,9 +169,16 @@
             }
           ],
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"username\": \"maya_art\",\n  \"name\": \"John Doe\",\n  \"email\": \"user@example.com\",\n  \"password\": \"securePassword123\",\n  \"otp\": \"123456\",\n  \"phone\": \"+12145551234\"\n}"
@@ -138,9 +206,16 @@
             }
           ],
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"username\": \"{{username}}\",\n  \"password\": \"securePassword123\"\n}"
@@ -165,7 +240,9 @@
             }
           ],
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
             "header": [],
             "url": "{{baseUrl}}/api/auth/refresh"
@@ -174,7 +251,9 @@
         {
           "name": "Logout",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
             "header": [],
             "url": "{{baseUrl}}/api/auth/logout"
@@ -191,9 +270,16 @@
         {
           "name": "Forget Password",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"email\": \"user@example.com\"\n}"
@@ -204,9 +290,16 @@
         {
           "name": "Reset Password",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"token\": \"token_received_in_email\",\n  \"newPassword\": \"newSecurePassword123\"\n}"
@@ -230,7 +323,12 @@
           "name": "Update Me",
           "request": {
             "method": "PATCH",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"bio\": \"Artist and collector.\",\n  \"location\": \"New York, NY\"\n}"
@@ -242,7 +340,12 @@
           "name": "Change Username",
           "request": {
             "method": "PATCH",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"username\": \"maya_studio\"\n}"
@@ -254,7 +357,12 @@
           "name": "Change Password",
           "request": {
             "method": "PATCH",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"currentPassword\": \"securePassword123\",\n  \"newPassword\": \"newSecurePassword456\"\n}"
@@ -266,7 +374,12 @@
           "name": "Request Email Change",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"newEmail\": \"new-address@example.com\"\n}"
@@ -278,7 +391,12 @@
           "name": "Confirm Email Change",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"newEmail\": \"new-address@example.com\",\n  \"otp\": \"123456\"\n}"
@@ -289,7 +407,9 @@
         {
           "name": "Public Profile",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "url": "{{baseUrl}}/api/user/{{username}}"
           }
@@ -298,7 +418,12 @@
           "name": "Set Role",
           "request": {
             "method": "PATCH",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"role\": \"artist\"\n}"
@@ -310,7 +435,12 @@
           "name": "Onboarding Preferences",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"mediums\": [\"painting\", \"sculpture\", \"photography\"],\n  \"styles\": [\"abstract\", \"realism\", \"minimalism\"],\n  \"themes\": [\"nature\", \"portrait\", \"urban\"]\n}"
@@ -322,7 +452,12 @@
           "name": "Onboarding Photos",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"skip\": true\n}"
@@ -342,7 +477,12 @@
           "name": "Seller Enable",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"location\": \"New York, NY\"\n}"
@@ -378,14 +518,19 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/user/me/saved/pieces",
-            "description": "Pieces the current user has saved, enriched with author/isLiked/isSaved/series/relatedPosts."
+            "description": "Lightweight list: likeCount/isLiked/isSaved; commentCount 0; no series/relatedPosts."
           }
         },
         {
           "name": "Register Device",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"platform\": \"android\",\n  \"pushToken\": \"{{pushToken}}\"\n}"
@@ -398,7 +543,12 @@
           "name": "Unregister Device",
           "request": {
             "method": "DELETE",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"pushToken\": \"{{pushToken}}\"\n}"
@@ -431,7 +581,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"label\": \"Home\",\n  \"firstName\": \"Jane\",\n  \"lastName\": \"Doe\",\n  \"phone\": \"+12145551234\",\n  \"line1\": \"123 Main St\",\n  \"line2\": \"Apt 4B\",\n  \"city\": \"Dallas\",\n  \"state\": \"TX\",\n  \"zip\": \"75201\",\n  \"country\": \"US\",\n  \"latitude\": 32.7767,\n  \"longitude\": -96.7970\n}"
@@ -444,7 +599,12 @@
           "name": "Update Address",
           "request": {
             "method": "PATCH",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"line2\": \"Suite 200\"\n}"
@@ -467,22 +627,128 @@
           }
         },
         {
+          "name": "Get Saved Posts",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/user/me/saved/posts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "user",
+                "me",
+                "saved",
+                "posts"
+              ]
+            },
+            "description": "Lightweight list: likeCount/isLiked/isSaved; commentCount 0; piece null."
+          }
+        },
+        {
+          "name": "My Series",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/user/me/series",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "user",
+                "me",
+                "series"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Notification Preferences",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/user/me/notification-preferences",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "user",
+                "me",
+                "notification-preferences"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"push\": {\n    \"like\": true\n  },\n  \"dailyDigest\": {\n    \"enabled\": false\n  }\n}"
+            }
+          }
+        },
+        {
           "name": "Nearby Sellers",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "url": {
               "raw": "{{baseUrl}}/api/users/nearby?lat=32.7767&lng=-96.7970&radiusKm=50&limit=20",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "users", "nearby"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "nearby"
+              ],
               "query": [
-                { "key": "lat", "value": "32.7767" },
-                { "key": "lng", "value": "-96.7970" },
-                { "key": "radiusKm", "value": "50" },
-                { "key": "limit", "value": "20" }
+                {
+                  "key": "lat",
+                  "value": "32.7767"
+                },
+                {
+                  "key": "lng",
+                  "value": "-96.7970"
+                },
+                {
+                  "key": "radiusKm",
+                  "value": "50"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
               ]
             },
-            "description": "Haversine-based distance query (no PostGIS) — returns sellers with lat/lng set, ordered by distance. Send Bearer for viewer-specific isFollowing."
+            "description": "Haversine-based distance query (no PostGIS) \u2014 returns sellers with lat/lng set, ordered by distance. Send Bearer for viewer-specific isFollowing."
           }
         },
         {
@@ -508,7 +774,12 @@
           "name": "Presign Upload",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"purpose\": \"piece\",\n  \"contentType\": \"image/jpeg\",\n  \"pieceId\": \"{{pieceId}}\"\n}"
@@ -539,7 +810,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"title\": \"Sunset Study\",\n  \"mediaUrl\": \"/{{username}}/pieces/sample/original.jpg\",\n  \"mediaType\": \"image\",\n  \"caption\": \"Oil on canvas\",\n  \"medium\": \"painting\",\n  \"isForSale\": false,\n  \"yearCreated\": 2024,\n  \"framingMounting\": \"Framed, ready to hang\",\n  \"provenance\": \"Direct from artist\",\n  \"handlingNotes\": \"Keep away from direct sunlight\"\n}"
@@ -550,7 +826,9 @@
         {
           "name": "Get Piece",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "url": "{{baseUrl}}/api/pieces/{{pieceId}}",
             "description": "Enriched detail: author (with isFollowing), series, relatedPosts, likeCount, commentCount, isLiked, isSaved. Send Bearer token to get viewer-specific isLiked/isSaved/isFollowing; omit for anonymous (all default false)."
@@ -560,7 +838,12 @@
           "name": "Update Piece",
           "request": {
             "method": "PATCH",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"caption\": \"Updated caption\",\n  \"yearCreated\": 2024,\n  \"framingMounting\": \"Framed, ready to hang\",\n  \"provenance\": \"Direct from artist\",\n  \"handlingNotes\": \"Keep away from direct sunlight\"\n}"
@@ -571,7 +854,9 @@
         {
           "name": "Related Posts",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "url": "{{baseUrl}}/api/pieces/{{pieceId}}/related-posts"
           }
@@ -579,7 +864,9 @@
         {
           "name": "List User Pieces",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "url": "{{baseUrl}}/api/users/{{username}}/pieces"
           }
@@ -587,7 +874,9 @@
         {
           "name": "List User Pieces For Sale",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "url": "{{baseUrl}}/api/users/{{username}}/pieces/for-sale"
           }
@@ -595,7 +884,9 @@
         {
           "name": "Shipping Quote",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "url": "{{baseUrl}}/api/pieces/{{pieceId}}/shipping-quote"
           }
@@ -618,13 +909,42 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"addressId\": \"{{addressId}}\",\n  \"shippingMethod\": \"standard\"\n}"
             },
             "url": "{{baseUrl}}/api/pieces/{{pieceId}}/collect",
             "description": "Creates a pending_payment order, reserves the piece, snapshots the address. clientSecret is null until a payment provider is wired up."
+          }
+        },
+        {
+          "name": "Delete Piece",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/pieces/{{pieceId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "pieces",
+                "{{pieceId}}"
+              ]
+            }
           }
         }
       ]
@@ -650,7 +970,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"mediaUrl\": \"/{{username}}/posts/sample/original.jpg\",\n  \"mediaType\": \"image\",\n  \"caption\": \"Work in progress\",\n  \"isProcess\": true,\n  \"linkedPieceId\": \"{{pieceId}}\"\n}"
@@ -661,7 +986,9 @@
         {
           "name": "Get Post",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "url": "{{baseUrl}}/api/posts/{{postId}}",
             "description": "Enriched detail: author, piece (full linked piece summary when linkedPieceId set), likeCount, commentCount, isLiked, isSaved."
@@ -671,7 +998,12 @@
           "name": "Update Post",
           "request": {
             "method": "PATCH",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"caption\": \"Updated WIP caption\"\n}"
@@ -682,9 +1014,35 @@
         {
           "name": "List User Posts",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "url": "{{baseUrl}}/api/users/{{username}}/posts"
+          }
+        },
+        {
+          "name": "Delete Post",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/posts/{{postId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "posts",
+                "{{postId}}"
+              ]
+            }
           }
         }
       ]
@@ -731,35 +1089,44 @@
           "name": "Like Piece",
           "request": {
             "method": "POST",
-            "url": "{{baseUrl}}/api/pieces/{{pieceId}}/like"
+            "url": "{{baseUrl}}/api/pieces/{{pieceId}}/like",
+            "description": "Response: { liked: true, likeCount: N }. 404 if piece missing."
           }
         },
         {
           "name": "Unlike Piece",
           "request": {
             "method": "DELETE",
-            "url": "{{baseUrl}}/api/pieces/{{pieceId}}/like"
+            "url": "{{baseUrl}}/api/pieces/{{pieceId}}/like",
+            "description": "Response: { liked: false, likeCount: N }. 404 if piece missing."
           }
         },
         {
           "name": "Like Post",
           "request": {
             "method": "POST",
-            "url": "{{baseUrl}}/api/posts/{{postId}}/like"
+            "url": "{{baseUrl}}/api/posts/{{postId}}/like",
+            "description": "Response: { liked: true, likeCount: N }. 404 if post missing."
           }
         },
         {
           "name": "Save Piece",
           "request": {
             "method": "POST",
-            "url": "{{baseUrl}}/api/pieces/{{pieceId}}/save"
+            "url": "{{baseUrl}}/api/pieces/{{pieceId}}/save",
+            "description": "Response: { saved: true, saveCount: N }. 404 if piece missing."
           }
         },
         {
           "name": "Comment on Piece",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"body\": \"Beautiful work!\"\n}"
@@ -771,7 +1138,12 @@
           "name": "Comment on Post",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"body\": \"Love seeing the process!\"\n}"
@@ -782,15 +1154,31 @@
         {
           "name": "Get Comments on Piece",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "url": {
               "raw": "{{baseUrl}}/api/pieces/{{pieceId}}/comments?limit=50",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "pieces", "{{pieceId}}", "comments"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "pieces",
+                "{{pieceId}}",
+                "comments"
+              ],
               "query": [
-                { "key": "limit", "value": "50" },
-                { "key": "cursor", "value": "", "disabled": true }
+                {
+                  "key": "limit",
+                  "value": "50"
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true
+                }
               ]
             },
             "description": "Cursor-paginated. Response: { items: [{id, body, author, createdAt}], nextCursor }. Pass nextCursor back as ?cursor= for the next page."
@@ -799,15 +1187,271 @@
         {
           "name": "Get Comments on Post",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "url": {
               "raw": "{{baseUrl}}/api/posts/{{postId}}/comments?limit=50",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "posts", "{{postId}}", "comments"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "posts",
+                "{{postId}}",
+                "comments"
+              ],
               "query": [
-                { "key": "limit", "value": "50" },
-                { "key": "cursor", "value": "", "disabled": true }
+                {
+                  "key": "limit",
+                  "value": "50"
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Unlike Post",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/posts/{{postId}}/like",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "posts",
+                "{{postId}}",
+                "like"
+              ]
+            },
+            "description": "Response: { liked: false, likeCount: N }. 404 if post missing."
+          }
+        },
+        {
+          "name": "Unsave Piece",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/pieces/{{pieceId}}/save",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "pieces",
+                "{{pieceId}}",
+                "save"
+              ]
+            },
+            "description": "Response: { saved: false, saveCount: N }. 404 if piece missing."
+          }
+        },
+        {
+          "name": "Save Post",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/posts/{{postId}}/save",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "posts",
+                "{{postId}}",
+                "save"
+              ]
+            },
+            "description": "Response: { saved: true, saveCount: N }. 404 if post missing."
+          }
+        },
+        {
+          "name": "Unsave Post",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/posts/{{postId}}/save",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "posts",
+                "{{postId}}",
+                "save"
+              ]
+            },
+            "description": "Response: { saved: false, saveCount: N }. 404 if post missing."
+          }
+        },
+        {
+          "name": "List Blocked",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/blocked",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "blocked"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Block User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/{{username}}/block",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "{{username}}",
+                "block"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Unblock User",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/{{username}}/block",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "{{username}}",
+                "block"
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Followers",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/{{username}}/followers?limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "{{username}}",
+                "followers"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Following",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/{{username}}/following?limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "{{username}}",
+                "following"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
               ]
             }
           }
@@ -837,14 +1481,27 @@
             "method": "GET",
             "url": {
               "raw": "{{baseUrl}}/api/feed/following?limit=20",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "feed", "following"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "feed",
+                "following"
+              ],
               "query": [
-                { "key": "limit", "value": "20" },
-                { "key": "cursor", "value": "{{feedCursor}}", "disabled": true }
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "cursor",
+                  "value": "{{feedCursor}}",
+                  "disabled": true
+                }
               ]
             },
-            "description": "Cursor-paginated: { data: { items: [...], nextCursor } }. Enable the cursor query param and set it to {{feedCursor}} to fetch the next page."
+            "description": "Accepted follows only (+ self). Items include likeCount, commentCount, isLiked, isSaved, author.isFollowing."
           }
         },
         {
@@ -864,16 +1521,35 @@
             }
           ],
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "url": {
               "raw": "{{baseUrl}}/api/feed/explore?limit=20",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "feed", "explore"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "feed",
+                "explore"
+              ],
               "query": [
-                { "key": "medium", "value": "painting", "disabled": true },
-                { "key": "limit", "value": "20" },
-                { "key": "cursor", "value": "{{feedCursor}}", "disabled": true }
+                {
+                  "key": "medium",
+                  "value": "painting",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "cursor",
+                  "value": "{{feedCursor}}",
+                  "disabled": true
+                }
               ]
             },
             "description": "Pieces-only feed, cursor-paginated. Send Bearer token for viewer-specific isLiked/isSaved; omit for anonymous."
@@ -883,7 +1559,8 @@
           "name": "For You Feed (stub)",
           "request": {
             "method": "GET",
-            "url": "{{baseUrl}}/api/feed/for-you"
+            "url": "{{baseUrl}}/api/feed/for-you",
+            "description": "Stub wrapping explore; response may include stub: true. Prefer Following for chronological follows."
           }
         }
       ]
@@ -894,7 +1571,9 @@
         {
           "name": "List User Series",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "url": "{{baseUrl}}/api/users/{{username}}/series",
             "description": "Only series with pieceCount > 1 are returned."
@@ -918,7 +1597,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"Riverwalk Dream\",\n  \"pieceIds\": [\"{{pieceId}}\"]\n}"
@@ -929,7 +1613,9 @@
         {
           "name": "Get Series",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "url": "{{baseUrl}}/api/series/{{seriesId}}"
           }
@@ -938,7 +1624,12 @@
           "name": "Update Series",
           "request": {
             "method": "PATCH",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"Riverwalk Dream (Renamed)\",\n  \"pieceOrder\": [\"{{pieceId}}\"]\n}"
@@ -950,7 +1641,12 @@
           "name": "Add Piece to Series",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"pieceId\": \"{{pieceId}}\"\n}"
@@ -976,11 +1672,23 @@
             "method": "GET",
             "url": {
               "raw": "{{baseUrl}}/api/notifications?limit=20",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "notifications"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "notifications"
+              ],
               "query": [
-                { "key": "limit", "value": "20" },
-                { "key": "cursor", "value": "", "disabled": true }
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true
+                }
               ]
             }
           }
@@ -1009,83 +1717,517 @@
       ]
     },
     {
-      "name": "Inquiries",
+      "name": "Conversations",
       "item": [
         {
           "name": "List Inbox",
           "request": {
             "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
             "url": {
-              "raw": "{{baseUrl}}/api/inquiries?limit=20",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "inquiries"],
+              "raw": "{{baseUrl}}/api/conversations?limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "conversations"
+              ],
               "query": [
-                { "key": "limit", "value": "20" },
-                { "key": "cursor", "value": "", "disabled": true }
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
               ]
             }
           }
         },
         {
-          "name": "Create Inquiry",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "var json = pm.response.json();",
-                  "if (json.data && json.data.id) {",
-                  "  pm.collectionVariables.set('inquiryId', json.data.id);",
-                  "}"
-                ]
-              }
-            }
-          ],
+          "name": "List Requests",
           "request": {
-            "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"pieceId\": \"{{pieceId}}\",\n  \"message\": \"Hi, is this piece still available?\"\n}"
-            },
-            "url": "{{baseUrl}}/api/inquiries",
-            "description": "Returns { id, reused: true } with 200 if an open thread already exists for this buyer+piece, else creates one and returns 201."
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/conversations/requests?limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "conversations",
+                "requests"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Search Users",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/conversations/search-users?q=maya",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "conversations",
+                "search-users"
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "maya"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Unread Count",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/conversations/unread-count",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "conversations",
+                "unread-count"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Find With User",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/conversations/with/{{username}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "conversations",
+                "with",
+                "{{username}}"
+              ]
+            }
           }
         },
         {
           "name": "Get Thread",
           "request": {
             "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
             "url": {
-              "raw": "{{baseUrl}}/api/inquiries/{{inquiryId}}?limit=50",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "inquiries", "{{inquiryId}}"],
+              "raw": "{{baseUrl}}/api/conversations/{{conversationId}}?limit=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "conversations",
+                "{{conversationId}}"
+              ],
               "query": [
-                { "key": "limit", "value": "50" },
-                { "key": "cursor", "value": "", "disabled": true }
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
               ]
-            },
-            "description": "Auto-marks the caller's read state on fetch."
+            }
           }
         },
         {
-          "name": "Reply",
+          "name": "Start Conversation",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/conversations",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "conversations"
+              ]
+            },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"body\": \"Yes, it's still available!\"\n}"
-            },
-            "url": "{{baseUrl}}/api/inquiries/{{inquiryId}}/messages"
+              "raw": "{\n  \"username\": \"{{username}}\",\n  \"message\": \"Hi!\"\n}"
+            }
           }
         },
         {
-          "name": "Mark Thread Read",
+          "name": "Send Message",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/conversations/{{conversationId}}/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "conversations",
+                "{{conversationId}}",
+                "messages"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"body\": \"Hello again\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Accept Request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/conversations/{{conversationId}}/accept",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "conversations",
+                "{{conversationId}}",
+                "accept"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Decline Request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/conversations/{{conversationId}}/decline",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "conversations",
+                "{{conversationId}}",
+                "decline"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Mark Read",
           "request": {
             "method": "PATCH",
-            "url": "{{baseUrl}}/api/inquiries/{{inquiryId}}/read"
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/conversations/{{conversationId}}/read",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "conversations",
+                "{{conversationId}}",
+                "read"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Collections",
+      "item": [
+        {
+          "name": "List Collections",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/collections",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "collections"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Collection",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/collections",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "collections"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Favorites\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Collection",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/collections/{{collectionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "collections",
+                "{{collectionId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Rename Collection",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/collections/{{collectionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "collections",
+                "{{collectionId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Favorites updated\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Add Item",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/collections/{{collectionId}}/items",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "collections",
+                "{{collectionId}}",
+                "items"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"targetType\": \"piece\",\n  \"targetId\": \"{{pieceId}}\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Remove Item",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/collections/{{collectionId}}/items/piece/{{pieceId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "collections",
+                "{{collectionId}}",
+                "items",
+                "piece",
+                "{{pieceId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete Collection",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/collections/{{collectionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "collections",
+                "{{collectionId}}"
+              ]
+            }
           }
         }
       ]
@@ -1112,7 +2254,12 @@
           "name": "Seller: Mark Shipped",
           "request": {
             "method": "PATCH",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"status\": \"shipped\"\n}"
@@ -1124,7 +2271,12 @@
           "name": "Seller: Mark Completed",
           "request": {
             "method": "PATCH",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"status\": \"completed\"\n}"
@@ -1136,7 +2288,12 @@
           "name": "Cancel Order",
           "request": {
             "method": "PATCH",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"status\": \"cancelled\"\n}"
@@ -1149,17 +2306,68 @@
     }
   ],
   "variable": [
-    { "key": "baseUrl", "value": "http://localhost:9000", "type": "string" },
-    { "key": "accessToken", "value": "", "type": "string" },
-    { "key": "username", "value": "maya_art", "type": "string" },
-    { "key": "pieceId", "value": "", "type": "string" },
-    { "key": "postId", "value": "", "type": "string" },
-    { "key": "seriesId", "value": "", "type": "string" },
-    { "key": "feedCursor", "value": "", "type": "string" },
-    { "key": "pushToken", "value": "sample-fcm-token", "type": "string" },
-    { "key": "addressId", "value": "", "type": "string" },
-    { "key": "notificationId", "value": "", "type": "string" },
-    { "key": "inquiryId", "value": "", "type": "string" },
-    { "key": "orderId", "value": "", "type": "string" }
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:9000",
+      "type": "string"
+    },
+    {
+      "key": "accessToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "username",
+      "value": "maya_art",
+      "type": "string"
+    },
+    {
+      "key": "pieceId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "postId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "seriesId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "feedCursor",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "pushToken",
+      "value": "sample-fcm-token",
+      "type": "string"
+    },
+    {
+      "key": "addressId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "notificationId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "orderId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "conversationId",
+      "value": ""
+    },
+    {
+      "key": "collectionId",
+      "value": ""
+    }
   ]
 }

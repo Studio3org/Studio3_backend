@@ -1,7 +1,7 @@
 """Entry: load env (by FLASK_ENV), connect DB + Redis, then run Flask app. Exit on connection failure."""
 # Must run before any other import (sockets/threading). Production wsgi.py does the same.
-import eventlet
-eventlet.monkey_patch()
+from gevent import monkey
+monkey.patch_all()
 
 import os
 import sys

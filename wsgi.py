@@ -1,9 +1,9 @@
 """WSGI entry for gunicorn (production)."""
-# Must be first — before dotenv/threading/socketio — or eventlet raises
-# "RLock(s) were not greened" when Flask-SocketIO loads with async_mode=eventlet.
-import eventlet
+# Must be first — before dotenv/threading/socketio — or gevent raises
+# "RLock(s) were not greened" when Flask-SocketIO loads with async_mode=gevent.
+from gevent import monkey
 
-eventlet.monkey_patch()
+monkey.patch_all()
 
 import os
 import sys

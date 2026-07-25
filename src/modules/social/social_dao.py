@@ -18,6 +18,12 @@ def count_likes(db: Session, target_type: str, target_id: uuid.UUID) -> int:
     ).scalar_one()
 
 
+def count_saves(db: Session, target_type: str, target_id: uuid.UUID) -> int:
+    return db.execute(
+        select(func.count(Save.id)).where(Save.target_type == target_type, Save.target_id == target_id)
+    ).scalar_one()
+
+
 def count_comments(db: Session, target_type: str, target_id: uuid.UUID) -> int:
     return db.execute(
         select(func.count(Comment.id)).where(Comment.target_type == target_type, Comment.target_id == target_id)
@@ -167,6 +173,22 @@ def batch_user_saves(db: Session, target_type: str, target_ids: list[uuid.UUID],
     rows = db.execute(
         select(Save.target_id).where(
             Save.target_type == target_type, Save.target_id.in_(target_ids), Save.user_id == user_id
+        )
+    ).scalars().all()
+    return set(rows)
+
+
+def batch_accepted_following(
+    db: Session, follower_id: Optional[uuid.UUID], following_ids: list[uuid.UUID]
+) -> set:
+    """Set of user ids among `following_ids` that `follower_id` accepted-follows."""
+    if not follower_id or not following_ids:
+        return set()
+    rows = db.execute(
+        select(Follow.following_id).where(
+            Follow.follower_id == follower_id,
+            Follow.following_id.in_(following_ids),
+            Follow.status == "accepted",
         )
     ).scalars().all()
     return set(rows)
