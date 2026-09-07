@@ -29,8 +29,15 @@ class User(Base):
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
     email_verified = Column(Boolean, default=False, nullable=False)
+    # "Primary interest" categorization (artist|collector|enthusiast) shown in onboarding —
+    # NOT an authorization role. Admin access is is_admin below; never gate on this.
     role = Column(String(32), nullable=True)
     seller_enabled = Column(Boolean, default=False, nullable=False)
+    is_admin = Column(Boolean, default=False, nullable=False)
+    # Stripe Connect (Express) — set once the artist starts onboarding. payouts_enabled is
+    # mirrored from the account.updated webhook, not trusted from a client.
+    stripe_account_id = Column(String(255), nullable=True)
+    stripe_payouts_enabled = Column(Boolean, default=False, nullable=False)
     onboarding_complete = Column(Boolean, default=False, nullable=False)
     taste_preferences = Column(JSONB, nullable=True)  # {mediums, styles, themes}
     last_username_change_at = Column(DateTime(timezone=True), nullable=True)

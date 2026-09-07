@@ -1,0 +1,217 @@
+{% extends "admin/layout.html" %}
+{% block title %}Order {{ order.id.hex[:8] }}{% endblock %}
+{% block nav_orders %}active{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('admin.orders_list') }}">← All orders</a></p>
+<h1>Order <span class="mono">{{ order.id.hex[:8] }}</span>
+  <span class="pill {{ order.status }}">{{ order.status.replace('_', ' ') }}</span></h1>
+
+{% if error %}
+<div class="panel" style="border-color:var(--danger);color:var(--danger);">{{ error }}</div>
+{% endif %}
+{% if notice %}
+<div class="panel" style="border-color:var(--accent);color:var(--accent);">{{ notice }}</div>
+{% endif %}
+
+<div class="panel">
+  <h2 style="font-size:15px;margin-top:0;">Money</h2>
+  <table>
+    <tr><td>Artwork</td><td>${{ '%.2f'|format(order.artwork_cents / 100) }}</td></tr>
+    <tr><td>Shipping charged</td><td>${{ '%.2f'|format(order.shipping_cents / 100) }}</td></tr>
+    <tr><td>Tax</td><td>${{ '%.2f'|format(order.tax_cents / 100) }}</td></tr>
+    <tr><td><strong>Collector paid</strong></td>
+        <td><strong>${{ '%.2f'|format(order.total_cents / 100) }}</strong></td></tr>
+  </table>
+  <p class="muted mono" style="margin-bottom:0;">
+    {{ order.payment_provider or 'no provider' }}
+    {% if order.payment_reference %}· {{ order.payment_reference }}{% endif %}
+  </p>
+</div>
+
+<div class="panel">
+  <h2 style="font-size:15px;margin-top:0;">Parties</h2>
+  <table>
+    <tr><th>Collector</th><td>{{ buyer.name }} <span class="muted">{{ buyer.email }}</span></td></tr>
+    <tr><th>Artist</th><td>{{ seller.name }} <span class="muted">{{ seller.email }}</span></td>
+    </tr>
+    <tr><th>Payouts enabled</th>
+        <td>{{ 'yes' if seller.stripe_payouts_enabled else 'no' }}
+            <span class="muted mono">{{ seller.stripe_account_id or '—' }}</span></td></tr>
+  </table>
+</div>
+
+<div class="panel">
+  <h2 style="font-size:15px;margin-top:0;">Artwork &amp; shipping details</h2>
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Piece</th><th>Weight</th><th>Packaged (L×W×H)</th><th>Declared value</th></tr></thead>
+    <tbody>
+      {% for piece in pieces %}
+      <tr>
+        <td>{{ piece.title }}</td>
+        <td>{{ piece.weight_kg if piece.weight_kg is not none else '—' }} kg</td>
+        <td>
+          {% if piece.package_length_cm %}
+            {{ piece.package_length_cm }}×{{ piece.package_width_cm }}×{{ piece.package_height_cm }} cm
+          {% else %}—{% endif %}
+        </td>
+        <td>
+          {% if piece.declared_value_cents %}
+            ${{ '%.2f'|format(piece.declared_value_cents / 100) }}
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="muted" style="margin-bottom:0;">
+    Ship to: {{ order.shipping_address_snapshot.get('line1', '') }},
+    {{ order.shipping_address_snapshot.get('city', '') }}
+    {{ order.shipping_address_snapshot.get('zip', '') }}
+    {{ order.shipping_address_snapshot.get('country', '') }}
+    · method: {{ order.shipping_method }}
+  </p>
+</div>
+
+<div class="panel">
+  <h2 style="font-size:15px;margin-top:0;">Shipment</h2>
+  {% if shipment %}
+    <table>
+      <tr><th>Courier</th><td>{{ shipment.courier }}</td></tr>
+      <tr><th>Tracking</th><td class="mono">{{ shipment.tracking_number }}</td></tr>
+      <tr><th>Status</th><td>{{ shipment.status.replace('_', ' ') }}</td></tr>
+      <tr><th>Actual cost</th>
+          <td>{% if shipment.actual_shipping_cost_cents %}
+                ${{ '%.2f'|format(shipment.actual_shipping_cost_cents / 100) }}
+              {% else %}<span class="muted">not recorded</span>{% endif %}</td></tr>
+    </table>
+    {% if shipment.status != 'delivered' %}
+    <form method="post" action="{{ url_for('admin.update_shipment', order_id=order.id) }}"
+          style="margin-top:12px;">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label for="status">Update status</label>
+      <select id="status" name="status" style="padding:6px;margin:0 8px;">
+        {% for s in shipment_statuses %}
+        <option value="{{ s }}" {{ 'selected' if s == shipment.status else '' }}>
+          {{ s.replace('_', ' ') }}</option>
+        {% endfor %}
+      </select>
+      {% if not shipment.actual_shipping_cost_cents %}
+      <input name="actualShippingCost" placeholder="Courier cost ($)" style="padding:6px;width:150px;">
+      {% endif %}
+      <button type="submit">Save</button>
+      <p class="muted" style="font-size:12px;">
+        Marking delivered asks the collector to confirm receipt, which releases the artist's payment.
+      </p>
+    </form>
+    {% endif %}
+  {% elif order.status == 'paid' %}
+    <form method="post" action="{{ url_for('admin.create_shipment', order_id=order.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <p>
+        <select name="courier" required style="padding:6px;">
+          {% for c in couriers %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+        </select>
+        <input name="trackingNumber" placeholder="Tracking number" required
+               style="padding:6px;width:220px;">
+        <input name="actualShippingCost" placeholder="Courier cost ($)" style="padding:6px;width:150px;">
+      </p>
+      <button type="submit">Record shipment</button>
+      <p class="muted" style="font-size:12px;">
+        Recording the courier cost is what makes the real shipping margin on this order visible.
+      </p>
+    </form>
+  {% else %}
+    <p class="muted" style="margin-bottom:0;">
+      No shipment — an order must be paid before it can ship (this one is {{ order.status }}).
+    </p>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2 style="font-size:15px;margin-top:0;">Payout</h2>
+  {% if payout %}
+    <table>
+      <tr><th>Status</th><td>{{ payout.status.replace('_', ' ') }}</td></tr>
+      <tr><th>Transfer</th><td class="mono">{{ payout.stripe_transfer_id or '—' }}</td></tr>
+      {% if payout.failure_reason %}
+        <tr><th>Failure</th><td style="color:var(--danger);">{{ payout.failure_reason }}</td></tr>
+      {% endif %}
+    </table>
+    {% if payout.status == 'transfer_failed' and order.status == 'completed' %}
+    <form method="post" action="{{ url_for('admin.retry_payout', order_id=order.id) }}"
+          style="margin-top:10px;">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit">Retry payout</button>
+      <span class="muted" style="font-size:12px;">
+        Checks Stripe for an existing transfer first, so retrying can't pay twice.
+      </span>
+    </form>
+    {% endif %}
+  {% else %}
+    <p class="muted" style="margin-bottom:0;">No payout record — the order has not been paid yet.</p>
+  {% endif %}
+</div>
+
+{% if dispute %}
+<div class="panel">
+  <h2 style="font-size:15px;margin-top:0;">Dispute</h2>
+  <table>
+    <tr><th>Status</th><td>{{ dispute.status.replace('_', ' ') }}</td></tr>
+    <tr><th>Reason</th><td>{{ dispute.reason }}</td></tr>
+    {% if dispute.resolution_note %}
+      <tr><th>Resolution</th><td>{{ dispute.resolution_note }}</td></tr>
+      <tr><th>Resolved</th>
+          <td class="muted">{{ dispute.resolved_at.strftime('%Y-%m-%d %H:%M') if dispute.resolved_at }}</td></tr>
+    {% endif %}
+  </table>
+</div>
+{% endif %}
+
+{% if order.status in ('disputed', 'awaiting_confirmation') %}
+<div class="panel">
+  <h2 style="font-size:15px;margin-top:0;">Resolve</h2>
+  <p class="muted" style="margin-top:0;">
+    Refund returns the full ${{ '%.2f'|format(order.total_cents / 100) }} to the collector.
+    Release completes the order and pays the artist. Both are final and recorded against your
+    account.
+  </p>
+  <form method="post" action="{{ url_for('admin.resolve_dispute', order_id=order.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <p>
+      <label for="reason">Reason (recorded in the audit trail)</label><br>
+      <textarea id="reason" name="reason" rows="3" required
+                style="width:100%;padding:8px;font:inherit;"></textarea>
+    </p>
+    <button type="submit" name="action" value="release">Release payment to artist</button>
+    <button type="submit" name="action" value="refund"
+            style="border-color:var(--danger);color:var(--danger);">Refund collector</button>
+  </form>
+</div>
+{% endif %}
+
+<div class="panel">
+  <h2 style="font-size:15px;margin-top:0;">Ledger</h2>
+  {% if ledger %}
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>When</th><th>Transaction</th><th>Account</th><th>Debit</th><th>Credit</th></tr></thead>
+      <tbody>
+        {% for row in ledger %}
+        <tr>
+          <td class="muted">{{ row.createdAt.strftime('%Y-%m-%d %H:%M') }}</td>
+          <td>{{ row.transactionType.replace('_', ' ') }}</td>
+          <td class="mono">{{ row.account }}</td>
+          <td>{% if row.direction == 'debit' %}${{ '%.2f'|format(row.amountCents / 100) }}{% endif %}</td>
+          <td>{% if row.direction == 'credit' %}${{ '%.2f'|format(row.amountCents / 100) }}{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+    <p class="muted" style="margin-bottom:0;">No ledger entries — no money has moved for this order yet.</p>
+  {% endif %}
+</div>
+{% endblock %}

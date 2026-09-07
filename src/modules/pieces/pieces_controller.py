@@ -23,11 +23,29 @@ from src.modules.social import social_dao
 from src.modules.series import series_dao
 
 
-def _validate_sale_fields(body, seller_enabled: bool):
+# Packaged size + weight are what couriers actually price on, and the declared value is
+# needed for customs/insurance. Collected up front so ops can book a courier without going
+# back to the artist for measurements.
+_SHIPPING_FIELDS = (
+    ("weightKg", "Package weight"),
+    ("packageLengthCm", "Package length"),
+    ("packageWidthCm", "Package width"),
+    ("packageHeightCm", "Package height"),
+)
+
+
+def _validate_sale_fields(body, seller_enabled: bool, seller=None):
     if not body.get("isForSale"):
         return
     if not seller_enabled:
         raise AppError("Enable seller mode before listing for sale.", 403)
+    # FR-1.3: a piece can't go on sale until the artist can actually be paid. Drafts are
+    # fine without Connect — this only gates going live.
+    if seller is not None and not seller.stripe_payouts_enabled:
+        raise AppError(
+            "Finish payout setup before listing work for sale, so we can pay you when it sells.",
+            403,
+        )
     price = body.get("priceCents")
     if not price or int(price) < 100:
         raise AppError("Price must be at least $1.00 (100 cents).", 400)
@@ -37,6 +55,23 @@ def _validate_sale_fields(body, seller_enabled: bool):
         raise AppError("Dimensions are required for sale listings.", 400)
     if not body.get("shippingRegion"):
         raise AppError("Shipping region is required for sale listings.", 400)
+    for key, label in _SHIPPING_FIELDS:
+        value = body.get(key)
+        if value is None:
+            raise AppError(f"{label} is required for sale listings.", 400)
+        try:
+            if float(value) <= 0:
+                raise AppError(f"{label} must be greater than zero.", 400)
+        except (TypeError, ValueError):
+            raise AppError(f"{label} must be a number.", 400)
+    declared = body.get("declaredValueCents")
+    if declared is None:
+        raise AppError("Declared value is required for sale listings.", 400)
+    try:
+        if int(declared) <= 0:
+            raise AppError("Declared value must be greater than zero.", 400)
+    except (TypeError, ValueError):
+        raise AppError("Declared value must be a number.", 400)
 
 
 def create():
@@ -48,7 +83,7 @@ def create():
         if not media_url:
             raise AppError("mediaUrl is required.", 400)
         validate_user_media_url(user.username, media_url)
-        _validate_sale_fields(body, user.seller_enabled)
+        _validate_sale_fields(body, user.seller_enabled, seller=user)
         piece = create_piece(
             db,
             user_id=user.id,
@@ -66,6 +101,11 @@ def create():
             currency=body.get("currency", "USD"),
             dimensions=body.get("dimensions"),
             shipping_region=body.get("shippingRegion"),
+            weight_kg=body.get("weightKg"),
+            package_length_cm=body.get("packageLengthCm"),
+            package_width_cm=body.get("packageWidthCm"),
+            package_height_cm=body.get("packageHeightCm"),
+            declared_value_cents=body.get("declaredValueCents"),
             location=body.get("location"),
             media_aspect_ratio=body.get("mediaAspectRatio"),
             year_created=body.get("yearCreated"),
@@ -128,6 +168,9 @@ def patch(piece_id: str):
             ("location", "location"),
             ("year_created", "yearCreated"), ("framing_mounting", "framingMounting"),
             ("provenance", "provenance"), ("handling_notes", "handlingNotes"),
+            ("weight_kg", "weightKg"), ("package_length_cm", "packageLengthCm"),
+            ("package_width_cm", "packageWidthCm"), ("package_height_cm", "packageHeightCm"),
+            ("declared_value_cents", "declaredValueCents"),
         ]:
             if key in body:
                 setattr(piece, attr, body[key])
@@ -136,7 +179,11 @@ def patch(piece_id: str):
         if "styleTags" in body:
             piece.style_tags = body["styleTags"]
         if "isForSale" in body:
-            _validate_sale_fields({**piece_to_dict(piece), **body, "isForSale": body["isForSale"]}, user.seller_enabled)
+            _validate_sale_fields(
+                {**piece_to_dict(piece), **body, "isForSale": body["isForSale"]},
+                user.seller_enabled,
+                seller=user,
+            )
             piece.is_for_sale = bool(body["isForSale"])
         if "priceCents" in body:
             piece.price_cents = body["priceCents"]

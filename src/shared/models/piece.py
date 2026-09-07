@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, String, Boolean, Integer, Text, ForeignKey
+from sqlalchemy import Column, DateTime, String, Boolean, Integer, Float, Text, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
 
 from src.shared.config.database import Base
@@ -29,8 +29,16 @@ class Piece(Base):
     is_for_sale = Column(Boolean, default=False, nullable=False)
     price_cents = Column(Integer, nullable=True)
     currency = Column(String(3), default="USD", nullable=False)
-    dimensions = Column(JSONB, nullable=True)
+    dimensions = Column(JSONB, nullable=True)  # the artwork's own size, for display
     shipping_region = Column(String(64), nullable=True)
+    # Courier-facing shipping attributes. Deliberately separate from `dimensions`: couriers
+    # price on the *packaged* size (crating/framing adds bulk) plus weight, and need a
+    # declared value for customs/insurance. Required once is_for_sale is true.
+    weight_kg = Column(Float, nullable=True)
+    package_length_cm = Column(Float, nullable=True)
+    package_width_cm = Column(Float, nullable=True)
+    package_height_cm = Column(Float, nullable=True)
+    declared_value_cents = Column(Integer, nullable=True)
     location = Column(String(255), nullable=True)
     media_aspect_ratio = Column(String(8), nullable=True)
     year_created = Column(Integer, nullable=True)

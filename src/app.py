@@ -1,15 +1,40 @@
 """Flask app: middleware (CORS, JSON), API blueprints, global error handler."""
 import os
+from datetime import timedelta
+
 from flask import Flask
 from flask_cors import CORS
+from flask_wtf.csrf import CSRFProtect
 
 from src.middlewares.error_handler import register_error_handler
 from src.shared.realtime.socketio_instance import socketio
 
+csrf = CSRFProtect()
+
+
+def _secret_key() -> str:
+    """SECRET_KEY signs the admin session cookie, which gates refunds and payout releases.
+    A default value in production would let anyone forge an admin session, so fail at boot
+    rather than start up insecure."""
+    key = (os.getenv("SECRET_KEY") or "").strip()
+    if key:
+        return key
+    if os.getenv("FLASK_ENV", "development") != "development":
+        raise RuntimeError("SECRET_KEY must be set outside development.")
+    return "dev-only-insecure-key"
+
+
 def create_app():
     app = Flask(__name__)
-    app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "change-me")
+    app.config["SECRET_KEY"] = _secret_key()
     app.config["JSON_SORT_KEYS"] = False
+
+    # Admin session cookies (browser-only /admin UI). The mobile API is bearer-token based
+    # and unaffected by these.
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    app.config["SESSION_COOKIE_SECURE"] = os.getenv("FLASK_ENV", "development") != "development"
+    app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=12)
 
     # CORS: allow frontend origin
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
@@ -31,6 +56,9 @@ def create_app():
     from src.modules.orders.orders_routes import orders_bp
     from src.modules.chat.chat_routes import chat_bp
     from src.modules.collections.collections_routes import collections_bp
+    from src.modules.admin.admin_routes import admin_bp
+    from src.modules.payments.payments_routes import payments_bp
+    from src.modules.connect.connect_routes import connect_bp
 
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
     app.register_blueprint(user_bp, url_prefix="/api/user")
@@ -46,6 +74,23 @@ def create_app():
     app.register_blueprint(orders_bp, url_prefix="/api/orders")
     app.register_blueprint(chat_bp, url_prefix="/api/conversations")
     app.register_blueprint(collections_bp, url_prefix="/api/collections")
+    app.register_blueprint(payments_bp, url_prefix="/api/payments")
+    app.register_blueprint(connect_bp, url_prefix="/api/artists")
+    # Internal ops UI: HTML, session-cookie auth, deliberately outside the /api prefix.
+    app.register_blueprint(admin_bp, url_prefix="/admin")
+
+    # CSRF applies only to the cookie-authenticated admin forms. The JSON API authenticates
+    # with a bearer token that a cross-site form post cannot supply, so blanket checking is
+    # off (it would break every mobile client) and admin writes opt in below.
+    app.config["WTF_CSRF_CHECK_DEFAULT"] = False
+    csrf.init_app(app)
+
+    @app.before_request
+    def _csrf_protect_admin():
+        from flask import request
+
+        if request.blueprint == "admin" and request.method not in ("GET", "HEAD", "OPTIONS"):
+            csrf.protect()
 
     # Real-time chat: binds the shared SocketIO instance to this app and registers its
     # @socketio.on(...) handlers (import has the side effect of registering them).

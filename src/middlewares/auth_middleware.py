@@ -109,3 +109,21 @@ def seller_required(f):
             raise AppError("Enable seller mode to perform this action.", 403)
         return f(*args, **kwargs)
     return wrapper
+
+
+def admin_required(f):
+    """JWT-based admin gate for JSON API routes.
+
+    Note the browser-facing /admin UI uses a separate session-cookie gate
+    (admin_session_required in src/modules/admin) — this one is for API clients.
+    Authorization is the `is_admin` flag only; User.role is a marketing category
+    (artist/collector/enthusiast) and must never be used for access control.
+    """
+    @wraps(f)
+    @auth_required
+    def wrapper(*args, **kwargs):
+        user = _get_db_user()
+        if not user or not user.is_admin:
+            raise AppError("Admin access required.", 403)
+        return f(*args, **kwargs)
+    return wrapper
