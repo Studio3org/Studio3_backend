@@ -27,6 +27,10 @@ class Piece(Base):
     ai_disclosed = Column(Boolean, default=False, nullable=False)
     alt_text = Column(Text, nullable=True)
     is_for_sale = Column(Boolean, default=False, nullable=False)
+    # 'fixed' | 'auction' — only meaningful when is_for_sale is true.
+    listing_type = Column(String(16), nullable=True)
+    # Auction window in days (3–14). Starting bid is stored in price_cents.
+    auction_duration_days = Column(Integer, nullable=True)
     price_cents = Column(Integer, nullable=True)
     currency = Column(String(3), default="USD", nullable=False)
     dimensions = Column(JSONB, nullable=True)  # the artwork's own size, for display

@@ -49,6 +49,17 @@ def _validate_sale_fields(body, seller_enabled: bool, seller=None):
             "Finish payout setup before listing work for sale, so we can pay you when it sells.",
             403,
         )
+    listing_type = (body.get("listingType") or "fixed").strip().lower()
+    if listing_type not in ("fixed", "auction"):
+        raise AppError("listingType must be fixed or auction.", 400)
+    if listing_type == "auction":
+        days = body.get("auctionDurationDays")
+        try:
+            days_int = int(days)
+        except (TypeError, ValueError):
+            raise AppError("Auction duration must be between 3 and 14 days.", 400)
+        if days_int < 3 or days_int > 14:
+            raise AppError("Auction duration must be between 3 and 14 days.", 400)
     price = body.get("priceCents")
     if not price or int(price) < 100:
         raise AppError("Price must be at least $1.00 (100 cents).", 400)
@@ -56,25 +67,25 @@ def _validate_sale_fields(body, seller_enabled: bool, seller=None):
         raise AppError("Medium is required for sale listings.", 400)
     if not body.get("dimensions"):
         raise AppError("Dimensions are required for sale listings.", 400)
-    if not body.get("shippingRegion"):
-        raise AppError("Shipping region is required for sale listings.", 400)
+    # Packaged shipping attrs are optional on this posting flow (Figma 2720:6711
+    # Details tab has artwork W×H only). When present they still have to be
+    # positive numbers so ops aren't given unusable values.
     for key, label in _SHIPPING_FIELDS:
         value = body.get(key)
         if value is None:
-            raise AppError(f"{label} is required for sale listings.", 400)
+            continue
         try:
             if float(value) <= 0:
                 raise AppError(f"{label} must be greater than zero.", 400)
         except (TypeError, ValueError):
             raise AppError(f"{label} must be a number.", 400)
     declared = body.get("declaredValueCents")
-    if declared is None:
-        raise AppError("Declared value is required for sale listings.", 400)
-    try:
-        if int(declared) <= 0:
-            raise AppError("Declared value must be greater than zero.", 400)
-    except (TypeError, ValueError):
-        raise AppError("Declared value must be a number.", 400)
+    if declared is not None:
+        try:
+            if int(declared) <= 0:
+                raise AppError("Declared value must be greater than zero.", 400)
+        except (TypeError, ValueError):
+            raise AppError("Declared value must be a number.", 400)
 
 
 def _extract_images(body: dict) -> list[dict]:
@@ -143,6 +154,17 @@ def create():
             ai_disclosed=bool(body.get("aiDisclosed", False)),
             alt_text=body.get("altText"),
             is_for_sale=bool(body.get("isForSale", False)),
+            listing_type=(
+                (body.get("listingType") or "fixed").strip().lower()
+                if body.get("isForSale")
+                else None
+            ),
+            auction_duration_days=(
+                body.get("auctionDurationDays")
+                if body.get("isForSale")
+                and (body.get("listingType") or "fixed").strip().lower() == "auction"
+                else None
+            ),
             price_cents=body.get("priceCents"),
             currency=body.get("currency", "USD"),
             dimensions=body.get("dimensions"),
@@ -243,12 +265,16 @@ def patch(piece_id: str):
         if "styleTags" in body:
             piece.style_tags = body["styleTags"]
         if "isForSale" in body:
-            _validate_sale_fields(
-                {**piece_to_dict(piece), **body, "isForSale": body["isForSale"]},
-                user.seller_enabled,
-                seller=user,
-            )
+            merged = {**piece_to_dict(piece), **body, "isForSale": body["isForSale"]}
+            _validate_sale_fields(merged, user.seller_enabled, seller=user)
             piece.is_for_sale = bool(body["isForSale"])
+            if not piece.is_for_sale:
+                piece.listing_type = None
+                piece.auction_duration_days = None
+        if "listingType" in body:
+            piece.listing_type = body["listingType"]
+        if "auctionDurationDays" in body:
+            piece.auction_duration_days = body["auctionDurationDays"]
         if "priceCents" in body:
             piece.price_cents = body["priceCents"]
         if "dimensions" in body:

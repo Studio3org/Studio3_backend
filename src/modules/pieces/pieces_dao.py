@@ -157,6 +157,8 @@ def piece_to_dict(piece: Piece, media: Optional[list[PieceMedia]] = None) -> dic
         "aiDisclosed": piece.ai_disclosed,
         "altText": piece.alt_text,
         "isForSale": piece.is_for_sale,
+        "listingType": piece.listing_type,
+        "auctionDurationDays": piece.auction_duration_days,
         "listingState": listing_state,
         "priceCents": piece.price_cents,
         "currency": piece.currency,
