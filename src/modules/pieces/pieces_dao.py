@@ -3,10 +3,11 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete
 from sqlalchemy.orm import Session
 
 from src.shared.models.piece import Piece
+from src.shared.models.piece_media import PieceMedia
 
 
 def create_piece(db: Session, **kwargs) -> Piece:
@@ -63,6 +64,54 @@ def list_saved_pieces(db: Session, user_id: uuid.UUID) -> list[Piece]:
     return list(db.execute(q).scalars().all())
 
 
+def replace_piece_media(db: Session, piece_id: uuid.UUID, images: list[dict]) -> list[PieceMedia]:
+    """Replaces a piece's whole image gallery. `images` is ordered — index 0
+    becomes the cover (`sort_order` 0), mirrored onto the piece's own
+    scalar media fields by the caller."""
+    db.execute(delete(PieceMedia).where(PieceMedia.piece_id == piece_id))
+    rows = [
+        PieceMedia(
+            id=uuid.uuid4(),
+            piece_id=piece_id,
+            media_url=image["mediaUrl"],
+            media_type=image.get("mediaType", "image"),
+            media_aspect_ratio=image.get("mediaAspectRatio"),
+            sort_order=index,
+        )
+        for index, image in enumerate(images)
+    ]
+    db.add_all(rows)
+    db.commit()
+    return rows
+
+
+def list_piece_media(db: Session, piece_id: uuid.UUID) -> list[PieceMedia]:
+    return list(
+        db.execute(
+            select(PieceMedia)
+            .where(PieceMedia.piece_id == piece_id)
+            .order_by(PieceMedia.sort_order.asc())
+        ).scalars().all()
+    )
+
+
+def batch_list_piece_media(
+    db: Session, piece_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[PieceMedia]]:
+    """Avoids N+1 queries when serializing a list of pieces."""
+    if not piece_ids:
+        return {}
+    rows = db.execute(
+        select(PieceMedia)
+        .where(PieceMedia.piece_id.in_(piece_ids))
+        .order_by(PieceMedia.piece_id, PieceMedia.sort_order.asc())
+    ).scalars().all()
+    result: dict[uuid.UUID, list[PieceMedia]] = {}
+    for row in rows:
+        result.setdefault(row.piece_id, []).append(row)
+    return result
+
+
 def delete_piece(db: Session, piece: Piece) -> None:
     piece.deleted_at = datetime.now(timezone.utc)
     piece.status = "deleted"
@@ -80,14 +129,27 @@ def piece_listing_state(piece: Piece) -> Optional[str]:
     return None
 
 
-def piece_to_dict(piece: Piece) -> dict:
+def piece_to_dict(piece: Piece, media: Optional[list[PieceMedia]] = None) -> dict:
     listing_state = piece_listing_state(piece)
+    images = [
+        {
+            "mediaUrl": m.media_url,
+            "mediaType": m.media_type,
+            "mediaAspectRatio": m.media_aspect_ratio,
+            "sortOrder": m.sort_order,
+        }
+        for m in (media or [])
+    ]
     return {
         "id": str(piece.id),
         "userId": str(piece.user_id),
         "title": piece.title,
         "mediaUrl": piece.media_url,
         "mediaType": piece.media_type,
+        # Full ordered gallery (Figma 2716:5774 cover/reorder flow) — index 0
+        # is always the cover and matches the scalar mediaUrl/mediaType
+        # above, kept for clients that only read a single cover image.
+        "images": images,
         "caption": piece.caption,
         "medium": piece.medium,
         "materials": piece.materials or [],

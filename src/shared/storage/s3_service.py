@@ -10,6 +10,7 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from src.shared.models.piece import Piece
+from src.shared.models.piece_media import PieceMedia
 from src.shared.models.post import Post
 from src.shared.models.user import User
 from src.shared.storage.s3_client import get_public_base_url, get_s3_client, get_bucket, s3_configured
@@ -123,9 +124,18 @@ def _rewrite_urls_db(db: Session, user_id, old_username: str, new_username: str)
         if user.cover_photo_url and old_username.lower() in user.cover_photo_url.lower():
             user.cover_photo_url = user.cover_photo_url.replace(f"{base}/{old_prefix}", f"{base}/{new_prefix}").replace(old_prefix, new_prefix)
 
+    piece_ids = []
     for piece in db.execute(select(Piece).where(Piece.user_id == user_id)).scalars():
+        piece_ids.append(piece.id)
         if piece.media_url:
             piece.media_url = piece.media_url.replace(f"{base}/{old_prefix}", f"{base}/{new_prefix}")
+
+    if piece_ids:
+        for media in db.execute(
+            select(PieceMedia).where(PieceMedia.piece_id.in_(piece_ids))
+        ).scalars():
+            if media.media_url:
+                media.media_url = media.media_url.replace(f"{base}/{old_prefix}", f"{base}/{new_prefix}")
 
     for post in db.execute(select(Post).where(Post.user_id == user_id)).scalars():
         if post.media_url:

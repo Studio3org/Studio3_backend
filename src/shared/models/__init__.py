@@ -6,6 +6,7 @@ from src.shared.models.refresh_token import RefreshToken
 from src.shared.models.password_reset_token import PasswordResetToken
 from src.shared.models.username_history import UsernameHistory
 from src.shared.models.piece import Piece
+from src.shared.models.piece_media import PieceMedia
 from src.shared.models.post import Post
 from src.shared.models.social import Follow, Like, Comment, Collection, CollectionItem, Save
 from src.shared.models.series import Series, SeriesPiece
@@ -30,6 +31,7 @@ __all__ = [
     "PasswordResetToken",
     "UsernameHistory",
     "Piece",
+    "PieceMedia",
     "Post",
     "Follow",
     "Like",
