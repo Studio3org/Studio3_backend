@@ -43,6 +43,10 @@ def get_detail(series_id: str):
         series = series_dao.get_series(db, uuid.UUID(series_id))
         if not series:
             raise AppError("Series not found.", 404)
+        owner = get_user_by_id(db, series.user_id)
+        viewer_id = uuid.UUID(g.user["id"]) if getattr(g, "user", None) else None
+        if owner and not social_dao.can_view_content(db, owner, viewer_id):
+            raise AppError("This account is private.", 403)
         return series_dao.series_detail_dict(db, series), 200
     finally:
         db.close()
@@ -65,6 +69,10 @@ def create():
     try:
         user = get_user_by_id(db, uuid.UUID(g.user["id"]))
         series = series_dao.create_series(db, user.id, name[:200])
+        description = (body.get("description") or "").strip()
+        if description:
+            series.description = description[:4000]
+            db.commit()
         for pid in piece_ids:
             piece = get_piece(db, uuid.UUID(pid))
             if not piece or piece.user_id != user.id:
@@ -88,6 +96,11 @@ def patch(series_id: str):
             if not name:
                 raise AppError("Series name is required.", 400)
             series.name = name[:200]
+            db.commit()
+        if "description" in body:
+            raw = body.get("description")
+            text = (raw or "").strip()
+            series.description = text[:4000] if text else None
             db.commit()
         if "pieceOrder" in body:
             piece_order = [uuid.UUID(pid) for pid in body["pieceOrder"]]

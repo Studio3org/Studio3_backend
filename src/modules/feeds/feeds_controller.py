@@ -21,6 +21,9 @@ from src.modules.social import social_dao
 DEFAULT_LIMIT = 20
 MAX_LIMIT = 50
 
+# Live work plus sold/reserved listings so home can show Available vs Collected.
+_FEED_PIECE_STATUSES = ("live", "sold", "reserved")
+
 
 def _encode_cursor(created_at, item_id) -> str:
     raw = f"{created_at.isoformat()}|{item_id}"
@@ -133,7 +136,9 @@ def following_feed():
         )
         following_ids.append(me.id)
         piece_query = select(Piece).where(
-            Piece.user_id.in_(following_ids), Piece.deleted_at.is_(None), Piece.status == "live"
+            Piece.user_id.in_(following_ids),
+            Piece.deleted_at.is_(None),
+            Piece.status.in_(_FEED_PIECE_STATUSES),
         )
         post_query = select(Post).where(
             Post.user_id.in_(following_ids), Post.deleted_at.is_(None), Post.status == "live"
@@ -148,7 +153,10 @@ def explore_feed():
     viewer_id = uuid.UUID(g.user["id"]) if getattr(g, "user", None) else None
     db = SessionLocal()
     try:
-        piece_query = select(Piece).where(Piece.deleted_at.is_(None), Piece.status == "live")
+        piece_query = select(Piece).where(
+            Piece.deleted_at.is_(None),
+            Piece.status.in_(_FEED_PIECE_STATUSES),
+        )
         post_query = select(Post).where(Post.deleted_at.is_(None), Post.status == "live")
 
         if medium == "video":

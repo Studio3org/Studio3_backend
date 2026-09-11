@@ -69,7 +69,19 @@ def delete_piece(db: Session, piece: Piece) -> None:
     db.commit()
 
 
+def piece_listing_state(piece: Piece) -> Optional[str]:
+    """Marketplace badge for feed cards: available to buy, collected, or none."""
+    if piece.status in ("sold", "reserved"):
+        return "collected"
+    if piece.status == "delisted" and piece.is_for_sale:
+        return "collected"
+    if piece.is_for_sale and piece.status == "live":
+        return "available"
+    return None
+
+
 def piece_to_dict(piece: Piece) -> dict:
+    listing_state = piece_listing_state(piece)
     return {
         "id": str(piece.id),
         "userId": str(piece.user_id),
@@ -83,6 +95,7 @@ def piece_to_dict(piece: Piece) -> dict:
         "aiDisclosed": piece.ai_disclosed,
         "altText": piece.alt_text,
         "isForSale": piece.is_for_sale,
+        "listingState": listing_state,
         "priceCents": piece.price_cents,
         "currency": piece.currency,
         "dimensions": piece.dimensions,

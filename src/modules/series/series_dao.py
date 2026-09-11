@@ -86,18 +86,35 @@ def set_piece_order(db: Session, series_id: uuid.UUID, piece_order: list[uuid.UU
 
 def series_summary_dict(db: Session, series: Series) -> dict:
     pieces = list_series_pieces(db, series.id)
+    newest = sorted(pieces, key=lambda p: p.created_at, reverse=True)
+    cover = newest[0].media_url if newest else None
     return {
         "id": str(series.id),
         "name": series.name,
+        "description": series.description,
         "pieceCount": len(pieces),
+        "coverUrl": cover,
         "previewPieces": [
-            {"id": str(p.id), "mediaUrl": p.media_url, "title": p.title} for p in pieces[:4]
+            {"id": str(p.id), "mediaUrl": p.media_url, "title": p.title}
+            for p in newest[:4]
         ],
     }
 
 
 def series_detail_dict(db: Session, series: Series) -> dict:
+    from src.modules.pieces.pieces_dao import piece_to_dict
+    from src.shared.models.user import User
+
     pieces = list_series_pieces(db, series.id)
+    newest = sorted(pieces, key=lambda p: p.created_at, reverse=True)
     d = series_summary_dict(db, series)
     d["pieceIds"] = [str(p.id) for p in pieces]
+    d["pieces"] = [piece_to_dict(p) for p in newest]
+    author = db.get(User, series.user_id)
+    if author:
+        d["author"] = {
+            "username": author.username,
+            "name": author.name,
+            "profilePhotoUrl": author.image,
+        }
     return d
