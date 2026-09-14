@@ -42,6 +42,18 @@ def disputes_queue():
     return admin_controller.disputes_queue()
 
 
+@admin_bp.get("/reports")
+@admin_session_required
+def reports_queue():
+    return admin_controller.reports_queue()
+
+
+@admin_bp.post("/reports/<report_id>/resolve")
+@admin_session_required
+def resolve_report(report_id):
+    return admin_controller.resolve_report(report_id)
+
+
 @admin_bp.post("/orders/<order_id>/shipment")
 @admin_session_required
 def create_shipment(order_id):

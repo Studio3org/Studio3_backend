@@ -1,0 +1,63 @@
+{% extends "admin/layout.html" %}
+{% block title %}Reports{% endblock %}
+{% block nav_reports %}active{% endblock %}
+{% block content %}
+<h1>Reported content &amp; accounts</h1>
+
+{% if error %}<div class="panel" style="color:var(--danger);">{{ error }}</div>{% endif %}
+{% if notice %}<div class="panel" style="color:var(--accent);">{{ notice }}</div>{% endif %}
+
+<div class="panel filters">
+  <a href="{{ url_for('admin.reports_queue', status='open') }}"
+     class="{{ 'active' if active_status == 'open' else '' }}">Open ({{ open_count }})</a>
+  <a href="{{ url_for('admin.reports_queue', status='resolved') }}"
+     class="{{ 'active' if active_status == 'resolved' else '' }}">Resolved</a>
+  <a href="{{ url_for('admin.reports_queue', status='dismissed') }}"
+     class="{{ 'active' if active_status == 'dismissed' else '' }}">Dismissed</a>
+  <a href="{{ url_for('admin.reports_queue') }}?status="
+     class="{{ 'active' if not active_status else '' }}">All</a>
+</div>
+
+<div class="panel table-scroll">
+  <table>
+    <thead>
+      <tr>
+        <th>Reported</th><th>Target</th><th>Reporter</th><th>Reason</th><th>Details</th>
+        <th>Status</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td class="muted">{{ row.report.created_at.strftime('%Y-%m-%d') }}</td>
+        <td><span class="pill">{{ row.report.target_type }}</span> {{ row.target_label }}</td>
+        <td>{{ row.reporter.name if row.reporter else 'Unknown' }}
+          <span class="muted">{{ row.reporter.email if row.reporter else '' }}</span></td>
+        <td>{{ row.report.reason.replace('_', ' ') }}</td>
+        <td class="muted">{{ row.report.details[:120] if row.report.details else '—' }}</td>
+        <td><span class="pill {{ 'disputed' if row.report.status == 'open' else 'completed' }}">
+          {{ row.report.status }}</span></td>
+        <td>
+          {% if row.report.status == 'open' %}
+          <form method="post" action="{{ url_for('admin.resolve_report', report_id=row.report.id) }}"
+                style="display:flex; gap:6px; align-items:center;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <select name="action">
+              <option value="resolve">Resolve</option>
+              <option value="dismiss">Dismiss</option>
+            </select>
+            <input type="text" name="note" placeholder="Note (optional)" style="width:140px;">
+            <button type="submit">Save</button>
+          </form>
+          {% else %}
+          <span class="muted">{{ row.report.resolution_note or '—' }}</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="muted">Nothing here — no reports in this state.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

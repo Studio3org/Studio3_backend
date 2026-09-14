@@ -47,6 +47,7 @@ def create_app():
     from src.modules.pieces.pieces_routes import pieces_bp
     from src.modules.posts.posts_routes import posts_bp
     from src.modules.social.social_routes import social_bp
+    from src.modules.reports.report_routes import reports_bp
     from src.modules.feeds.feeds_routes import feeds_bp
     from src.modules.series.series_routes import series_bp
     from src.modules.notifications.notifications_routes import notifications_bp
@@ -67,6 +68,7 @@ def create_app():
     app.register_blueprint(pieces_bp, url_prefix="/api/pieces")
     app.register_blueprint(posts_bp, url_prefix="/api/posts")
     app.register_blueprint(social_bp, url_prefix="/api")
+    app.register_blueprint(reports_bp, url_prefix="/api")
     app.register_blueprint(feeds_bp, url_prefix="/api/feed")
     app.register_blueprint(series_bp, url_prefix="/api/series")
     app.register_blueprint(notifications_bp, url_prefix="/api/notifications")

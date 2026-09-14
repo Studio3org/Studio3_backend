@@ -11,6 +11,9 @@ from sqlalchemy import select
 
 from src.shared.config.database import SessionLocal
 from src.shared.models.user import User
+from src.shared.models.piece import Piece
+from src.shared.models.post import Post
+from src.shared.models.report import REPORT_RESOLVED, REPORT_DISMISSED
 from src.shared.utils.app_error import AppError
 from src.shared.utils.logger import get_logger
 from src.shared.utils.rate_limit import rate_limit_ip
@@ -19,6 +22,7 @@ from src.modules.admin.admin_auth import login_session, logout_session
 from src.modules.orders import orders_dao
 from src.modules.payments import payouts_service
 from src.modules.shipments import shipments_dao
+from src.modules.reports import report_dao
 
 logger = get_logger(__name__)
 
@@ -148,6 +152,85 @@ def disputes_queue():
         )
     finally:
         db.close()
+
+
+def reports_queue():
+    db = SessionLocal()
+    try:
+        status = request.args.get("status", "open") or None
+        reports = report_dao.list_reports(db, status=status)
+
+        reporter_ids = {r.reporter_id for r in reports}
+        reporters = (
+            {u.id: u for u in db.execute(select(User).where(User.id.in_(reporter_ids))).scalars()}
+            if reporter_ids
+            else {}
+        )
+        piece_ids = {r.target_id for r in reports if r.target_type == "piece"}
+        post_ids = {r.target_id for r in reports if r.target_type == "post"}
+        user_ids = {r.target_id for r in reports if r.target_type == "user"}
+        pieces = (
+            {p.id: p.title for p in db.execute(select(Piece).where(Piece.id.in_(piece_ids))).scalars()}
+            if piece_ids
+            else {}
+        )
+        posts = (
+            {
+                p.id: (p.caption or "Scene")[:60]
+                for p in db.execute(select(Post).where(Post.id.in_(post_ids))).scalars()
+            }
+            if post_ids
+            else {}
+        )
+        target_users = (
+            {u.id: f"@{u.username}" for u in db.execute(select(User).where(User.id.in_(user_ids))).scalars()}
+            if user_ids
+            else {}
+        )
+
+        def target_label(r):
+            if r.target_type == "piece":
+                return pieces.get(r.target_id, "Deleted piece")
+            if r.target_type == "post":
+                return posts.get(r.target_id, "Deleted scene")
+            return target_users.get(r.target_id, "Deleted account")
+
+        rows = [
+            {"report": r, "reporter": reporters.get(r.reporter_id), "target_label": target_label(r)}
+            for r in reports
+        ]
+        return render_template(
+            "admin/reports.html",
+            admin=g.admin,
+            rows=rows,
+            open_count=report_dao.count_open_reports(db),
+            active_status=status,
+            error=request.args.get("error"),
+            notice=request.args.get("notice"),
+        )
+    finally:
+        db.close()
+
+
+def resolve_report(report_id: str):
+    rid = _parse_uuid(report_id)
+    if not rid:
+        return redirect(url_for("admin.reports_queue"))
+    action = (request.form.get("action") or "").strip()
+    note = (request.form.get("note") or "").strip()
+    status_map = {"resolve": REPORT_RESOLVED, "dismiss": REPORT_DISMISSED}
+    if action not in status_map:
+        return redirect(url_for("admin.reports_queue", error="Choose resolve or dismiss."))
+
+    db = SessionLocal()
+    try:
+        report = report_dao.get_report(db, rid)
+        if not report:
+            return redirect(url_for("admin.reports_queue", error="Report not found."))
+        report_dao.resolve_report(db, report, g.admin.id, status_map[action], note or None)
+    finally:
+        db.close()
+    return redirect(url_for("admin.reports_queue", notice="Report resolved."))
 
 
 def create_shipment(order_id: str):
