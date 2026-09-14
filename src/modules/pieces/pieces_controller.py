@@ -1,5 +1,6 @@
 """Pieces controller."""
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from flask import request, g
@@ -24,6 +25,7 @@ from src.modules.pieces.pieces_dao import (
 )
 from src.modules.social import social_dao
 from src.modules.series import series_dao
+from src.modules.bids import bid_dao
 
 
 # Packaged size + weight are what couriers actually price on, and the declared value is
@@ -86,6 +88,21 @@ def _validate_sale_fields(body, seller_enabled: bool, seller=None):
                 raise AppError("Declared value must be greater than zero.", 400)
         except (TypeError, ValueError):
             raise AppError("Declared value must be a number.", 400)
+
+
+def _start_auction_clock_if_needed(piece) -> None:
+    """The countdown starts the first time an auction piece goes live, not at creation —
+    a piece can sit in draft for a while before publishing, and re-publishing must never
+    restart a clock that's already running."""
+    if (
+        piece.status == "live"
+        and piece.listing_type == "auction"
+        and piece.auction_duration_days
+        and piece.auction_ends_at is None
+    ):
+        piece.auction_ends_at = datetime.now(timezone.utc) + timedelta(
+            days=piece.auction_duration_days
+        )
 
 
 def _extract_images(body: dict) -> list[dict]:
@@ -182,6 +199,9 @@ def create():
             handling_notes=body.get("handlingNotes"),
             status="draft" if body.get("status") == "draft" else "live",
         )
+        _start_auction_clock_if_needed(piece)
+        db.commit()
+        db.refresh(piece)
         replace_piece_media(db, piece.id, images)
         return piece_to_dict(piece, media=list_piece_media(db, piece.id)), 201
     finally:
@@ -206,6 +226,8 @@ def enrich_piece_dict(db, piece, viewer_id: Optional[uuid.UUID]) -> dict:
     series = series_dao.get_series_for_piece(db, piece.id)
     base["series"] = series_dao.series_detail_dict(db, series) if series else None
     base["relatedPosts"] = [post_to_dict(p) for p in list_related_posts(db, piece.id)]
+    if piece.listing_type == "auction":
+        base.update(bid_dao.bid_summary(db, piece, viewer_id=viewer_id))
     return base
 
 
@@ -281,6 +303,7 @@ def patch(piece_id: str):
             piece.dimensions = body["dimensions"]
         if "status" in body:
             piece.status = body["status"]
+        _start_auction_clock_if_needed(piece)
         db.commit()
         db.refresh(piece)
         return piece_to_dict(piece, media=list_piece_media(db, piece.id)), 200

@@ -122,6 +122,11 @@ def create_app():
     # Global error handler (register last)
     register_error_handler(app)
 
+    # Auction close job — the one scheduled task in this codebase (see src/shared/scheduler.py
+    # for why an in-process scheduler is safe given this deployment's single gunicorn worker).
+    if not app.config.get("TESTING"):
+        from src.shared.scheduler import start_scheduler
 
+        start_scheduler()
 
     return app

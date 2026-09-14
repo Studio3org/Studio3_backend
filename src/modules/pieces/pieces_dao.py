@@ -159,6 +159,7 @@ def piece_to_dict(piece: Piece, media: Optional[list[PieceMedia]] = None) -> dic
         "isForSale": piece.is_for_sale,
         "listingType": piece.listing_type,
         "auctionDurationDays": piece.auction_duration_days,
+        "auctionEndsAt": piece.auction_ends_at.isoformat() if piece.auction_ends_at else None,
         "listingState": listing_state,
         "priceCents": piece.price_cents,
         "currency": piece.currency,

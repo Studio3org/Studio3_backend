@@ -31,6 +31,9 @@ class Piece(Base):
     listing_type = Column(String(16), nullable=True)
     # Auction window in days (3–14). Starting bid is stored in price_cents.
     auction_duration_days = Column(Integer, nullable=True)
+    # Set once, the first time the piece goes live, from created/published time +
+    # auction_duration_days — republishing a draft never restarts the clock.
+    auction_ends_at = Column(DateTime(timezone=True), nullable=True)
     price_cents = Column(Integer, nullable=True)
     currency = Column(String(3), default="USD", nullable=False)
     dimensions = Column(JSONB, nullable=True)  # the artwork's own size, for display
@@ -49,7 +52,9 @@ class Piece(Base):
     framing_mounting = Column(Text, nullable=True)
     provenance = Column(Text, nullable=True)
     handling_notes = Column(Text, nullable=True)
-    status = Column(String(32), default="live", nullable=False)  # draft|live|sold|delisted|reserved
+    # draft|live|sold|delisted|reserved|auction_won (auction_won: auction closed with a
+    # winning bid, awaiting the winner's checkout — see src/modules/bids).
+    status = Column(String(32), default="live", nullable=False)
     deleted_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)

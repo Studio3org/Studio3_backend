@@ -91,6 +91,55 @@ def create_order(
     return order
 
 
+def create_auction_order(
+    db: Session,
+    buyer_id: uuid.UUID,
+    seller_id: uuid.UUID,
+    piece: Piece,
+    winning_bid_id: uuid.UUID,
+    shipping_method: str,
+    address_snapshot: dict,
+    artwork_cents: int,
+    shipping_cents: int,
+    tax_cents: int,
+    total_cents: int,
+) -> Order:
+    """Same hand-off as create_order, but for an auction winner completing checkout after
+    the auction has already closed (piece.status == "auction_won") rather than a live,
+    still-purchasable piece — everything downstream (payment intent, webhook, shipment,
+    delivery confirmation) is unchanged from this point on."""
+    from src.shared.models.bid import Bid
+
+    locked = db.execute(
+        select(Piece).where(Piece.id == piece.id).with_for_update()
+    ).scalar_one_or_none()
+    if not locked or locked.status != "auction_won":
+        raise AppError("This auction hasn't ended yet or has already been claimed.", 409)
+
+    winning_bid = db.get(Bid, winning_bid_id)
+    if not winning_bid or winning_bid.bidder_id != buyer_id:
+        raise AppError("Only the winning bidder can complete this purchase.", 403)
+
+    order = Order(
+        id=uuid.uuid4(),
+        buyer_id=buyer_id,
+        seller_id=seller_id,
+        shipping_method=shipping_method,
+        shipping_address_snapshot=address_snapshot,
+        artwork_cents=artwork_cents,
+        shipping_cents=shipping_cents,
+        tax_cents=tax_cents,
+        total_cents=total_cents,
+    )
+    db.add(order)
+    db.flush()
+    db.add(OrderItem(id=uuid.uuid4(), order_id=order.id, piece_id=locked.id, price_cents=artwork_cents))
+    locked.status = "reserved"
+    db.commit()
+    db.refresh(order)
+    return order
+
+
 def get_order(db: Session, order_id: uuid.UUID) -> Optional[Order]:
     return db.get(Order, order_id)
 

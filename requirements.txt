@@ -21,3 +21,5 @@ gevent>=24.2.1,<26
 stripe>=9.0.0,<13
 # CSRF for the cookie-authenticated /admin forms only (the bearer-token API is exempt).
 Flask-WTF>=1.2.0,<2
+# Auction-close background job (src/shared/scheduler.py).
+APScheduler>=3.10.0,<4

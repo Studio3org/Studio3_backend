@@ -73,3 +73,21 @@ def collect(piece_id):
     from src.modules.orders import orders_controller
     data, status = orders_controller.collect(piece_id)
     return _ok("Order created.", data, status)
+
+
+@pieces_bp.post("/<piece_id>/bids")
+@onboarding_required
+@async_handler
+def place_bid(piece_id):
+    from src.modules.bids import bid_controller
+    data, status = bid_controller.place_bid(piece_id)
+    return _ok("Bid placed.", data, status)
+
+
+@pieces_bp.post("/<piece_id>/auction-checkout")
+@onboarding_required
+@async_handler
+def auction_checkout(piece_id):
+    from src.modules.orders import orders_controller
+    data, status = orders_controller.auction_checkout(piece_id)
+    return _ok("Order created.", data, status)

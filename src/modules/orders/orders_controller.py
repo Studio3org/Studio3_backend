@@ -20,6 +20,7 @@ from src.modules.user.user_dao import get_user_by_id
 from src.modules.pieces.pieces_dao import get_piece
 from src.modules.addresses import addresses_dao
 from src.modules.orders import orders_dao
+from src.modules.bids import bid_dao
 from src.modules.orders.shipping import SHIPPING_RATES_CENTS, FLAT_TAX_RATE
 from src.modules.notifications import notifications_dao
 from src.modules.payments import money
@@ -89,6 +90,59 @@ def collect(piece_id: str):
         )
         result = orders_dao.order_to_dict(db, order)
         result["clientSecret"] = None  # placeholder — populated once a payment provider is wired up
+        return result, 201
+    finally:
+        db.close()
+
+
+def auction_checkout(piece_id: str):
+    """Winning bidder completes checkout after auction_closer flipped the piece to
+    auction_won. Priced from the winning Bid, not piece.price_cents (that's only the
+    starting bid) — otherwise identical to collect()."""
+    body = request.get_json() or {}
+    address_id = body.get("addressId")
+    shipping_method = (body.get("shippingMethod") or "").strip().lower()
+    if not address_id:
+        raise AppError("addressId is required.", 400)
+    if shipping_method not in SHIPPING_RATES_CENTS:
+        raise AppError(f"shippingMethod must be one of: {', '.join(SHIPPING_RATES_CENTS)}", 400)
+    db = SessionLocal()
+    try:
+        buyer = get_user_by_id(db, uuid.UUID(g.user["id"]))
+        piece = get_piece(db, uuid.UUID(piece_id))
+        if not piece:
+            raise AppError("Piece not found.", 404)
+        if piece.status != "auction_won":
+            raise AppError("This auction hasn't ended yet or has already been claimed.", 409)
+
+        highest = bid_dao.get_highest_bid(db, piece.id)
+        if not highest or highest.bidder_id != buyer.id:
+            raise AppError("Only the winning bidder can complete this purchase.", 403)
+
+        address = addresses_dao.get_address(db, uuid.UUID(address_id))
+        if not address or address.user_id != buyer.id:
+            raise AppError("Address not found.", 404)
+
+        artwork_cents = highest.amount_cents
+        shipping_cents = SHIPPING_RATES_CENTS[shipping_method]
+        tax_cents = round(artwork_cents * FLAT_TAX_RATE)
+        total_cents = artwork_cents + shipping_cents + tax_cents
+
+        order = orders_dao.create_auction_order(
+            db,
+            buyer_id=buyer.id,
+            seller_id=piece.user_id,
+            piece=piece,
+            winning_bid_id=highest.id,
+            shipping_method=shipping_method,
+            address_snapshot=addresses_dao.address_snapshot(address),
+            artwork_cents=artwork_cents,
+            shipping_cents=shipping_cents,
+            tax_cents=tax_cents,
+            total_cents=total_cents,
+        )
+        result = orders_dao.order_to_dict(db, order)
+        result["clientSecret"] = None
         return result, 201
     finally:
         db.close()
