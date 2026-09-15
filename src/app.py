@@ -60,6 +60,7 @@ def create_app():
     from src.modules.admin.admin_routes import admin_bp
     from src.modules.payments.payments_routes import payments_bp
     from src.modules.connect.connect_routes import connect_bp
+    from src.modules.share.share_routes import share_bp
 
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
     app.register_blueprint(user_bp, url_prefix="/api/user")
@@ -80,6 +81,8 @@ def create_app():
     app.register_blueprint(connect_bp, url_prefix="/api/artists")
     # Internal ops UI: HTML, session-cookie auth, deliberately outside the /api prefix.
     app.register_blueprint(admin_bp, url_prefix="/admin")
+    # Public share/OG-preview pages: HTML, no auth, deliberately outside the /api prefix.
+    app.register_blueprint(share_bp, url_prefix="/share")
 
     # CSRF applies only to the cookie-authenticated admin forms. The JSON API authenticates
     # with a bearer token that a cross-site form post cannot supply, so blanket checking is
