@@ -42,4 +42,13 @@ def apply_cookie_ops(resp, cookie_ops):
         value = opts.pop("value")
         resp.set_cookie("refreshToken", value, **opts)
     if cookie_ops.get("clear_refresh_cookie"):
-        resp.delete_cookie("refreshToken", path="/")
+        flags = cookie_ops["clear_refresh_cookie"]
+        if flags is True:
+            resp.delete_cookie("refreshToken", path="/")
+        else:
+            delete_kw = {
+                k: flags[k]
+                for k in ("path", "samesite", "secure", "domain")
+                if k in flags
+            }
+            resp.delete_cookie("refreshToken", **delete_kw)

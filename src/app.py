@@ -7,6 +7,7 @@ from flask_cors import CORS
 from flask_wtf.csrf import CSRFProtect
 
 from src.middlewares.error_handler import register_error_handler
+from src.shared.config.cors import cors_allowed_origins
 from src.shared.realtime.socketio_instance import socketio
 
 csrf = CSRFProtect()
@@ -36,9 +37,14 @@ def create_app():
     app.config["SESSION_COOKIE_SECURE"] = os.getenv("FLASK_ENV", "development") != "development"
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=12)
 
-    # CORS: allow frontend origin
-    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
-    CORS(app, origins=[frontend_url], supports_credentials=True)
+    # Credentialed CORS for the web app (Vite :5173) and mobile/web on :3000.
+    CORS(
+        app,
+        origins=cors_allowed_origins(),
+        supports_credentials=True,
+        allow_headers=["Authorization", "Content-Type", "Accept", "X-Requested-With"],
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+    )
 
     # Blueprints
     from src.modules.auth.auth_routes import auth_bp

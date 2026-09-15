@@ -61,6 +61,7 @@ from src.modules.sessions.refresh_token_dao import (
     revoke_all_for_user,
 )
 from src.modules.user.user_serializers import user_to_dict
+from src.shared.config.cors import refresh_cookie_flags
 
 SALT_ROUNDS = int(os.getenv("SALT_ROUNDS", "10"))
 # Sessions/refresh tokens never expire on their own — only explicit logout
@@ -102,12 +103,8 @@ def _issue_session_and_tokens(user, request_obj=None):
         cookie_opts = {
             "value": cookie_value,
             "max_age": COOKIE_MAX_AGE,
-            "httponly": True,
-            "samesite": "Lax",
-            "path": "/",
+            **refresh_cookie_flags(request_obj),
         }
-        if os.getenv("FLASK_ENV") == "production":
-            cookie_opts["secure"] = True
 
         return (
             {"accessToken": access_token, "user": user_to_dict(db, user)},
@@ -314,7 +311,7 @@ def logout():
                     delete_session(row.session_id)
             finally:
                 db.close()
-    return {"message": LOGOUT_SUCCESS}, 200, {"clear_refresh_cookie": True}
+    return {"message": LOGOUT_SUCCESS}, 200, {"clear_refresh_cookie": refresh_cookie_flags()}
 
 
 def logout_all():
@@ -331,7 +328,7 @@ def logout_all():
     finally:
         db.close()
     delete_all_sessions_for_user(user_id)
-    return {"message": LOGOUT_ALL_SUCCESS}, 200, {"clear_refresh_cookie": True}
+    return {"message": LOGOUT_ALL_SUCCESS}, 200, {"clear_refresh_cookie": refresh_cookie_flags()}
 
 
 def forget_password():

@@ -9,6 +9,8 @@ import os
 from flask_socketio import SocketIO
 from socketio import RedisManager
 
+from src.shared.config.cors import cors_allowed_origins
+
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 # Built manually (via `client_manager=`) rather than passing `message_queue=REDIS_URL`
@@ -21,7 +23,7 @@ _redis_options = {"ssl_cert_reqs": None} if REDIS_URL.startswith("rediss://") el
 _client_manager = RedisManager(REDIS_URL, channel="studio3-chat", redis_options=_redis_options)
 
 socketio = SocketIO(
-    cors_allowed_origins=os.getenv("FRONTEND_URL", "http://localhost:3000"),
+    cors_allowed_origins=cors_allowed_origins(),
     # Fans messages out across multiple gunicorn workers/instances via Redis pub/sub.
     client_manager=_client_manager,
     async_mode="gevent",
