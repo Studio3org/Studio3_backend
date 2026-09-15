@@ -1,10 +1,16 @@
 """Public, unauthenticated share pages for pieces and series.
 
-These exist purely so a link pasted into WhatsApp/iMessage/Slack/Twitter/Facebook gets a
-rich preview (og:title/og:image/og:description) — something the client-rendered web app
-(`app/`) can't produce on its own without full SSR. A crawler fetching this URL gets a tiny
-static HTML page with the right meta tags and stops there; an actual person is redirected
-straight on to the real web app. Mounted outside `/api` (HTML, not JSON), like `/admin`.
+Three audiences hit these URLs, and each gets something different:
+  - A link-preview crawler (WhatsApp/iMessage/Slack/Twitter/Facebook/etc., detected by
+    User-Agent) gets a tiny static page with real og:title/og:image/og:description — the
+    client-rendered web app (`app/`) can't produce that on its own without full SSR.
+  - A real visitor gets an interstitial that tries `studio3://...` (a custom URL scheme,
+    which — unlike Universal Links/App Links — needs no domain verification, so it can open
+    the installed app today even before that's set up) and falls back to App Store/Play
+    Store badges if the app doesn't open within ~1.2s, with a "continue in browser" escape
+    hatch to the real web app.
+  - Not-found just redirects to the web app's home.
+Mounted outside `/api` (HTML, not JSON), like `/admin`.
 """
 import os
 
@@ -44,6 +50,38 @@ def _web_base_url() -> str:
     return (os.getenv("FRONTEND_URL") or "https://studio-3.co").rstrip("/")
 
 
+# PLACEHOLDER: these apps aren't published yet. Set APP_STORE_URL/PLAY_STORE_URL once they
+# are — until then the "get the app" banner's badges are dead links, same spirit as the
+# other REPLACE_WITH_* placeholders in app/public/.well-known/.
+def _app_store_url() -> str:
+    return os.getenv("APP_STORE_URL") or "https://apps.apple.com/app/id0000000000"
+
+
+def _play_store_url() -> str:
+    return os.getenv("PLAY_STORE_URL") or "https://play.google.com/store/apps/details?id=com.example.studio3"
+
+
+def _open_app_page(*, deep_link: str, web_url: str, title: str, description: str, image_url):
+    if _is_crawler():
+        return render_template(
+            "share/preview.html",
+            title=title,
+            description=description,
+            image_url=image_url,
+            canonical_url=web_url,
+        )
+    return render_template(
+        "share/open_app.html",
+        title=title,
+        description=description,
+        image_url=image_url,
+        deep_link=deep_link,
+        canonical_url=web_url,
+        app_store_url=_app_store_url(),
+        play_store_url=_play_store_url(),
+    )
+
+
 @share_bp.get("/piece/<piece_id>")
 def share_piece(piece_id):
     web_url = f"{_web_base_url()}/piece/{piece_id}"
@@ -52,15 +90,13 @@ def share_piece(piece_id):
         piece = get_piece(db, _uuid_or_none(piece_id))
         if not piece:
             return _not_found(web_url)
-        if not _is_crawler():
-            return redirect(web_url, code=302)
         author = get_user_by_id(db, piece.user_id)
-        return render_template(
-            "share/preview.html",
+        return _open_app_page(
+            deep_link=f"studio3://piece/{piece_id}",
+            web_url=web_url,
             title=f"{piece.title} by {author.name if author else 'an artist'}",
             description=(piece.caption or "").strip() or "See this piece on Studio 3.",
             image_url=piece.media_url,
-            canonical_url=web_url,
         )
     finally:
         db.close()
@@ -74,18 +110,16 @@ def share_series(series_id):
         series = series_dao.get_series(db, _uuid_or_none(series_id))
         if not series:
             return _not_found(web_url)
-        if not _is_crawler():
-            return redirect(web_url, code=302)
         summary = series_dao.series_summary_dict(db, series)
         author = get_user_by_id(db, series.user_id)
         title = f"{series.name} by {author.name}" if author else series.name
-        return render_template(
-            "share/preview.html",
+        return _open_app_page(
+            deep_link=f"studio3://series/{series_id}",
+            web_url=web_url,
             title=title,
             description=(series.description or "").strip()
             or f"A series of {summary['pieceCount']} pieces on Studio 3.",
             image_url=summary.get("coverUrl"),
-            canonical_url=web_url,
         )
     finally:
         db.close()
