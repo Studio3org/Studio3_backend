@@ -70,6 +70,31 @@ def patch_me():
             fields["phone"] = (body.get("phone") or "").strip() or None
         if "pronouns" in body:
             fields["pronouns"] = body.get("pronouns")
+        if "website" in body:
+            website = (body.get("website") or "").strip() or None
+            if website and len(website) > 500:
+                raise AppError("Website must be 500 characters or fewer.", 400)
+            fields["website"] = website
+        if "instagram" in body:
+            instagram = (body.get("instagram") or "").strip().lstrip("@") or None
+            if instagram and len(instagram) > 100:
+                raise AppError("Instagram handle must be 100 characters or fewer.", 400)
+            fields["instagram"] = instagram
+        if "twitter" in body:
+            twitter = (body.get("twitter") or "").strip().lstrip("@") or None
+            if twitter and len(twitter) > 100:
+                raise AppError("Twitter/X handle must be 100 characters or fewer.", 400)
+            fields["twitter"] = twitter
+        if "category" in body:
+            category = (body.get("category") or "").strip() or None
+            if category and len(category) > 50:
+                raise AppError("Category must be 50 characters or fewer.", 400)
+            fields["category"] = category
+        if "tags" in body:
+            tags = body.get("tags") or []
+            if not isinstance(tags, list) or len(tags) > 8 or any(not isinstance(t, str) for t in tags):
+                raise AppError("tags must be a list of at most 8 strings.", 400)
+            fields["tags"] = [t.strip().lstrip("#") for t in tags if t.strip()]
         if "mediums" in body:
             taste = dict(user.taste_preferences or {})
             taste["mediums"] = body.get("mediums") or []

@@ -42,6 +42,13 @@ class User(Base):
     taste_preferences = Column(JSONB, nullable=True)  # {mediums, styles, themes}
     last_username_change_at = Column(DateTime(timezone=True), nullable=True)
     pronouns = Column(String(50), nullable=True)
+    website = Column(String(500), nullable=True)
+    instagram = Column(String(100), nullable=True)
+    twitter = Column(String(100), nullable=True)
+    # Free-text "primary discipline" shown on the profile (e.g. "Digital Art") — UI-suggested
+    # presets, not an enforced enum, same convention as pronouns above.
+    category = Column(String(50), nullable=True)
+    tags = Column(JSONB, nullable=True)  # list[str], up to 8 — discipline/style keywords
     # "Magnum opus" banner: a manually-pinned piece/post, or an auto-selection rule
     # computed at read time (no cron exists to materialize this — see user_serializers.py).
     banner_target_type = Column(String(16), nullable=True)  # piece|post
