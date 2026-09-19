@@ -59,7 +59,10 @@ def create_and_push(
     # Unset notification_preferences (never configured) defaults to all-enabled.
     push_prefs = (recipient.notification_preferences or {}).get("push", {}) if recipient else {}
     if push_prefs.get(type, True):
-        send_push(user_id, title, body, data=push_data)
+        send_push(
+            user_id, title, body,
+            data=push_data or _push_target(db, type, target_type, target_id, actor_id),
+        )
     # Live in-app activity (not for DMs — those use push_only).
     if type not in _ACTIVITY_FEED_EXCLUDED_TYPES:
         try:
@@ -74,6 +77,38 @@ def create_and_push(
         except Exception:
             pass
     return notification
+
+
+def _push_target(
+    db: Session,
+    type: str,
+    target_type: Optional[str],
+    target_id: Optional[uuid.UUID],
+    actor_id: Optional[uuid.UUID],
+) -> dict:
+    """What the app needs to open the right screen when someone taps the notification.
+
+    Derived here rather than at each call site because it is the same three fields every
+    time, and because the alternative was what actually shipped: `push_data` was an optional
+    argument that only the two chat paths ever passed, so every other push — a sale, an
+    outbid, a declined auction payment with a deadline attached — arrived with an empty data
+    payload and nothing for the client to route on.
+
+    `actorUsername` is included because a `user` target is the one case where `targetId` is
+    not routable: it is a UUID, while the profile screen is addressed by username.
+
+    Values are strings because FCM stringifies the whole data map anyway; sending them
+    already-stringified keeps what the client parses identical to what is written here.
+    """
+    data = {"type": type}
+    if target_type and target_id:
+        data["targetType"] = target_type
+        data["targetId"] = str(target_id)
+    if actor_id:
+        actor = db.get(User, actor_id)
+        if actor and actor.username:
+            data["actorUsername"] = actor.username
+    return data
 
 
 def push_only(
