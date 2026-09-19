@@ -7,8 +7,6 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
 from src.shared.models.social import Follow, Like, Save, Comment
-from src.shared.models.piece import Piece
-from src.shared.models.post import Post
 from src.shared.models.user import User
 
 

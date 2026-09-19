@@ -40,7 +40,10 @@ def refresh_cookie_flags(request_obj=None) -> dict:
     Chromium treats http://localhost as a secure context, so Secure works locally.
     """
     flags = {"httponly": True, "path": "/", "samesite": "Lax"}
-    if os.getenv("FLASK_ENV") == "production":
+    # Any deployed environment is served over HTTPS, so the refresh cookie must be Secure
+    # there. Checking for "production" specifically would have silently shipped an insecure
+    # refresh cookie on staging the moment that environment existed.
+    if os.getenv("FLASK_ENV", "development") != "development":
         flags["secure"] = True
 
     req = request_obj

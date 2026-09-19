@@ -52,30 +52,40 @@ def get_platform_account(db: Session, account_type: str, currency: str = "USD") 
     return account
 
 
-def get_seller_account(db: Session, seller_id: uuid.UUID, currency: str = "USD") -> LedgerAccount:
-    """Get-or-create a seller's payable account."""
-    account = db.execute(
+def _find_seller_account(db: Session, seller_id: uuid.UUID) -> Optional[LedgerAccount]:
+    return db.execute(
         select(LedgerAccount).where(
             LedgerAccount.type == ACCOUNT_SELLER_PAYABLE, LedgerAccount.owner_id == seller_id
         )
     ).scalar_one_or_none()
+
+
+def get_seller_account(db: Session, seller_id: uuid.UUID, currency: str = "USD") -> LedgerAccount:
+    """Get-or-create a seller's payable account.
+
+    Callers reach this in the middle of their own transaction — book_order_paid runs after
+    the order transition, the piece status writes and the payout insert — so losing that
+    work here is not recoverable by the caller, which has no idea it happened.
+    """
+    account = _find_seller_account(db, seller_id)
     if account:
         return account
     account = LedgerAccount(
         id=uuid.uuid4(), type=ACCOUNT_SELLER_PAYABLE, owner_id=seller_id, currency=currency
     )
-    db.add(account)
     try:
-        db.flush()
+        # A SAVEPOINT, not the whole transaction. A plain db.rollback() here discarded
+        # everything the caller had pending and then let it commit an empty transaction —
+        # so two webhooks for one first-time seller could leave an order pending_payment
+        # while the endpoint returned 200 and Stripe never retried.
+        with db.begin_nested():
+            db.add(account)
+            db.flush()
     except IntegrityError:
         # Concurrent create — the unique constraint held, so take the winner's row.
-        db.rollback()
-        account = db.execute(
-            select(LedgerAccount).where(
-                LedgerAccount.type == ACCOUNT_SELLER_PAYABLE,
-                LedgerAccount.owner_id == seller_id,
-            )
-        ).scalar_one()
+        account = _find_seller_account(db, seller_id)
+        if account is None:
+            raise
     return account
 
 

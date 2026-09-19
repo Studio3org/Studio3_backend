@@ -1,0 +1,11 @@
+# Test and lint tooling. Deliberately NOT folded into requirements.txt: render.yaml runs
+# `pip install -r requirements.txt` into the production slug, and pytest/freezegun being
+# importable in the serving process is a footgun with no upside. CI installs this file.
+-r requirements.txt
+
+pytest>=8.2,<9
+pytest-cov>=5.0
+# Auction end-time boundaries and JWT expiry need deterministic clocks.
+freezegun>=1.5
+# Lint + format in one tool, replacing flake8/black/isort.
+ruff>=0.5

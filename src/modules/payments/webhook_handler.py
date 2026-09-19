@@ -13,19 +13,26 @@ Three properties this file must maintain:
 import uuid
 from datetime import datetime, timezone
 
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.shared.config.database import SessionLocal
 from src.shared.config.stripe_client import get_stripe, webhook_secrets
 from src.shared.models.order import Order
-from src.shared.models.payout import Payout, PAYOUT_PENDING, PAYOUT_TRANSFER_FAILED
+from src.shared.models.payout import (
+    PAYOUT_BLOCKED,
+    PAYOUT_PENDING,
+    PAYOUT_TRANSFER_FAILED,
+    Payout,
+)
 from src.shared.models.piece import Piece
 from src.shared.models.user import User
 from src.shared.models.webhook_event import StripeWebhookEvent
 from src.shared.utils.app_error import AppError
 from src.shared.utils.logger import get_logger
 from src.modules.orders import orders_dao
+from src.modules.pieces import piece_state
 from src.modules.payments import money
 from src.modules.notifications import notifications_dao
 
@@ -66,8 +73,19 @@ def construct_event(payload: bytes, signature: str):
 
 
 def record_event(db: Session, event) -> bool:
-    """Insert the event for audit. Returns False if it was already recorded (duplicate
-    delivery), which is the primary idempotency guard."""
+    """Record the event for audit and report whether it should be handled now.
+
+    False means "already fully processed, skip". A row that exists but never reached
+    `processed_at` means the previous attempt raised and Stripe is retrying, and those MUST
+    be handled: answering those "duplicate" is how a single transient error (a Charge
+    retrieve timing out) left an order paid at Stripe but pending_payment here, with no
+    ledger entry and no payout row, permanently.
+
+    Two simultaneous deliveries of the same event can both see a null processed_at and both
+    proceed. That is tolerable because every handler is independently idempotent — the
+    ledger keys on idempotency_key, transition_order no-ops on a repeat, and the payout
+    insert checks for an existing row.
+    """
     row = StripeWebhookEvent(
         id=uuid.uuid4(),
         stripe_event_id=event["id"],
@@ -80,6 +98,17 @@ def record_event(db: Session, event) -> bool:
         return True
     except IntegrityError:
         db.rollback()
+        existing = db.execute(
+            select(StripeWebhookEvent).where(
+                StripeWebhookEvent.stripe_event_id == event["id"]
+            )
+        ).scalar_one_or_none()
+        if existing is not None and existing.processed_at is None:
+            logger.info(
+                "Stripe event %s was recorded but never processed; handling this retry.",
+                event["id"],
+            )
+            return True
         logger.info("Duplicate Stripe event %s ignored.", event["id"])
         return False
 
@@ -194,7 +223,10 @@ def _on_payment_succeeded(db: Session, intent) -> None:
         for item in orders_dao.list_items(db, order.id):
             piece = db.get(Piece, item.piece_id)
             if piece:
-                piece.status = "sold"
+                piece_state.transition_piece(
+                    db, piece, piece_state.SOLD,
+                    allowed_from={piece_state.RESERVED}, commit=False,
+                )
 
     # Payout row is created here, at capture time, so the amount owed exists in the ledger
     # from the moment the money arrives — release just executes it later.
@@ -222,7 +254,6 @@ def _on_payment_succeeded(db: Session, intent) -> None:
 
 def _notify_paid(db: Session, order: Order) -> None:
     buyer = db.get(User, order.buyer_id)
-    seller = db.get(User, order.seller_id)
     items = orders_dao.list_items(db, order.id)
     piece = db.get(Piece, items[0].piece_id) if items else None
     title = piece.title if piece else None
@@ -304,7 +335,9 @@ def _on_chargeback_opened(db: Session, dispute) -> None:
     if payout:
         obj = db.get(Payout, payout.id)
         if obj and obj.status == PAYOUT_PENDING:
-            obj.status = PAYOUT_TRANSFER_FAILED
+            # BLOCKED, not TRANSFER_FAILED: the latter is in RELEASABLE_STATUSES because a
+            # failed transfer is meant to be retryable, which would let this payout out.
+            obj.status = PAYOUT_BLOCKED
             obj.failure_reason = (
                 f"Blocked: card chargeback {dispute.get('id')} opened on this order."
             )
@@ -326,7 +359,7 @@ def _on_chargeback_closed(db: Session, dispute) -> None:
     if payout and won:
         obj = db.get(Payout, payout.id)
         # Chargeback defended: the money is ours again, so the payout can be retried.
-        if obj and obj.status == PAYOUT_TRANSFER_FAILED:
+        if obj and obj.status == PAYOUT_BLOCKED:
             obj.status = PAYOUT_PENDING
             obj.failure_reason = None
     db.commit()

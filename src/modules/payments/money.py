@@ -4,12 +4,11 @@ Every commission/fee calculation lives here so the split is defined exactly once
 ledger postings live here too, next to the math they encode, so a change to the fee model
 is a single-file change.
 """
-import uuid
-from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from src.shared.config.stripe_client import commission_bps, platform_currency
+from src.shared.config import commission as commission_policy
+from src.shared.config.stripe_client import platform_currency
 from src.shared.ledger import ledger_service
 from src.shared.ledger.ledger_service import get_platform_account, get_seller_account
 from src.shared.models.ledger import (
@@ -30,14 +29,28 @@ from src.shared.models.ledger import (
 from src.shared.models.order import Order
 
 
-def commission_cents(artwork_cents: int) -> int:
+def order_commission_bps(order: Order) -> int:
+    """The rate this order was sold at.
+
+    Always the snapshot stored on the row, never today's configured rate: a refund or payout
+    recomputed from config would restate an order sold under a different tier.
+    """
+    return order.commission_bps
+
+
+def commission_cents(artwork_cents: int, bps: int) -> int:
     """Platform commission, taken on the artwork price only — never on shipping or tax,
-    which aren't the platform's to take a cut of."""
-    return round(artwork_cents * commission_bps() / 10000)
+    which aren't the platform's to take a cut of.
+
+    `bps` is required rather than looked up. Every caller either has an order, and therefore
+    a snapshotted rate, or is quoting a hypothetical — and the two must not be confused.
+    """
+    return commission_policy.commission_cents(artwork_cents, bps)
 
 
-def artist_share_cents(artwork_cents: int) -> int:
-    return artwork_cents - commission_cents(artwork_cents)
+def artist_share_cents(artwork_cents: int, bps: int) -> int:
+    """What the artist receives. Commission comes out of the price, never on top of it."""
+    return commission_policy.net_cents(artwork_cents, bps)
 
 
 def book_order_paid(
@@ -58,8 +71,9 @@ def book_order_paid(
     real Stripe balance, so the exact fee from the charge's balance_transaction is required
     here rather than an estimate.
     """
-    artist = artist_share_cents(order.artwork_cents)
-    commission = commission_cents(order.artwork_cents)
+    bps = order_commission_bps(order)
+    artist = artist_share_cents(order.artwork_cents, bps)
+    commission = commission_cents(order.artwork_cents, bps)
     currency = platform_currency().upper()
 
     entries = [
@@ -106,8 +120,9 @@ def book_refund_issued(db: Session, order: Order, stripe_fee_cents: int, commit:
     platform ends up down by the fee. Crediting it back would make the books show money the
     platform doesn't have.
     """
-    artist = artist_share_cents(order.artwork_cents)
-    commission = commission_cents(order.artwork_cents)
+    bps = order_commission_bps(order)
+    artist = artist_share_cents(order.artwork_cents, bps)
+    commission = commission_cents(order.artwork_cents, bps)
 
     entries = [
         (get_seller_account(db, order.seller_id), DEBIT, artist),

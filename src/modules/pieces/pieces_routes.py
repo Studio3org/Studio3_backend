@@ -3,7 +3,7 @@ import uuid
 
 from flask import Blueprint, g
 
-from src.middlewares.auth_middleware import onboarding_required, optional_auth, auth_required
+from src.middlewares.auth_middleware import onboarding_required, optional_auth
 from src.shared.utils.api_response import success_response
 from src.shared.utils.async_handler import async_handler
 from src.modules.pieces import pieces_controller

@@ -9,9 +9,15 @@ services:
     # handles many concurrent long-lived connections on a single worker via greenlets, so this
     # replaces the previous default sync worker rather than adding a second process type.
     startCommand: "alembic upgrade head && gunicorn -k gevent -w 1 wsgi:app --bind 0.0.0.0:$PORT"
+    # Liveness, not readiness: / touches nothing external, so a database blip cannot put the
+    # service into a restart loop. Point an uptime monitor at /health for the real checks.
+    healthCheckPath: /
     envVars:
+      # This Render service is a test environment, not production. It behaves like
+      # production for anything security-shaped, but does not require the Stripe and S3
+      # credentials — see src/shared/config/settings.py.
       - key: FLASK_ENV
-        value: production
+        value: staging
       - key: DATABASE_URL
         sync: false # paste your existing Aiven Postgres connection string here
       - key: REDIS_URL
@@ -39,4 +45,95 @@ services:
       - key: SES_FROM_EMAIL
         sync: false
       - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false
+      # Payments. Without STRIPE_WEBHOOK_SECRET every webhook fails signature verification,
+      # Stripe retries then gives up, and paid orders are never marked paid — so the app
+      # refuses to boot without it rather than serving a silently broken checkout.
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false # comma-separated: platform endpoint secret, Connect endpoint secret
+      - key: PLATFORM_CURRENCY
+        value: usd
+      - key: PLATFORM_COMMISSION_BPS
+        value: "1000" # 10% — awaiting the client's tiered rates (20/15/8)
+      - key: CONNECT_ACCOUNT_COUNTRY
+        value: US
+      - key: CONNECT_ONBOARDING_BASE_URL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: BACKEND_URL
+        sync: false
+      # Dead links in the share interstitial until the apps are published.
+      - key: APP_STORE_URL
+        sync: false
+      - key: PLAY_STORE_URL
+        sync: false
+      - key: SENTRY_DSN
+        sync: false # unset = Sentry is not initialised at all
+
+  # Scheduled work runs here, not in the web process. Two services on purpose: the worker
+  # can scale out, beat cannot — a second beat means every schedule fires twice.
+  - type: worker
+    name: studio3-jobs
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "celery -A src.jobs.celery_app.celery_app worker --loglevel=info --concurrency=2"
+    envVars:
+      - key: FLASK_ENV
+        value: staging
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: PLATFORM_CURRENCY
+        value: usd
+      - key: PLATFORM_COMMISSION_BPS
+        value: "2000"
+      - key: SENTRY_DSN
+        sync: false
+
+  - type: worker
+    name: studio3-beat
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: "pip install -r requirements.txt"
+    # Exactly one instance. Never scale this service.
+    startCommand: "celery -A src.jobs.celery_app.celery_app beat --loglevel=info"
+    envVars:
+      - key: FLASK_ENV
+        value: staging
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: PLATFORM_CURRENCY
+        value: usd
+      - key: PLATFORM_COMMISSION_BPS
+        value: "2000"
+      - key: SENTRY_DSN
         sync: false

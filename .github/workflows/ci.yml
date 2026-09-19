@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# A new push supersedes whatever was still running for the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: studio3_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/studio3_test
+      TEST_REDIS_URL: redis://localhost:6379/15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned from runtime.txt so the CI interpreter can never drift from Render's.
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: runtime.txt
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      # `ruff format --check` is deliberately absent: the codebase predates any formatter and
+      # running it would rewrite every file. See the rule-set note in pyproject.toml.
+      - name: Lint
+        run: ruff check src tests conftest.py
+
+      # The highest-value step in this workflow: render.yaml runs `alembic upgrade head` in
+      # the start command, so a broken migration chain is a production outage. This is the
+      # only place that gets verified before a deploy.
+      - name: Migrations apply to a virgin database
+        env:
+          FLASK_ENV: testing
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/studio3_test
+        run: alembic upgrade head
+
+      - name: Tests
+        run: pytest --cov=src --cov-report=term-missing

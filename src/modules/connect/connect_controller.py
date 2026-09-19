@@ -5,7 +5,7 @@ touches bank or ID data, per NFR-5) while the platform keeps control of the expe
 """
 import uuid
 
-from flask import g, request
+from flask import g
 
 from src.shared.config.database import SessionLocal
 from src.shared.config.stripe_client import (

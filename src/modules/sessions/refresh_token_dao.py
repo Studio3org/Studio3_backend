@@ -1,9 +1,9 @@
 """CRUD for refresh_tokens table (SQLAlchemy)."""
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import select, update
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from src.shared.models.refresh_token import RefreshToken

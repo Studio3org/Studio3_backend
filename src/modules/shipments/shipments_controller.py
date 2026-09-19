@@ -1,6 +1,5 @@
 """Shipment endpoints — admin-only writes, participant-visible reads."""
 import uuid
-from datetime import datetime
 
 from flask import g, request
 

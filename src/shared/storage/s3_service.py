@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import os
-from typing import Optional
 
 from flask import request
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.shared.models.piece import Piece

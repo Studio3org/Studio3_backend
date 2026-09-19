@@ -7,16 +7,21 @@ from flask_cors import CORS
 from flask_wtf.csrf import CSRFProtect
 
 from src.middlewares.error_handler import register_error_handler
+from src.middlewares.request_context import init_request_context
 from src.shared.config.cors import cors_allowed_origins
-from src.shared.realtime.socketio_instance import socketio
+from src.shared.config.sentry import init_sentry
+from src.shared.config.settings import require_environment, warn_unset_optional
+from src.shared.realtime.socketio_instance import socketio, socketio_options
 
 csrf = CSRFProtect()
 
 
 def _secret_key() -> str:
     """SECRET_KEY signs the admin session cookie, which gates refunds and payout releases.
-    A default value in production would let anyone forge an admin session, so fail at boot
-    rather than start up insecure."""
+
+    Outside development a missing key is already fatal via require_environment, which reports
+    it alongside anything else that is missing; this only supplies the local default.
+    """
     key = (os.getenv("SECRET_KEY") or "").strip()
     if key:
         return key
@@ -25,10 +30,26 @@ def _secret_key() -> str:
     return "dev-only-insecure-key"
 
 
-def create_app():
+def create_app(config_overrides: dict | None = None):
+    """Build the Flask app.
+
+    `config_overrides` is applied before anything reads app.config, so a caller can set
+    TESTING (which suppresses the scheduler below) or WTF_CSRF_ENABLED. Without it the
+    TESTING check further down was unreachable — nothing could set the flag in time.
+    """
+    env = os.getenv("FLASK_ENV", "development")
+    # Before anything else: a deploy missing required configuration should stop here, with
+    # every problem named at once, rather than start and fail later in a way that looks
+    # healthy from the outside.
+    require_environment(env)
+    # Before the app exists, so an error raised during setup is still captured. No-op unless
+    # SENTRY_DSN is set, which is why dev and CI need no special handling.
+    init_sentry(env)
+
     app = Flask(__name__)
     app.config["SECRET_KEY"] = _secret_key()
     app.config["JSON_SORT_KEYS"] = False
+    app.config.update(config_overrides or {})
 
     # Admin session cookies (browser-only /admin UI). The mobile API is bearer-token based
     # and unaffected by these.
@@ -104,38 +125,66 @@ def create_app():
             csrf.protect()
 
     # Real-time chat: binds the shared SocketIO instance to this app and registers its
-    # @socketio.on(...) handlers (import has the side effect of registering them).
-    socketio.init_app(app)
+    # @socketio.on(...) handlers (import has the side effect of registering them). The
+    # server options are resolved here rather than at import so the Redis pub/sub backend
+    # reads the environment this app was actually configured with.
+    socketio.init_app(app, **socketio_options())
     from src.modules.chat import chat_socket  # noqa: F401
 
-    # Health at root — includes S3 env presence (booleans only, no secret values)
-    # so Render misconfig is visible without digging through logs.
+    # Liveness. Deliberately touches nothing external: Render pings this, and a transient
+    # database blip must not be read as "this process is dead, restart it".
     @app.get("/")
     def health():
-        from src.shared.storage.s3_client import s3_configured, get_bucket
+        return {"message": "Studiothree Discover API running", "status": "ok"}, 200
 
+    # Readiness and diagnostics. Point an uptime monitor here, not Render's health check —
+    # Redis fails open throughout this app, so "degraded" still means serving traffic.
+    @app.get("/health")
+    def health_detail():
+        from src.shared.config.database import check_db_connection
+        from src.shared.config.redis_client import check_redis_connection
+        from src.shared.config.stripe_client import stripe_configured, webhook_secrets
+        from src.shared.storage.s3_client import get_bucket, s3_configured
+
+        db_ok, db_error = check_db_connection()
+        redis_ok = check_redis_connection()
+        ok = db_ok and redis_ok
         return {
-            "message": "Studiothree Discover API running",
-            "s3": {
-                "configured": s3_configured(),
-                "bucketSet": bool(get_bucket()),
-                "accessKeySet": bool((os.getenv("AWS_ACCESS_KEY_ID") or "").strip()),
-                "secretKeySet": bool((os.getenv("AWS_SECRET_ACCESS_KEY") or "").strip()),
-                "publicBaseUrlSet": bool(
-                    (os.getenv("S3_PUBLIC_BASE_URL") or "").strip()
-                ),
+            "status": "ok" if ok else "degraded",
+            "environment": env,
+            "checks": {
+                # The error string can contain the connection URL, so it is only ever
+                # returned locally.
+                "database": {
+                    "ok": db_ok,
+                    # Local only. Staging is internet-facing too, and this endpoint has no
+                    # auth, so the error text — which can carry the connection string — is
+                    # withheld from every deployed environment. Read it from the logs there.
+                    "error": db_error if not db_ok and env == "development" else None,
+                },
+                "redis": {"ok": redis_ok},
+                "stripe": {
+                    "configured": stripe_configured(),
+                    "webhookSecretSet": bool(webhook_secrets()),
+                },
+                # Booleans only — never the values.
+                "s3": {"configured": s3_configured(), "bucketSet": bool(get_bucket())},
             },
-        }, 200
+        }, (200 if ok else 503)
 
+
+    # Correlation ids, registered before the error handler so a 500's traceback carries the
+    # same id as the access line next to it.
+    init_request_context(app)
 
     # Global error handler (register last)
     register_error_handler(app)
 
-    # Auction close job — the one scheduled task in this codebase (see src/shared/scheduler.py
-    # for why an in-process scheduler is safe given this deployment's single gunicorn worker).
     if not app.config.get("TESTING"):
-        from src.shared.scheduler import start_scheduler
+        warn_unset_optional(env)
 
-        start_scheduler()
+    # Scheduled work (auction close, hold refresh, waitlist expiry, reconciliation) runs in
+    # the Celery worker, not here — see src/jobs/celery_app.py. The web process starts no
+    # background threads of its own.
 
     return app

@@ -1,12 +1,12 @@
 """Pieces controller."""
 import uuid
-from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from flask import request, g
 from sqlalchemy import select
 
 from src.shared.config.database import SessionLocal
+from src.shared.models.piece import Piece
 from src.shared.models.user import User
 from src.shared.storage.s3_service import validate_user_media_url
 from src.shared.utils.app_error import AppError
@@ -25,7 +25,8 @@ from src.modules.pieces.pieces_dao import (
 )
 from src.modules.social import social_dao
 from src.modules.series import series_dao
-from src.modules.bids import bid_dao
+from src.modules.bids import auction_dao, bid_dao
+from src.modules.pieces import listing_rules, piece_state
 
 
 # Packaged size + weight are what couriers actually price on, and the declared value is
@@ -39,32 +40,52 @@ _SHIPPING_FIELDS = (
 )
 
 
-def _validate_sale_fields(body, seller_enabled: bool, seller=None):
+def _current_duration_days(db, current) -> int | None:
+    """The duration of the piece's running auction, if it has one.
+
+    Lives on the Auction now, so a patch that omits auctionDurationDays still validates
+    against the real value rather than silently reading None and failing the range check.
+    """
+    if current is None:
+        return None
+    auction = auction_dao.get_running_auction(db, current.id)
+    return auction.duration_days if auction else None
+
+
+def _resolve_listing(db, body, current, user) -> dict:
+    """Validate the listing shape, merged over whatever the piece already is.
+
+    Merging matters: a lone {"priceCents": 5000} on an auction still has to be checked
+    against the auction rules. Validating only the keys present in the body is how a live
+    auction could be switched to fixed-price, orphaning every bid on it.
+    """
+    is_for_sale = bool(body["isForSale"]) if "isForSale" in body else (
+        bool(current.is_for_sale) if current is not None else False
+    )
+    return listing_rules.validate_listing(
+        is_for_sale=is_for_sale,
+        listing_type=body.get(
+            "listingType", current.listing_type if current is not None else None
+        ),
+        price_cents=body.get(
+            "priceCents", current.price_cents if current is not None else None
+        ),
+        auction_duration_days=body.get(
+            "auctionDurationDays", _current_duration_days(db, current)
+        ),
+        seller_enabled=user.seller_enabled,
+        seller=user,
+        reserve_cents=body.get("reserveCents"),
+    )
+
+
+def _validate_sale_detail_fields(body):
+    """Presentation-tier requirements for a sale listing — medium, dimensions, packaging.
+
+    Separate from listing_rules, which owns the invariants the database also enforces.
+    """
     if not body.get("isForSale"):
         return
-    if not seller_enabled:
-        raise AppError("Enable seller mode before listing for sale.", 403)
-    # FR-1.3: a piece can't go on sale until the artist can actually be paid. Drafts are
-    # fine without Connect — this only gates going live.
-    if seller is not None and not seller.stripe_payouts_enabled:
-        raise AppError(
-            "Finish payout setup before listing work for sale, so we can pay you when it sells.",
-            403,
-        )
-    listing_type = (body.get("listingType") or "fixed").strip().lower()
-    if listing_type not in ("fixed", "auction"):
-        raise AppError("listingType must be fixed or auction.", 400)
-    if listing_type == "auction":
-        days = body.get("auctionDurationDays")
-        try:
-            days_int = int(days)
-        except (TypeError, ValueError):
-            raise AppError("Auction duration must be between 3 and 14 days.", 400)
-        if days_int < 3 or days_int > 14:
-            raise AppError("Auction duration must be between 3 and 14 days.", 400)
-    price = body.get("priceCents")
-    if not price or int(price) < 100:
-        raise AppError("Price must be at least $1.00 (100 cents).", 400)
     if not body.get("medium"):
         raise AppError("Medium is required for sale listings.", 400)
     if not body.get("dimensions"):
@@ -88,21 +109,6 @@ def _validate_sale_fields(body, seller_enabled: bool, seller=None):
                 raise AppError("Declared value must be greater than zero.", 400)
         except (TypeError, ValueError):
             raise AppError("Declared value must be a number.", 400)
-
-
-def _start_auction_clock_if_needed(piece) -> None:
-    """The countdown starts the first time an auction piece goes live, not at creation —
-    a piece can sit in draft for a while before publishing, and re-publishing must never
-    restart a clock that's already running."""
-    if (
-        piece.status == "live"
-        and piece.listing_type == "auction"
-        and piece.auction_duration_days
-        and piece.auction_ends_at is None
-    ):
-        piece.auction_ends_at = datetime.now(timezone.utc) + timedelta(
-            days=piece.auction_duration_days
-        )
 
 
 def _extract_images(body: dict) -> list[dict]:
@@ -156,7 +162,8 @@ def create():
             raise AppError("mediaUrl is required.", 400)
         for image in images:
             validate_user_media_url(user.username, image["mediaUrl"])
-        _validate_sale_fields(body, user.seller_enabled, seller=user)
+        listing = _resolve_listing(db, body, None, user)
+        _validate_sale_detail_fields(body)
         cover = images[0]
         piece = create_piece(
             db,
@@ -170,19 +177,9 @@ def create():
             style_tags=body.get("styleTags"),
             ai_disclosed=bool(body.get("aiDisclosed", False)),
             alt_text=body.get("altText"),
-            is_for_sale=bool(body.get("isForSale", False)),
-            listing_type=(
-                (body.get("listingType") or "fixed").strip().lower()
-                if body.get("isForSale")
-                else None
-            ),
-            auction_duration_days=(
-                body.get("auctionDurationDays")
-                if body.get("isForSale")
-                and (body.get("listingType") or "fixed").strip().lower() == "auction"
-                else None
-            ),
-            price_cents=body.get("priceCents"),
+            is_for_sale=listing["is_for_sale"],
+            listing_type=listing["listing_type"],
+            price_cents=listing["price_cents"],
             currency=body.get("currency", "USD"),
             dimensions=body.get("dimensions"),
             shipping_region=body.get("shippingRegion"),
@@ -199,7 +196,21 @@ def create():
             handling_notes=body.get("handlingNotes"),
             status="draft" if body.get("status") == "draft" else "live",
         )
-        _start_auction_clock_if_needed(piece)
+        if listing["listing_type"] == "auction":
+            # The auction row, not the piece, owns the run. Created in draft here and opened
+            # when the piece goes live, so a piece that sits in draft for a week does not
+            # publish an auction that is already a week old.
+            auction = auction_dao.create_auction(
+                db,
+                piece,
+                user,
+                starting_bid_cents=listing["price_cents"],
+                duration_days=listing["auction_duration_days"],
+                reserve_cents=listing.get("reserve_cents"),
+                commit=False,
+            )
+            if piece.status == piece_state.LIVE:
+                auction_dao.open_auction(db, auction, commit=False)
         db.commit()
         db.refresh(piece)
         replace_piece_media(db, piece.id, images)
@@ -227,7 +238,8 @@ def enrich_piece_dict(db, piece, viewer_id: Optional[uuid.UUID]) -> dict:
     base["series"] = series_dao.series_detail_dict(db, series) if series else None
     base["relatedPosts"] = [post_to_dict(p) for p in list_related_posts(db, piece.id)]
     if piece.listing_type == "auction":
-        base.update(bid_dao.bid_summary(db, piece, viewer_id=viewer_id))
+        auction = auction_dao.get_running_auction(db, piece.id)
+        base.update(bid_dao.bid_summary(db, auction, viewer_id=viewer_id))
     return base
 
 
@@ -247,8 +259,12 @@ def patch(piece_id: str):
     db = SessionLocal()
     try:
         user = get_user_by_id(db, uuid.UUID(g.user["id"]))
-        piece = get_piece(db, uuid.UUID(piece_id))
-        if not piece or piece.user_id != user.id:
+        # Locked, not a plain read: this function can now move a piece out of `live`, which
+        # races the auction close sweep for the same row.
+        piece = db.execute(
+            select(Piece).where(Piece.id == uuid.UUID(piece_id)).with_for_update()
+        ).scalar_one_or_none()
+        if not piece or piece.deleted_at is not None or piece.user_id != user.id:
             raise AppError("Piece not found.", 404)
         if "images" in body or "mediaUrls" in body:
             images = _extract_images(body)
@@ -286,24 +302,34 @@ def patch(piece_id: str):
             piece.materials = body["materials"]
         if "styleTags" in body:
             piece.style_tags = body["styleTags"]
-        if "isForSale" in body:
-            merged = {**piece_to_dict(piece), **body, "isForSale": body["isForSale"]}
-            _validate_sale_fields(merged, user.seller_enabled, seller=user)
-            piece.is_for_sale = bool(body["isForSale"])
-            if not piece.is_for_sale:
-                piece.listing_type = None
-                piece.auction_duration_days = None
-        if "listingType" in body:
-            piece.listing_type = body["listingType"]
-        if "auctionDurationDays" in body:
-            piece.auction_duration_days = body["auctionDurationDays"]
-        if "priceCents" in body:
-            piece.price_cents = body["priceCents"]
         if "dimensions" in body:
             piece.dimensions = body["dimensions"]
+
+        # Listing terms move together or not at all. Previously each field was assigned
+        # independently and only `isForSale` triggered validation, so {"listingType":
+        # "banana"} was accepted and a live auction could be switched to fixed-price,
+        # orphaning every bid against it.
+        if any(field in body for field in listing_rules.COMMERCIAL_FIELDS):
+            listing_rules.assert_terms_editable(db, piece)
+            listing = _resolve_listing(db, body, piece, user)
+            _validate_sale_detail_fields({**piece_to_dict(piece), **body})
+            piece.is_for_sale = listing["is_for_sale"]
+            piece.listing_type = listing["listing_type"]
+            piece.price_cents = listing["price_cents"]
+
         if "status" in body:
-            piece.status = body["status"]
-        _start_auction_clock_if_needed(piece)
+            requested = (body.get("status") or "").strip().lower()
+            # A whitelist, not a passthrough. reserved/sold/auction_won/deleted are driven
+            # by money or by the auction closer; letting an owner set them by hand meant
+            # they could hand themselves auction_won, which is the state auction_checkout
+            # trusts to decide who may buy.
+            if requested not in listing_rules.OWNER_DRIVEN_STATUSES:
+                raise AppError(f"Status '{requested}' cannot be set directly.", 403)
+            piece_state.transition_piece(db, piece, requested, commit=False)
+        else:
+            # Keep the clock consistent with whatever the listing fields now say, e.g. a
+            # piece switched from auction to fixed must not keep a countdown.
+            piece_state.apply_auction_clock(piece)
         db.commit()
         db.refresh(piece)
         return piece_to_dict(piece, media=list_piece_media(db, piece.id)), 200

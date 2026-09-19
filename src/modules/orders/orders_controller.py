@@ -20,7 +20,8 @@ from src.modules.user.user_dao import get_user_by_id
 from src.modules.pieces.pieces_dao import get_piece
 from src.modules.addresses import addresses_dao
 from src.modules.orders import orders_dao
-from src.modules.bids import bid_dao
+from src.modules.pieces import listing_rules, piece_state
+from src.modules.bids import auction_dao, bid_dao
 from src.modules.orders.shipping import SHIPPING_RATES_CENTS, FLAT_TAX_RATE
 from src.modules.notifications import notifications_dao
 from src.modules.payments import money
@@ -62,8 +63,12 @@ def collect(piece_id: str):
             raise AppError("Piece not found.", 404)
         if piece.user_id == buyer.id:
             raise AppError("Cannot purchase your own piece.", 400)
-        if not piece.is_for_sale or piece.status != "live":
-            raise AppError("This piece is no longer available.", 409)
+        # Checked here as well as inside create_order, which is authoritative under the row
+        # lock. Doing it up front means an auction gets the right error ("place a bid
+        # instead") rather than whatever the next unrelated check happens to fail on — the
+        # address lookup below would otherwise report "Address not found" for a piece that
+        # was never purchasable in the first place.
+        listing_rules.assert_purchasable_fixed(piece)
         if not piece.price_cents:
             raise AppError("This piece has no price set.", 400)
 
@@ -88,9 +93,10 @@ def collect(piece_id: str):
             tax_cents=tax_cents,
             total_cents=total_cents,
         )
-        result = orders_dao.order_to_dict(db, order)
-        result["clientSecret"] = None  # placeholder — populated once a payment provider is wired up
-        return result, 201
+        # The client secret comes from POST /orders/<id>/create-payment-intent, not from
+        # here. This response used to carry a permanently null clientSecret with a comment
+        # claiming payments were unbuilt, which read as though checkout was a stub.
+        return orders_dao.order_to_dict(db, order), 201
     finally:
         db.close()
 
@@ -115,7 +121,17 @@ def auction_checkout(piece_id: str):
         if piece.status != "auction_won":
             raise AppError("This auction hasn't ended yet or has already been claimed.", 409)
 
-        highest = bid_dao.get_highest_bid(db, piece.id)
+        auction = auction_dao.get_running_auction(db, piece.id)
+        if auction is None:
+            from src.shared.models.auction import Auction
+
+            auction = db.execute(
+                select(Auction)
+                .where(Auction.piece_id == piece.id)
+                .order_by(Auction.created_at.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+        highest = bid_dao.get_highest_bid(db, auction.id) if auction else None
         if not highest or highest.bidder_id != buyer.id:
             raise AppError("Only the winning bidder can complete this purchase.", 403)
 
@@ -141,9 +157,7 @@ def auction_checkout(piece_id: str):
             tax_cents=tax_cents,
             total_cents=total_cents,
         )
-        result = orders_dao.order_to_dict(db, order)
-        result["clientSecret"] = None
-        return result, 201
+        return orders_dao.order_to_dict(db, order), 201
     finally:
         db.close()
 
@@ -177,7 +191,10 @@ def confirm(order_id: str):
         for item in items:
             piece = get_piece(db, item.piece_id)
             if piece:
-                piece.status = "sold"
+                piece_state.transition_piece(
+                    db, piece, piece_state.SOLD,
+                    allowed_from={piece_state.RESERVED}, commit=False,
+                )
         # Dev mode still books the ledger and creates the payout row, so the rest of the
         # escrow flow (release, refund) is exercisable without Stripe keys.
         db.add(

@@ -21,5 +21,9 @@ gevent>=24.2.1,<26
 stripe>=9.0.0,<13
 # CSRF for the cookie-authenticated /admin forms only (the bearer-token API is exempt).
 Flask-WTF>=1.2.0,<2
-# Auction-close background job (src/shared/scheduler.py).
-APScheduler>=3.10.0,<4
+# Scheduled work: auction close, hold refresh, waitlist expiry, reconciliation.
+# Runs in its own worker and beat processes, never in the web process — see
+# src/jobs/celery_app.py for why a single-worker assumption was not good enough.
+celery[redis]>=5.4,<6
+# Error tracking. Inert unless SENTRY_DSN is set — see src/shared/config/sentry.py.
+sentry-sdk[flask]>=2.0,<3

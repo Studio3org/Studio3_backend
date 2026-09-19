@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from src.shared.models.order import Order, OrderItem
 from src.shared.models.user import User
 from src.shared.models.piece import Piece
-from src.shared.models.payout import Payout
+from src.shared.models.payout import PAYOUT_BLOCKED, PAYOUT_TRANSFER_FAILED, Payout
 from src.shared.models.shipment import Shipment
 from src.shared.models.dispute import Dispute
 from src.shared.models.ledger import LedgerEntry, LedgerTransaction, LedgerAccount
@@ -87,14 +87,24 @@ def count_open_disputes(db: Session) -> int:
     ).scalar_one()
 
 
+# Payout states that mean an artist is unpaid on a delivered order and nobody has
+# decided what happens next.
+ATTENTION_PAYOUT_STATUSES = (PAYOUT_TRANSFER_FAILED, PAYOUT_BLOCKED)
+
+
 def list_failed_payouts(db: Session) -> list[dict]:
     """Payouts needing ops attention — a failed transfer means an artist is unpaid on a
-    delivered order, so this is the other queue that must not go unwatched."""
+    delivered order, so this is the other queue that must not go unwatched.
+
+    Includes `blocked` as well as `transfer_failed`: blocked is the deliberate hold applied
+    by a chargeback or an admin refund. It is not retryable, but it absolutely still needs a
+    human to look at it, and filtering on transfer_failed alone hid it entirely.
+    """
     rows = db.execute(
         select(Payout, Order, User)
         .join(Order, Order.id == Payout.order_id)
         .join(User, User.id == Payout.seller_id)
-        .where(Payout.status == "transfer_failed")
+        .where(Payout.status.in_(ATTENTION_PAYOUT_STATUSES))
         .order_by(Payout.updated_at.desc())
     ).all()
     return [{"payout": p, "order": o, "seller": u} for p, o, u in rows]
@@ -102,7 +112,7 @@ def list_failed_payouts(db: Session) -> list[dict]:
 
 def count_failed_payouts(db: Session) -> int:
     return db.execute(
-        select(func.count(Payout.id)).where(Payout.status == "transfer_failed")
+        select(func.count(Payout.id)).where(Payout.status.in_(ATTENTION_PAYOUT_STATUSES))
     ).scalar_one()
 
 

@@ -18,13 +18,13 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from src.shared.config.database import SessionLocal
 from src.shared.config.stripe_client import get_stripe, platform_currency, stripe_configured
 from src.shared.ledger import ledger_service
 from src.shared.models.order import Order
 from src.shared.models.payout import (
+    PAYOUT_BLOCKED,
     PAYOUT_PENDING,
     PAYOUT_READY_TO_RELEASE,
     PAYOUT_RELEASED,
@@ -38,7 +38,11 @@ from src.modules.payments import money
 
 logger = get_logger(__name__)
 
+# PAYOUT_BLOCKED is deliberately absent: a chargebacked payout must not be releasable by
+# any route, including the collector confirming delivery. TRANSFER_FAILED stays because a
+# transfer Stripe rejected is meant to be retryable once the cause is fixed.
 RELEASABLE_STATUSES = (PAYOUT_PENDING, PAYOUT_READY_TO_RELEASE, PAYOUT_TRANSFER_FAILED)
+assert PAYOUT_BLOCKED not in RELEASABLE_STATUSES
 
 
 def transfer_group(order_id) -> str:
@@ -102,9 +106,15 @@ def release_payout_for_order(order_id: uuid.UUID) -> dict:
             return _result(payout.status, "Payout is not in a releasable state.")
 
         seller = db.get(User, payout.seller_id)
-        amount = ledger_service.get_seller_balance(db, payout.seller_id)
+        # THIS order's share, not the artist's whole outstanding balance. Using the balance
+        # meant a seller with two completed orders had the first payout transfer the sum of
+        # both, and the second then found nothing owed and was marked failed.
+        amount = money.artist_share_cents(
+            order.artwork_cents, money.order_commission_bps(order)
+        )
+        balance = ledger_service.get_seller_balance(db, payout.seller_id)
 
-        blocker = _blocking_reason(seller, amount)
+        blocker = _blocking_reason(seller, amount, balance)
         if blocker:
             payout.status = PAYOUT_TRANSFER_FAILED
             payout.failure_reason = blocker
@@ -165,11 +175,18 @@ def release_payout_for_order(order_id: uuid.UUID) -> dict:
     return _finalize(order_id, transfer["id"], int(transfer["amount"]))
 
 
-def _blocking_reason(seller: User, amount_cents: int) -> Optional[str]:
+def _blocking_reason(seller: User, amount_cents: int, balance_cents: int) -> Optional[str]:
     if not seller:
         return "Seller account not found."
     if amount_cents <= 0:
-        return f"Nothing owed to this artist (balance {amount_cents} cents)."
+        return f"Nothing owed to this artist for this order ({amount_cents} cents)."
+    if balance_cents < amount_cents:
+        # The ledger says we hold less than this order is worth — a refund or reversal has
+        # eaten into it. Refuse rather than quietly underpaying: someone needs to look.
+        return (
+            f"Ledger holds only {balance_cents} cents for this artist, less than the "
+            f"{amount_cents} owed on this order."
+        )
     # Connect checks only apply when there is a real Stripe to pay through; in dev mode no
     # artist has an account, and blocking there would make the escrow flow untestable.
     if stripe_configured():

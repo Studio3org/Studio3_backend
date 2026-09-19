@@ -1,7 +1,7 @@
 """Success and error response helpers - same shape as reference."""
 
 from flask import jsonify
-from typing import Any, Optional
+from typing import Any
 
 from src.shared.utils.messages import INTERNAL_SERVER_ERROR
 

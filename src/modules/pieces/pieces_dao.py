@@ -113,15 +113,27 @@ def batch_list_piece_media(
 
 
 def delete_piece(db: Session, piece: Piece) -> None:
+    """Soft-delete. Refuses a piece with a sale attached — VALID_TRANSITIONS has no edge
+    from reserved/sold/auction_won to deleted, because an order points at it."""
+    from src.modules.pieces import piece_state
+
+    piece_state.transition_piece(db, piece, piece_state.DELETED, commit=False)
     piece.deleted_at = datetime.now(timezone.utc)
-    piece.status = "deleted"
     db.commit()
 
 
 def piece_listing_state(piece: Piece) -> Optional[str]:
-    """Marketplace badge for feed cards: available to buy, collected, or none."""
+    """Marketplace badge for feed cards.
+
+    Auctions get their own states: a live auction is not "available to buy" — the price
+    shown is a starting bid and the only way to acquire it is to win.
+    """
     if piece.status in ("sold", "reserved"):
         return "collected"
+    if piece.status == "auction_won":
+        return "auction_ended"
+    if piece.is_for_sale and piece.listing_type == "auction" and piece.status == "live":
+        return "auction_live"
     if piece.status == "delisted" and piece.is_for_sale:
         return "collected"
     if piece.is_for_sale and piece.status == "live":
@@ -158,8 +170,6 @@ def piece_to_dict(piece: Piece, media: Optional[list[PieceMedia]] = None) -> dic
         "altText": piece.alt_text,
         "isForSale": piece.is_for_sale,
         "listingType": piece.listing_type,
-        "auctionDurationDays": piece.auction_duration_days,
-        "auctionEndsAt": piece.auction_ends_at.isoformat() if piece.auction_ends_at else None,
         "listingState": listing_state,
         "priceCents": piece.price_cents,
         "currency": piece.currency,

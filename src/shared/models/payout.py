@@ -20,7 +20,13 @@ def utc_now():
 PAYOUT_PENDING = "pending"
 PAYOUT_READY_TO_RELEASE = "ready_to_release"
 PAYOUT_RELEASED = "released"
+# A transfer we attempted and Stripe rejected. Retryable: ops can fix the cause and retry.
 PAYOUT_TRANSFER_FAILED = "transfer_failed"
+# Deliberately held back — currently only by an open card chargeback. NOT retryable, and
+# kept distinct from transfer_failed for exactly that reason: the two used to share a value,
+# which put a chargebacked payout back in the releasable set and let "confirm received" pay
+# an artist out of money the bank was clawing back.
+PAYOUT_BLOCKED = "blocked"
 
 
 class Payout(Base):

@@ -3,12 +3,15 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import select, or_, func
+from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
 from src.shared.models.order import Order, OrderItem
 from src.shared.models.piece import Piece
+from src.shared.models.user import User
 from src.shared.utils.app_error import AppError
+from src.shared.config import commission as commission_policy
+from src.modules.pieces import listing_rules, piece_state
 
 # Orders in these statuses represent a completed sale/purchase — excludes pending_payment
 # (not yet paid), failed, cancelled and refunded. awaiting_confirmation counts: the money is
@@ -36,10 +39,18 @@ VALID_TRANSITIONS = {
     "shipped": {"awaiting_confirmation", "disputed"},
     "awaiting_confirmation": {"completed", "disputed"},
     "disputed": {"completed", "refunded"},
+    # A delivered order can still be refunded — a dashboard-issued refund or a late dispute
+    # both land here. Without this edge charge.refunded raised 409 inside the webhook, which
+    # became a 500 and a retry loop.
+    "completed": {"refunded", "disputed"},
 }
 
-# Statuses from which no further transition is possible.
-TERMINAL_STATUSES = ("completed", "cancelled", "failed", "refunded")
+# Statuses from which no further transition is possible. Descriptive only — the authority
+# is VALID_TRANSITIONS above, which is what transition_order actually enforces. `completed`
+# is deliberately absent: a delivered order can still be refunded or disputed.
+TERMINAL_STATUSES = tuple(
+    status for status in ("cancelled", "failed", "refunded") if not VALID_TRANSITIONS.get(status)
+)
 
 
 def count_seller_in_progress(db: Session, seller_id: uuid.UUID) -> int:
@@ -68,8 +79,13 @@ def create_order(
     locked = db.execute(
         select(Piece).where(Piece.id == piece.id).with_for_update()
     ).scalar_one_or_none()
-    if not locked or not locked.is_for_sale or locked.status != "live":
+    if not locked:
         raise AppError("This piece is no longer available.", 409)
+    # Checked here and not only in the controller, for the same reason the lock is here: the
+    # DAO is the authority. The listing_type half of this was missing entirely, so an auction
+    # piece — is_for_sale, live, price_cents holding the STARTING BID — satisfied every check
+    # and could be bought outright mid-auction for the opening price.
+    listing_rules.assert_purchasable_fixed(locked)
 
     order = Order(
         id=uuid.uuid4(),
@@ -81,11 +97,18 @@ def create_order(
         shipping_cents=shipping_cents,
         tax_cents=tax_cents,
         total_cents=total_cents,
+        # Resolved once, here, and never recomputed. Changing the platform rate later
+        # must not restate what this artist is owed.
+        commission_bps=commission_policy.resolve_bps(
+            db.get(User, seller_id), commission_policy.SALE_ART
+        ),
     )
     db.add(order)
     db.flush()
     db.add(OrderItem(id=uuid.uuid4(), order_id=order.id, piece_id=locked.id, price_cents=artwork_cents))
-    locked.status = "reserved"
+    piece_state.transition_piece(
+        db, locked, piece_state.RESERVED, allowed_from={piece_state.LIVE}, commit=False
+    )
     db.commit()
     db.refresh(order)
     return order
@@ -130,11 +153,18 @@ def create_auction_order(
         shipping_cents=shipping_cents,
         tax_cents=tax_cents,
         total_cents=total_cents,
+        # Resolved once, here, and never recomputed. Changing the platform rate later
+        # must not restate what this artist is owed.
+        commission_bps=commission_policy.resolve_bps(
+            db.get(User, seller_id), commission_policy.SALE_ART
+        ),
     )
     db.add(order)
     db.flush()
     db.add(OrderItem(id=uuid.uuid4(), order_id=order.id, piece_id=locked.id, price_cents=artwork_cents))
-    locked.status = "reserved"
+    piece_state.transition_piece(
+        db, locked, piece_state.RESERVED, allowed_from={piece_state.AUCTION_WON}, commit=False
+    )
     db.commit()
     db.refresh(order)
     return order
@@ -190,12 +220,24 @@ def transition_order(
 
 
 def release_pieces(db: Session, order: Order, commit: bool = True) -> None:
-    """Return an order's pieces to `live` — used when payment fails or the order is
-    cancelled, so the artwork doesn't stay reserved forever."""
+    """Put an order's pieces back on the market — payment failed, or the order was
+    cancelled or refunded, so the artwork must not stay reserved forever.
+
+    An auction does not return to `live`: its auction_ends_at is already in the past, so the
+    close sweep would immediately re-close it. release_target_status sends it back to its
+    winner instead, or delists it if the winning bid is gone.
+    """
     for item in list_items(db, order.id):
         piece = db.get(Piece, item.piece_id)
-        if piece and piece.status in ("reserved", "sold"):
-            piece.status = "live"
+        if piece and piece.status in (piece_state.RESERVED, piece_state.SOLD):
+            piece_state.transition_piece(
+                db,
+                piece,
+                piece_state.release_target_status(db, piece),
+                allowed_from={piece_state.RESERVED, piece_state.SOLD},
+                reason="order_released",
+                commit=False,
+            )
     if commit:
         db.commit()
 

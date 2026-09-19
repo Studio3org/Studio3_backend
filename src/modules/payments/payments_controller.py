@@ -7,6 +7,7 @@ from src.shared.config.database import SessionLocal
 from src.shared.config.stripe_client import get_stripe, platform_currency, stripe_configured
 from src.shared.utils.app_error import AppError
 from src.shared.utils.logger import get_logger
+from src.shared.utils.request_id import request_id
 from src.modules.orders import orders_dao
 from src.modules.payments import webhook_handler
 
@@ -98,6 +99,13 @@ def webhook():
     signature = request.headers.get("Stripe-Signature", "")
     event = webhook_handler.construct_event(payload, signature)
 
+    # One id for the whole event. It is handled across three separate sessions, and without
+    # this its log lines cannot be told apart from a concurrent delivery's.
+    with request_id(f"evt:{event['id']}"):
+        return _process_event(event)
+
+
+def _process_event(event):
     db = SessionLocal()
     try:
         if not webhook_handler.record_event(db, event):

@@ -33,7 +33,6 @@ from src.shared.notification.email_service import send_email
 from src.shared.templates.otp_template import get_otp_html
 from src.modules.auth.auth_dao import (
     find_user_by_email,
-    find_user_by_username,
     find_user_by_username_or_history,
     create_user,
 )

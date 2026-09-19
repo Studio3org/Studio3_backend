@@ -1,6 +1,6 @@
 """JWT sign and verify using secret from env."""
 import os
-from typing import Any, Optional
+from typing import Optional
 
 import jwt
 from datetime import datetime, timedelta, timezone

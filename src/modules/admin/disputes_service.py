@@ -11,12 +11,11 @@ from sqlalchemy import select
 from src.shared.config.database import SessionLocal
 from src.shared.config.stripe_client import get_stripe, stripe_configured
 from src.shared.models.dispute import (
-    DISPUTE_OPEN,
     DISPUTE_RESOLVED_REFUND,
     DISPUTE_RESOLVED_RELEASE,
     Dispute,
 )
-from src.shared.models.payout import PAYOUT_RELEASED, Payout
+from src.shared.models.payout import PAYOUT_BLOCKED, PAYOUT_RELEASED, Payout
 from src.shared.utils.app_error import AppError
 from src.shared.utils.logger import get_logger
 from src.modules.orders import orders_dao
@@ -101,7 +100,10 @@ def refund_order(order_id: uuid.UUID, admin_id: uuid.UUID, reason: str) -> dict:
         if payout_row := db.execute(
             select(Payout).where(Payout.order_id == order_id)
         ).scalar_one_or_none():
-            payout_row.status = "transfer_failed"
+            # BLOCKED, not TRANSFER_FAILED: nothing was attempted and nothing should be
+            # retried. TRANSFER_FAILED is in RELEASABLE_STATUSES, so labelling a deliberate
+            # cancellation that way puts refunded money back in reach of a release.
+            payout_row.status = PAYOUT_BLOCKED
             payout_row.failure_reason = "Order refunded; payout cancelled."
         db.commit()
         _notify(db, order, refunded=True)

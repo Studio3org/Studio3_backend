@@ -15,9 +15,12 @@ load_dotenv(BASE_DIR / ".env", override=False)
 env_name = os.getenv("FLASK_ENV", "development")
 env_file = BASE_DIR / f".env.{env_name}"
 if env_file.exists():
-    # Local only: .env.development may intentionally override shell exports.
-    # Production (wsgi.py) uses override=False so Render secrets are never wiped.
-    load_dotenv(env_file, override=(env_name != "production"))
+    # override=False everywhere, matching wsgi.py and alembic/env.py: an explicitly exported
+    # variable is the most specific instruction available and must win over a file of
+    # defaults. This used to override in development, which meant a local run could not be
+    # pointed at another database or Redis without editing the file — the export was read,
+    # then silently discarded, and the process ran against something else entirely.
+    load_dotenv(env_file, override=False)
 
 # Ensure project root on path
 sys.path.insert(0, str(BASE_DIR))

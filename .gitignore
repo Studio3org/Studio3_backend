@@ -36,3 +36,5 @@ graphify-out/
 # Claude Code local config (local only — do not push)
 .claude/
 CLAUDE.md
+# Test-only env (points at the studio3_test database)
+.env.test

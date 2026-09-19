@@ -8,7 +8,15 @@ src/modules/payments/webhook_handler.py.
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, String, Integer, Boolean, ForeignKey
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+)
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 
 from src.shared.config.database import Base
@@ -20,6 +28,11 @@ def utc_now():
 
 class Order(Base):
     __tablename__ = "orders"
+    __table_args__ = (
+        CheckConstraint(
+            "commission_bps BETWEEN 0 AND 10000", name="ck_orders_commission_bps_range"
+        ),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     buyer_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -36,6 +49,10 @@ class Order(Base):
     shipping_cents = Column(Integer, nullable=False)
     tax_cents = Column(Integer, nullable=False)
     total_cents = Column(Integer, nullable=False)
+    # The commission rate this order was sold at, resolved once at checkout. Refunds
+    # and payouts read this rather than today's configured rate, so changing the rate
+    # never restates what a past artist is owed.
+    commission_bps = Column(Integer, nullable=False)
     payment_provider = Column(String(32), nullable=True)  # null while unconfigured; else "stripe"
     payment_reference = Column(String(255), nullable=True, index=True)  # Stripe PaymentIntent id
     # Charge id behind the PaymentIntent. Needed for refunds and as `source_transaction` on

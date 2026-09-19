@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, String, Boolean, Text, Float
+from sqlalchemy import Column, DateTime, String, Boolean, Text, Float, Integer
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 
@@ -38,6 +38,9 @@ class User(Base):
     # mirrored from the account.updated webhook, not trusted from a client.
     stripe_account_id = Column(String(255), nullable=True)
     stripe_payouts_enabled = Column(Boolean, default=False, nullable=False)
+    # Reduced commission for a specific artist, in basis points. Null = the standard
+    # platform rate; set only for the client's named lower-rate tier.
+    commission_bps_override = Column(Integer, nullable=True)
     onboarding_complete = Column(Boolean, default=False, nullable=False)
     taste_preferences = Column(JSONB, nullable=True)  # {mediums, styles, themes}
     last_username_change_at = Column(DateTime(timezone=True), nullable=True)

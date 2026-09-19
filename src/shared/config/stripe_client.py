@@ -5,7 +5,6 @@ never logged. `stripe_configured()` lets callers keep the existing dev-mode beha
 (auto-succeed checkout) when no keys are present.
 """
 import os
-from typing import Optional
 
 import stripe
 
