@@ -44,7 +44,10 @@ alembic upgrade head
 - **Dev:** `FLASK_ENV=development python run.py` (or `python run.py`; default env is development)
 - **Prod:** `FLASK_ENV=production gunicorn -k gevent -w 1 -b 0.0.0.0:9000 wsgi:app`
 
-Render/EC2 should use Python **3.12** (`runtime.txt`) — not 3.14 — with the gevent worker above.
+Python version is pinned in **`.python-version`** (3.12), which is the file Render reads.
+`runtime.txt` used to sit here claiming the same thing — it is a Heroku convention that
+Render ignores, so production silently ran 3.14 for some time. CI asserts its interpreter
+matches `.python-version`, so the two cannot drift again.
 
 ## Layout
 
@@ -52,7 +55,7 @@ Render/EC2 should use Python **3.12** (`runtime.txt`) — not 3.14 — with the 
 project_root/
 ├── run.py                 # Entry: load env, check DB+Redis, create app (gevent monkey-patch)
 ├── wsgi.py                # Gunicorn entry (gevent monkey-patch)
-├── runtime.txt            # Render Python version pin (3.12.x)
+├── .python-version        # Python pin Render actually reads (3.12)
 ├── src/
 │   ├── app.py             # Flask app, CORS, blueprints, Socket.IO, error handler
 │   ├── middlewares/       # error_handler, auth_middleware (JWT + Redis session)

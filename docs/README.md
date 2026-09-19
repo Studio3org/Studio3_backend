@@ -4,7 +4,8 @@ This guide walks you through setting up and running the Studiothree Discover bac
 
 ## Prerequisites
 
-- **Python 3.12** recommended for production (see `runtime.txt`); **3.9+** for local
+- **Python 3.12** for production, pinned in `.python-version` (the file Render reads);
+  **3.9+** for local
 - **PostgreSQL** – running and accessible
 - **Redis** – running and accessible (sessions, OTP, and Socket.IO pub/sub)
 - (Optional) **AWS SES + credentials** – for OTP and password-reset emails
@@ -121,6 +122,6 @@ Set `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, and `SECRET_KEY` in `.env.product
 | `ModuleNotFoundError: src` | Run commands from the **project root** (where `run.py` and `src/` are). |
 | OTP / reset emails not sent | `SES_FROM_EMAIL` set; AWS credentials valid for SES; no errors in `logs/error.log`. |
 | Socket.IO / chat realtime broken | Redis up; prod started with `gunicorn -k gevent -w 1`; `FRONTEND_URL` / `CORS_ORIGINS` include the web client origin. |
-| `do not call blocking functions from the mainloop` | Do not use eventlet; use gevent + Python 3.12 (see `runtime.txt`). |
+| `do not call blocking functions from the mainloop` | Do not use eventlet; use gevent + Python 3.12 (see `.python-version`). |
 
 Logs are written under the `logs/` directory (e.g. `error.log`, `combined.log`).

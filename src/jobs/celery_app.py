@@ -15,8 +15,8 @@ Running a worker locally on macOS:
 `--pool=solo` is needed only on macOS. Celery's default prefork pool fails there under
 Python 3.13+ with "not enough values to unpack" — the forked child never receives the task
 registry, because macOS no longer forks a fully-initialised interpreter. Render runs Linux
-on the Python pinned in runtime.txt, where prefork works normally, so the deployed command
-below does not use solo.
+on the Python pinned in .python-version, where prefork works normally, so the deployed
+command below does not use solo.
 """
 import os
 

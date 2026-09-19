@@ -43,16 +43,30 @@ jobs:
       TEST_REDIS_URL: redis://localhost:6379/15
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      # Pinned from runtime.txt so the CI interpreter can never drift from Render's.
-      - uses: actions/setup-python@v5
+      # Minor version only, on both sides. Pinning an exact patch fails whenever the runner
+      # image lacks a prebuilt for it — which is how this job first broke. Catching
+      # version-specific idioms is what the pin is for, and the minor version determines
+      # those. The step below stops CI and Render drifting apart.
+      - uses: actions/setup-python@v6
         with:
-          python-version-file: runtime.txt
+          python-version: "3.12"
           cache: pip
           cache-dependency-path: |
             requirements.txt
             requirements-dev.txt
+
+      - name: CI Python matches the version Render deploys
+        run: |
+          want=$(cut -d. -f1,2 .python-version)
+          have=$(python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+          if [ "$want" != "$have" ]; then
+            echo ".python-version pins Python $want but CI is running $have."
+            echo "Update the python-version above to match, or CI stops testing what deploys."
+            exit 1
+          fi
+          echo "Both on Python $have."
 
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
