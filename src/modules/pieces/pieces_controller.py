@@ -238,7 +238,14 @@ def enrich_piece_dict(db, piece, viewer_id: Optional[uuid.UUID]) -> dict:
     base["series"] = series_dao.series_detail_dict(db, series) if series else None
     base["relatedPosts"] = [post_to_dict(p) for p in list_related_posts(db, piece.id)]
     if piece.listing_type == "auction":
-        auction = auction_dao.get_running_auction(db, piece.id)
+        # Falling back to the settling auction is what lets a closed piece still say who won.
+        # get_running_auction covers draft/live/closing only, so once the sweep closed an
+        # auction this returned nothing and the detail payload carried no auction fields at
+        # all — the winner could never be told they had won, and a winner whose card was
+        # declined had no way to see it.
+        auction = auction_dao.get_running_auction(db, piece.id) or (
+            auction_dao.get_settling_auction(db, piece.id)
+        )
         base.update(bid_dao.bid_summary(db, auction, viewer_id=viewer_id))
     return base
 

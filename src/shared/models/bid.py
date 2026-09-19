@@ -24,14 +24,18 @@ BID_OUTBID = "outbid"
 BID_CANCELLED = "cancelled"
 BID_WON = "won"
 BID_LOST = "lost"
-BID_STATUSES = (BID_ACTIVE, BID_OUTBID, BID_CANCELLED, BID_WON, BID_LOST)
+# Won and did not complete. Deliberately not `lost`: "someone else won" and "you won and
+# walked away" are different facts, and the seller needs to be able to tell them apart.
+BID_FORFEITED = "forfeited"
+BID_STATUSES = (BID_ACTIVE, BID_OUTBID, BID_CANCELLED, BID_WON, BID_LOST, BID_FORFEITED)
 
 
 class Bid(Base):
     __tablename__ = "bids"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('active','outbid','cancelled','won','lost')", name="ck_bids_status"
+            "status IN ('active','outbid','cancelled','won','lost','forfeited')",
+            name="ck_bids_status",
         ),
         CheckConstraint("amount_cents > 0", name="ck_bids_amount_positive"),
     )

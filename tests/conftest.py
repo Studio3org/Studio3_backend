@@ -251,6 +251,10 @@ def stripe_stub(monkeypatch):
         "src.modules.payments.payouts_service",
         "src.modules.payments.payments_controller",
         "src.modules.admin.disputes_service",
+        # Holds are a separate Stripe code path (manual capture), and the auction lifecycle
+        # is entirely built on it.
+        "src.modules.bids.holds_service",
+        "src.modules.payments.payment_methods_controller",
     ):
         monkeypatch.setattr(f"{target}.get_stripe", lambda _s=stub: _s, raising=False)
     return stub
@@ -267,6 +271,8 @@ def stripe_enabled(monkeypatch, stripe_stub):
     for target in (
         "src.modules.payments.payouts_service",
         "src.modules.payments.payments_controller",
+        "src.modules.bids.holds_service",
+        "src.modules.payments.payment_methods_controller",
     ):
         monkeypatch.setattr(f"{target}.stripe_configured", lambda: True, raising=False)
     return stripe_stub

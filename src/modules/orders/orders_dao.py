@@ -126,11 +126,20 @@ def create_auction_order(
     shipping_cents: int,
     tax_cents: int,
     total_cents: int,
+    prepaid_cents: int = 0,
+    prepaid_fee_cents: int = 0,
+    prepaid_reference: Optional[str] = None,
 ) -> Order:
     """Same hand-off as create_order, but for an auction winner completing checkout after
     the auction has already closed (piece.status == "auction_won") rather than a live,
     still-purchasable piece — everything downstream (payment intent, webhook, shipment,
-    delivery confirmation) is unchanged from this point on."""
+    delivery confirmation) is unchanged from this point on.
+
+    One thing is not the same, and it is the reason `prepaid_cents` exists: closing the
+    auction captured the winner's hold, so the hammer price has **already been taken**. The
+    payment intent for this order is raised on total minus prepaid. Before this was tracked,
+    checkout priced the intent at the full total and charged the artwork a second time — on
+    a $5,000 piece, $5,000 taken twice."""
     from src.shared.models.bid import Bid
 
     locked = db.execute(
@@ -153,6 +162,9 @@ def create_auction_order(
         shipping_cents=shipping_cents,
         tax_cents=tax_cents,
         total_cents=total_cents,
+        prepaid_cents=prepaid_cents,
+        prepaid_fee_cents=prepaid_fee_cents,
+        prepaid_reference=prepaid_reference,
         # Resolved once, here, and never recomputed. Changing the platform rate later
         # must not restate what this artist is owed.
         commission_bps=commission_policy.resolve_bps(

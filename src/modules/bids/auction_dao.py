@@ -12,6 +12,7 @@ from src.shared.models.auction import (
     AUCTION_DRAFT,
     AUCTION_LIVE,
     AUCTION_RUNNING_STATUSES,
+    AUCTION_SETTLING_STATUSES,
     Auction,
 )
 from src.shared.models.piece import Piece
@@ -175,3 +176,21 @@ def apply_soft_close(db: Session, auction: Auction, now: datetime) -> bool:
     auction.closes_at = now + SOFT_CLOSE_WINDOW
     auction.status = AUCTION_CLOSING
     return True
+
+
+def get_settling_auction(
+    db: Session, piece_id: uuid.UUID, *, lock: bool = False
+) -> Optional[Auction]:
+    """The closed-but-unfinished auction for this piece, if any.
+
+    Separate from get_running_auction because a settling auction is past its close: no bid
+    may be placed on it, but it is still the row checkout reads the winner and the captured
+    amount from. Conflating the two would let a bid land on an auction that has already
+    taken someone's money.
+    """
+    stmt = select(Auction).where(
+        Auction.piece_id == piece_id, Auction.status.in_(AUCTION_SETTLING_STATUSES)
+    )
+    if lock:
+        stmt = stmt.with_for_update()
+    return db.execute(stmt.order_by(Auction.created_at.desc()).limit(1)).scalar_one_or_none()

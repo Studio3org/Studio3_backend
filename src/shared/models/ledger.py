@@ -38,6 +38,11 @@ ACCOUNT_STRIPE_FEES = "stripe_fees"              # expense: Stripe processing fe
 ACCOUNT_SHIPPING_COSTS = "shipping_costs"        # expense: what the courier actually charged
 ACCOUNT_TAX_PAYABLE = "tax_payable"              # liability: tax collected, owed onward
 ACCOUNT_SELLER_PAYABLE = "seller_payable"        # liability: owed to a specific artist
+# liability: hammer price captured from an auction winner before any order exists. Cleared
+# into the order at checkout, or refunded if the winner forfeits. Without it, the money a
+# close captures would sit in Stripe with no ledger record until — or unless — the winner
+# completed checkout.
+ACCOUNT_AUCTION_ESCROW = "auction_escrow"
 
 PLATFORM_ACCOUNT_TYPES = (
     ACCOUNT_PLATFORM_CLEARING,
@@ -46,6 +51,7 @@ PLATFORM_ACCOUNT_TYPES = (
     ACCOUNT_STRIPE_FEES,
     ACCOUNT_SHIPPING_COSTS,
     ACCOUNT_TAX_PAYABLE,
+    ACCOUNT_AUCTION_ESCROW,
 )
 
 # Transaction types.
@@ -54,6 +60,10 @@ TXN_PAYOUT_RELEASED = "payout_released"
 TXN_REFUND_ISSUED = "refund_issued"
 TXN_SHIPPING_COST_RECORDED = "shipping_cost_recorded"
 TXN_TRANSFER_REVERSED = "transfer_reversed"
+# An auction close capturing the winner's hold, before there is an order to attach it to.
+TXN_AUCTION_CAPTURED = "auction_captured"
+# That capture given back when the winner forfeits or the sale cannot complete.
+TXN_AUCTION_REFUNDED = "auction_refunded"
 
 DEBIT = "debit"
 CREDIT = "credit"

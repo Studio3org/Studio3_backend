@@ -32,6 +32,10 @@ class Order(Base):
         CheckConstraint(
             "commission_bps BETWEEN 0 AND 10000", name="ck_orders_commission_bps_range"
         ),
+        CheckConstraint(
+            "prepaid_cents >= 0 AND prepaid_cents <= total_cents",
+            name="ck_orders_prepaid_within_total",
+        ),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -53,6 +57,16 @@ class Order(Base):
     # and payouts read this rather than today's configured rate, so changing the rate
     # never restates what a past artist is owed.
     commission_bps = Column(Integer, nullable=False)
+    # Money already collected before this order existed. Nonzero only for an auction win,
+    # where capturing the winner's hold at close already took the hammer price — the payment
+    # intent at checkout is priced at total - prepaid so the artwork is not charged twice.
+    prepaid_cents = Column(Integer, default=0, server_default="0", nullable=False)
+    # Stripe's fee on that earlier capture. One `order_paid` ledger transaction covers the
+    # whole order, so its stripe_fees leg has to account for both charges or platform_clearing
+    # drifts from the real Stripe balance by the difference.
+    prepaid_fee_cents = Column(Integer, default=0, server_default="0", nullable=False)
+    # The hold's PaymentIntent. A refund on an auction order has to reverse this one too.
+    prepaid_reference = Column(String(255), nullable=True)
     payment_provider = Column(String(32), nullable=True)  # null while unconfigured; else "stripe"
     payment_reference = Column(String(255), nullable=True, index=True)  # Stripe PaymentIntent id
     # Charge id behind the PaymentIntent. Needed for refunds and as `source_transaction` on

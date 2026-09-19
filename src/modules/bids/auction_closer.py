@@ -14,18 +14,18 @@ from sqlalchemy import select
 
 from src.shared.config.database import SessionLocal
 from src.shared.models.auction import (
+    AUCTION_AWAITING_PAYMENT,
     AUCTION_CLOSED_NO_BIDS,
-    AUCTION_CLOSED_SOLD,
     AUCTION_CLOSING,
     AUCTION_LIVE,
     AUCTION_NEEDS_SELLER_ACTION,
     Auction,
 )
-from src.shared.models.bid import BID_LOST, BID_WON
+from src.shared.models.bid import BID_LOST, Bid
 from src.shared.models.piece import Piece
 from src.shared.models.user import User
 from src.shared.utils.logger import get_logger
-from src.modules.bids import bid_dao, holds_service
+from src.modules.bids import auction_winner, bid_dao
 from src.modules.notifications import notifications_dao
 from src.modules.pieces import piece_state
 
@@ -125,48 +125,74 @@ def _close_without_sale(db, auction, piece, status: str, reason: str) -> None:
 
 
 def _close_with_winner(db, auction, piece, winning) -> None:
-    """Capture the winner and release everyone else.
+    """Hand the auction to auction_winner and tell everyone what happened.
 
-    Capture first. If the card declines we must not have already released the losing bids —
-    the cascade needs them, and a released hold cannot be un-released.
+    All the ordering that matters — capture before release, keep the runners-up funded while
+    a cascade is still possible — lives in auction_winner.settle_on. This function is the
+    part that talks to people.
     """
-    winning_hold = bid_dao.hold_for_bid(db, winning.id)
-    if winning_hold is None:
-        logger.error("Winning bid %s has no hold; parking auction %s", winning.id, auction.id)
-        auction.status = AUCTION_NEEDS_SELLER_ACTION
-        db.commit()
-        return
-
-    try:
-        holds_service.capture_hold(db, winning_hold, commit=False)
-    except Exception as exc:
-        # Phase 3 turns this into the retry-and-cascade flow. Until then the auction is
-        # parked rather than silently closed, and nobody's money is released: the losing
-        # holds are what the cascade will need.
-        logger.warning("Capture failed closing auction %s: %s", auction.id, exc)
-        auction.status = AUCTION_NEEDS_SELLER_ACTION
-        auction.closed_at = datetime.now(timezone.utc)
-        db.commit()
-        return
-
-    winning.status = BID_WON
-    losing = [b for b in bid_dao.ranked_active_bids(db, auction.id) if b.id != winning.id]
-    for bid in losing:
-        bid.status = BID_LOST
-        hold = bid_dao.hold_for_bid(db, bid.id)
-        if hold:
-            holds_service.release_hold(db, hold, "auction_lost", commit=False)
-
-    auction.status = AUCTION_CLOSED_SOLD
-    auction.closed_at = datetime.now(timezone.utc)
-    if piece is not None:
-        piece_state.transition_piece(
-            db, piece, piece_state.AUCTION_WON, allowed_from={piece_state.LIVE},
-            reason="auction_closed_with_winner", commit=False,
-        )
+    outcome = auction_winner.settle_on(db, auction, piece, winning, commit=False)
     db.commit()
 
-    _notify_close(db, auction, piece, winning, losing)
+    # After the commit, always: a failed push must never undo a close that has already moved
+    # real money.
+    if outcome == auction_winner.SETTLED:
+        losing = _bids_with_status(db, auction.id, BID_LOST)
+        _notify_close(db, auction, piece, winning, losing)
+    else:
+        _notify_payment_failed(db, auction, piece, winning)
+
+
+def _bids_with_status(db, auction_id, status) -> list:
+    return list(
+        db.execute(
+            select(Bid).where(Bid.auction_id == auction_id, Bid.status == status)
+        ).scalars()
+    )
+
+
+def _notify_payment_failed(db, auction, piece, winning) -> None:
+    """Both parties, immediately — the client was explicit about this for event auctions,
+    and there is no reason a standalone seller should learn about it any later.
+
+    The seller is told because at an event they are standing next to the buyer and can sort
+    it out on the spot; leaving them to discover it from a dashboard the next morning is the
+    failure mode this rule exists to prevent.
+    """
+    title = piece.title if piece else "a piece"
+    deadline = auction.winner_deadline_at
+    when = deadline.strftime("%H:%M UTC on %d %b") if deadline else "shortly"
+    try:
+        notifications_dao.create_and_push(
+            db,
+            user_id=winning.bidder_id,
+            type="auction_payment_failed",
+            target_type="piece",
+            target_id=auction.piece_id,
+            payload={"amountCents": winning.amount_cents,
+                     "deadlineAt": deadline.isoformat() if deadline else None},
+            title="Your card was declined",
+            body=f'You won "{title}", but the payment didn\'t go through. Add another card '
+                 f"by {when} or the piece passes to the next bidder.",
+        )
+    except Exception:
+        logger.exception("Payment-failed notification failed for bidder %s", winning.bidder_id)
+    try:
+        notifications_dao.create_and_push(
+            db,
+            user_id=auction.seller_id,
+            type="auction_winner_payment_failed",
+            actor_id=winning.bidder_id,
+            target_type="piece",
+            target_id=auction.piece_id,
+            payload={"amountCents": winning.amount_cents,
+                     "deadlineAt": deadline.isoformat() if deadline else None},
+            title="The winning bidder's payment failed",
+            body=f'"{title}" sold, but the payment was declined. They have until {when} to '
+                 "fix it, then it passes to the next bidder.",
+        )
+    except Exception:
+        logger.exception("Payment-failed notification failed for seller %s", auction.seller_id)
 
 
 def _notify_close(db, auction, piece, winning, losing) -> None:
@@ -223,3 +249,90 @@ def _notify_seller_no_sale(db, seller, piece, kind: str, title: str, body: str) 
         )
     except Exception:
         logger.exception("No-sale seller notification failed")
+
+
+# --- winner windows ---------------------------------------------------------------------
+
+def expire_winner_windows() -> None:
+    """Pass a piece to the next bidder when the winner's window to fix payment has run out.
+
+    Only ``awaiting_payment`` auctions are touched, and that restriction is the safety
+    property rather than an optimisation: it is the one state in which the runners-up still
+    have money authorised, so it is the one state a cascade can succeed from. A settled sale
+    (``awaiting_winner``) has already released them and is never expired — we have taken the
+    buyer's money and there is no honest way to un-sell it on a timer.
+    """
+    db = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        candidates = db.execute(
+            select(Auction.id).where(
+                Auction.status == AUCTION_AWAITING_PAYMENT,
+                Auction.winner_deadline_at.is_not(None),
+                Auction.winner_deadline_at <= now,
+            )
+        ).scalars().all()
+
+        for auction_id in candidates:
+            try:
+                _expire_one(db, auction_id)
+            except Exception:
+                db.rollback()
+                logger.exception("Failed to expire winner window for auction %s", auction_id)
+    finally:
+        db.close()
+
+
+def _expire_one(db, auction_id: uuid.UUID) -> None:
+    auction = db.execute(
+        select(Auction).where(Auction.id == auction_id).with_for_update()
+    ).scalar_one_or_none()
+    # Re-checked under the lock. The winner may have fixed their payment in the seconds
+    # between the query and here, which moves the auction out of this state entirely.
+    if not auction or auction.status != AUCTION_AWAITING_PAYMENT:
+        return
+    if not auction.winner_deadline_at or auction.winner_deadline_at > datetime.now(timezone.utc):
+        return
+
+    piece = db.get(Piece, auction.piece_id)
+    forfeited = auction_winner.winning_bid(db, auction)
+    outcome = auction_winner.cascade(
+        db, auction, piece, reason="winner_payment_window_expired", commit=False
+    )
+    db.commit()
+
+    title = piece.title if piece else "a piece"
+    if forfeited is not None:
+        _safe_notify(
+            db, user_id=forfeited.bidder_id, type="auction_forfeited",
+            target_id=auction.piece_id, title="You've lost this piece",
+            body=f'The payment for "{title}" was never completed, so it has gone to another '
+                 "bidder. Nothing was charged to you.",
+        )
+
+    if outcome == auction_winner.SETTLED:
+        new_winner = auction_winner.winning_bid(db, auction)
+        if new_winner is not None:
+            _notify_close(db, auction, piece, new_winner, _bids_with_status(db, auction.id, BID_LOST))
+    elif outcome == auction_winner.PAYMENT_FAILED:
+        new_winner = auction_winner.winning_bid(db, auction)
+        if new_winner is not None:
+            _notify_payment_failed(db, auction, piece, new_winner)
+    else:
+        _safe_notify(
+            db, user_id=auction.seller_id, type="auction_needs_action",
+            target_id=auction.piece_id, title="Your auction needs a decision",
+            body=f'No bidder on "{title}" was able to complete payment. Nothing was charged '
+                 "to anyone — relist it or set a fixed price.",
+        )
+
+
+def _safe_notify(db, *, user_id, type: str, target_id, title: str, body: str) -> None:
+    """A notification that must never take the caller down with it."""
+    try:
+        notifications_dao.create_and_push(
+            db, user_id=user_id, type=type, target_type="piece",
+            target_id=target_id, title=title, body=body,
+        )
+    except Exception:
+        logger.exception("Notification %s failed for user %s", type, user_id)

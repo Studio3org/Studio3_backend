@@ -37,6 +37,16 @@ AUCTION_DRAFT = "draft"
 AUCTION_LIVE = "live"
 # Inside the soft-close window: still accepting bids, but each one extends the end.
 AUCTION_CLOSING = "closing"
+# The two post-close waiting states. The difference between them is *whose money is still
+# held*, and that is the only thing that makes the cascade safe.
+#
+#   awaiting_payment — the winner's capture failed. They have until winner_deadline_at to fix
+#     it, and the runners-up holds are deliberately KEPT so there is something to fall back
+#     to. Nothing has been taken from anyone yet.
+#   awaiting_winner  — the money is captured and the runners-up are released. The sale is
+#     settled; only delivery details are outstanding.
+AUCTION_AWAITING_PAYMENT = "awaiting_payment"
+AUCTION_AWAITING_WINNER = "awaiting_winner"
 AUCTION_CLOSED_SOLD = "closed_sold"
 AUCTION_CLOSED_RESERVE_NOT_MET = "closed_reserve_not_met"
 AUCTION_CLOSED_NO_BIDS = "closed_no_bids"
@@ -46,12 +56,15 @@ AUCTION_NEEDS_SELLER_ACTION = "needs_seller_action"
 AUCTION_CANCELLED = "cancelled"
 
 AUCTION_STATUSES = (
-    AUCTION_DRAFT, AUCTION_LIVE, AUCTION_CLOSING, AUCTION_CLOSED_SOLD,
-    AUCTION_CLOSED_RESERVE_NOT_MET, AUCTION_CLOSED_NO_BIDS,
+    AUCTION_DRAFT, AUCTION_LIVE, AUCTION_CLOSING, AUCTION_AWAITING_PAYMENT,
+    AUCTION_AWAITING_WINNER, AUCTION_CLOSED_SOLD, AUCTION_CLOSED_RESERVE_NOT_MET, AUCTION_CLOSED_NO_BIDS,
     AUCTION_NEEDS_SELLER_ACTION, AUCTION_CANCELLED,
 )
 # Statuses in which a piece may not start a second auction.
 AUCTION_RUNNING_STATUSES = (AUCTION_DRAFT, AUCTION_LIVE, AUCTION_CLOSING)
+# Closed, but not finished with: a winner is settled or being chased, and the auction is
+# still the one the piece's checkout reads from.
+AUCTION_SETTLING_STATUSES = (AUCTION_AWAITING_PAYMENT, AUCTION_AWAITING_WINNER)
 
 DELIVERY_SHIP = "ship"
 DELIVERY_PICKUP = "pickup"
@@ -61,10 +74,12 @@ class Auction(Base):
     __tablename__ = "auctions"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('draft','live','closing','closed_sold','closed_reserve_not_met',"
-            "'closed_no_bids','needs_seller_action','cancelled')",
+            "status IN ('draft','live','closing','awaiting_payment','awaiting_winner',"
+            "'closed_sold','closed_reserve_not_met','closed_no_bids','needs_seller_action',"
+            "'cancelled')",
             name="ck_auctions_status",
         ),
+        CheckConstraint("cascade_depth >= 0", name="ck_auctions_cascade_depth_positive"),
         CheckConstraint("starting_bid_cents >= 100", name="ck_auctions_starting_bid_min"),
         CheckConstraint(
             "reserve_cents IS NULL OR reserve_cents >= starting_bid_cents",
@@ -107,6 +122,17 @@ class Auction(Base):
     # Snapshotted at listing: the artist sees a net figure before publishing, and a platform
     # rate change mid-auction must not alter it.
     commission_bps = Column(Integer, nullable=False)
+    # Who won, stored rather than derived. The close marks the winning bid `won`, which the
+    # "highest active bid" query then excludes — so a derived winner disappears the instant
+    # it is decided. A cascade makes it worse: after the top bidder's card fails the winner
+    # is the second highest, which no query over amounts can express.
+    winning_bid_id = Column(
+        UUID(as_uuid=True), ForeignKey("bids.id", ondelete="SET NULL"), nullable=True
+    )
+    # When this winner's claim lapses and the piece passes to the next bidder.
+    winner_deadline_at = Column(DateTime(timezone=True), nullable=True)
+    # How many bidders have been passed over. Bounds the cascade and tells ops what happened.
+    cascade_depth = Column(Integer, default=0, server_default="0", nullable=False)
     cancelled_reason = Column(String(64), nullable=True)
     closed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
@@ -168,6 +194,10 @@ class Hold(Base):
     # the whole refresh mechanism depends on knowing the real deadline.
     capture_before = Column(DateTime(timezone=True), nullable=True)
     refresh_count = Column(Integer, default=0, server_default="0", nullable=False)
+    # Stripe's fee on the capture, read from the charge's balance_transaction. Booked to
+    # stripe_fees with the escrow entry, and carried onto the order so one `order_paid`
+    # transaction can account for both of an auction order's charges.
+    capture_fee_cents = Column(Integer, default=0, server_default="0", nullable=False)
     last_error = Column(Text, nullable=True)
     captured_at = Column(DateTime(timezone=True), nullable=True)
     released_at = Column(DateTime(timezone=True), nullable=True)

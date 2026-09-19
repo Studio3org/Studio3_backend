@@ -11,6 +11,11 @@ from flask import request, g
 from sqlalchemy import select
 
 from src.shared.config.database import SessionLocal
+from src.shared.models.auction import (
+    AUCTION_AWAITING_PAYMENT,
+    AUCTION_CLOSED_SOLD,
+    HOLD_CAPTURED,
+)
 from src.shared.models.dispute import Dispute, DISPUTE_OPEN
 from src.shared.models.payout import Payout, PAYOUT_PENDING
 from src.shared.models.user import User
@@ -21,7 +26,7 @@ from src.modules.pieces.pieces_dao import get_piece
 from src.modules.addresses import addresses_dao
 from src.modules.orders import orders_dao
 from src.modules.pieces import listing_rules, piece_state
-from src.modules.bids import auction_dao, bid_dao
+from src.modules.bids import auction_dao, auction_winner, bid_dao
 from src.modules.orders.shipping import SHIPPING_RATES_CENTS, FLAT_TAX_RATE
 from src.modules.notifications import notifications_dao
 from src.modules.payments import money
@@ -102,9 +107,19 @@ def collect(piece_id: str):
 
 
 def auction_checkout(piece_id: str):
-    """Winning bidder completes checkout after auction_closer flipped the piece to
-    auction_won. Priced from the winning Bid, not piece.price_cents (that's only the
-    starting bid) — otherwise identical to collect()."""
+    """The winning bidder supplies delivery details and settles the remainder.
+
+    Two things make this different from collect(), and both come from the auction having
+    already taken money:
+
+    * **The winner is read from the auction, not derived.** It used to be "the highest
+      active bid", which returns nothing at all once the close has marked that bid `won` —
+      so every auction winner was told they were not the winner. It also cannot express a
+      cascade, where the winner is whichever bidder's card actually worked.
+    * **The hammer price is already paid.** Closing the auction captured the winner's hold,
+      so this order is raised with `prepaid_cents` set and the payment intent covers only
+      shipping and tax. Pricing the intent at the full total charged the artwork twice.
+    """
     body = request.get_json() or {}
     address_id = body.get("addressId")
     shipping_method = (body.get("shippingMethod") or "").strip().lower()
@@ -121,43 +136,66 @@ def auction_checkout(piece_id: str):
         if piece.status != "auction_won":
             raise AppError("This auction hasn't ended yet or has already been claimed.", 409)
 
-        auction = auction_dao.get_running_auction(db, piece.id)
+        auction = auction_dao.get_settling_auction(db, piece.id)
         if auction is None:
-            from src.shared.models.auction import Auction
+            raise AppError("This auction is no longer open for checkout.", 409)
+        if auction.status == AUCTION_AWAITING_PAYMENT:
+            # The close could not take their money. Sending them to checkout would create an
+            # order for a sale that has not been paid for at all.
+            raise AppError(
+                "Your payment for this piece hasn't gone through yet. Update your card first.",
+                409,
+            )
 
-            auction = db.execute(
-                select(Auction)
-                .where(Auction.piece_id == piece.id)
-                .order_by(Auction.created_at.desc())
-                .limit(1)
-            ).scalar_one_or_none()
-        highest = bid_dao.get_highest_bid(db, auction.id) if auction else None
-        if not highest or highest.bidder_id != buyer.id:
+        winning = auction_winner.winning_bid(db, auction)
+        if not winning or winning.bidder_id != buyer.id:
             raise AppError("Only the winning bidder can complete this purchase.", 403)
 
         address = addresses_dao.get_address(db, uuid.UUID(address_id))
         if not address or address.user_id != buyer.id:
             raise AppError("Address not found.", 404)
 
-        artwork_cents = highest.amount_cents
+        artwork_cents = winning.amount_cents
         shipping_cents = SHIPPING_RATES_CENTS[shipping_method]
         tax_cents = round(artwork_cents * FLAT_TAX_RATE)
         total_cents = artwork_cents + shipping_cents + tax_cents
+
+        # What the close already collected. Read from the hold rather than assumed to be the
+        # bid amount: a capture is the only thing that proves the money actually arrived.
+        hold = bid_dao.hold_for_bid(db, winning.id)
+        prepaid_cents = 0
+        prepaid_fee_cents = 0
+        prepaid_reference = None
+        if hold is not None and hold.status == HOLD_CAPTURED:
+            prepaid_cents = hold.amount_cents
+            prepaid_fee_cents = hold.capture_fee_cents or 0
+            prepaid_reference = hold.stripe_payment_intent_id
 
         order = orders_dao.create_auction_order(
             db,
             buyer_id=buyer.id,
             seller_id=piece.user_id,
             piece=piece,
-            winning_bid_id=highest.id,
+            winning_bid_id=winning.id,
             shipping_method=shipping_method,
             address_snapshot=addresses_dao.address_snapshot(address),
             artwork_cents=artwork_cents,
             shipping_cents=shipping_cents,
             tax_cents=tax_cents,
             total_cents=total_cents,
+            prepaid_cents=prepaid_cents,
+            prepaid_fee_cents=prepaid_fee_cents,
+            prepaid_reference=prepaid_reference,
         )
-        return orders_dao.order_to_dict(db, order), 201
+
+        # The auction's job is done — the order is now what tracks this sale.
+        auction.status = AUCTION_CLOSED_SOLD
+        db.commit()
+
+        result = orders_dao.order_to_dict(db, order)
+        result["balanceDueCents"] = total_cents - prepaid_cents
+        result["prepaidCents"] = prepaid_cents
+        return result, 201
     finally:
         db.close()
 

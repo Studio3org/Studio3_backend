@@ -37,12 +37,10 @@ def close_expired_auctions() -> None:
 
 @celery_app.task(name="auctions.expire_winner_windows")
 def expire_winner_windows() -> None:
-    """Move on when a winner's window to fix a failed payment has passed.
+    """Pass a piece to the next bidder when the winner's window to fix payment has run out."""
+    from src.modules.bids.auction_closer import expire_winner_windows as run
 
-    Placeholder until Phase 3 builds the cascade. Registered now so the schedule, the
-    deployment and the monitoring are settled before the logic lands.
-    """
-    _run("winner-window", lambda: logger.debug("Winner-retry expiry: not yet implemented."))
+    _run("winner-window", run)
 
 
 @celery_app.task(name="auctions.refresh_holds")
@@ -50,9 +48,11 @@ def refresh_holds() -> None:
     """Re-authorise holds approaching their capture deadline.
 
     Standalone auctions only — an event auction's window is hours, nowhere near a card
-    authorisation's lifetime. Placeholder until Phase 2 creates holds to refresh.
+    authorisation's lifetime, so none of its holds are ever selected.
     """
-    _run("hold-refresh", lambda: logger.debug("Hold refresh: not yet implemented."))
+    from src.modules.bids.hold_refresh import refresh_expiring_holds as run
+
+    _run("hold-refresh", run)
 
 
 @celery_app.task(name="events.expire_waitlist_offers")

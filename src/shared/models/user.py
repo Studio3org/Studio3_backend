@@ -38,6 +38,12 @@ class User(Base):
     # mirrored from the account.updated webhook, not trusted from a client.
     stripe_account_id = Column(String(255), nullable=True)
     stripe_payouts_enabled = Column(Boolean, default=False, nullable=False)
+    # The Stripe customer this user's saved cards belong to. Required for bidding: a hold is
+    # re-authorised off-session weeks later with nobody present, and a payment method has to
+    # belong to a customer to be reusable at all. Added by migration 031 but missed here, so
+    # ensure_customer raised AttributeError on the first real bid — invisible until now only
+    # because the hold tests run in dev mode, which skips Stripe entirely.
+    stripe_customer_id = Column(String(255), nullable=True, unique=True)
     # Reduced commission for a specific artist, in basis points. Null = the standard
     # platform rate; set only for the client's named lower-rate tier.
     commission_bps_override = Column(Integer, nullable=True)

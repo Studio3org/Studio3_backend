@@ -32,6 +32,13 @@ def create_payment_intent(order_id: str):
         if order.status != "pending_payment":
             raise AppError("This order has already been processed.", 409)
 
+        # What is actually left to collect. An auction win has already had its hammer price
+        # captured from the winner's hold at close, so charging total_cents here would take
+        # the artwork a second time.
+        balance_cents = order.total_cents - (order.prepaid_cents or 0)
+        if balance_cents <= 0:
+            raise AppError("This order has already been paid in full.", 409)
+
         stripe = get_stripe()
 
         if order.payment_reference:
@@ -40,11 +47,11 @@ def create_payment_intent(order_id: str):
                 return {
                     "clientSecret": intent["client_secret"],
                     "paymentIntentId": intent["id"],
-                    "amountCents": order.total_cents,
+                    "amountCents": balance_cents,
                 }, 200
 
         intent = stripe.PaymentIntent.create(
-            amount=order.total_cents,
+            amount=balance_cents,
             currency=platform_currency(),
             # transfer_group set at creation links this charge to the later payout transfer,
             # and is what makes crash recovery possible (we can find an orphaned transfer).
@@ -62,7 +69,7 @@ def create_payment_intent(order_id: str):
         return {
             "clientSecret": intent["client_secret"],
             "paymentIntentId": intent["id"],
-            "amountCents": order.total_cents,
+            "amountCents": balance_cents,
         }, 201
     finally:
         db.close()

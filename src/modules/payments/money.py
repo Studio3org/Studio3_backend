@@ -12,6 +12,7 @@ from src.shared.config.stripe_client import platform_currency
 from src.shared.ledger import ledger_service
 from src.shared.ledger.ledger_service import get_platform_account, get_seller_account
 from src.shared.models.ledger import (
+    ACCOUNT_AUCTION_ESCROW,
     ACCOUNT_PLATFORM_BANK,
     ACCOUNT_PLATFORM_CLEARING,
     ACCOUNT_PLATFORM_REVENUE,
@@ -20,6 +21,8 @@ from src.shared.models.ledger import (
     ACCOUNT_TAX_PAYABLE,
     CREDIT,
     DEBIT,
+    TXN_AUCTION_CAPTURED,
+    TXN_AUCTION_REFUNDED,
     TXN_ORDER_PAID,
     TXN_PAYOUT_RELEASED,
     TXN_REFUND_ISSUED,
@@ -61,8 +64,9 @@ def book_order_paid(
 ):
     """Book the money that arrived when a collector's payment succeeded.
 
-        debit  platform_clearing   total - stripe_fee   (what actually landed in Stripe)
+        debit  platform_clearing   balance - stripe_fee (what actually landed in Stripe now)
         debit  stripe_fees         stripe_fee           (the processing fee, absorbed)
+        debit  auction_escrow      prepaid              (money already collected, cleared)
         credit seller_payable      artwork - commission (owed to the artist, held)
         credit platform_revenue    commission + shipping
         credit tax_payable         tax                  (owed onward, not income)
@@ -70,16 +74,26 @@ def book_order_paid(
     Debiting the full total would leave platform_clearing permanently out of step with the
     real Stripe balance, so the exact fee from the charge's balance_transaction is required
     here rather than an estimate.
+
+    `prepaid_cents` is what an auction win already collected when the close captured the
+    winner's hold. That money reached the Stripe balance then, not now, and was booked into
+    auction_escrow at the time — so here it is *cleared out of escrow* rather than debited to
+    clearing a second time. Treating it as newly arrived would double-count the whole hammer
+    price in the platform's asset accounts. `stripe_fee_cents` covers only this charge; the
+    fee on the earlier capture was booked with it.
     """
     bps = order_commission_bps(order)
     artist = artist_share_cents(order.artwork_cents, bps)
     commission = commission_cents(order.artwork_cents, bps)
     currency = platform_currency().upper()
+    prepaid = order.prepaid_cents or 0
+    balance_cents = order.total_cents - prepaid
 
     entries = [
         (get_platform_account(db, ACCOUNT_PLATFORM_CLEARING, currency), DEBIT,
-         order.total_cents - stripe_fee_cents),
+         balance_cents - stripe_fee_cents),
         (get_platform_account(db, ACCOUNT_STRIPE_FEES, currency), DEBIT, stripe_fee_cents),
+        (get_platform_account(db, ACCOUNT_AUCTION_ESCROW, currency), DEBIT, prepaid),
         (get_seller_account(db, order.seller_id, currency), CREDIT, artist),
         (get_platform_account(db, ACCOUNT_PLATFORM_REVENUE, currency), CREDIT,
          commission + order.shipping_cents),
@@ -182,5 +196,70 @@ def book_transfer_reversed(
         idempotency_key=f"transfer_reversed:{reversal_id}",
         order_id=order.id,
         description=f"Transfer reversed for order {order.id}",
+        commit=commit,
+    )
+
+
+def book_auction_captured(
+    db: Session,
+    auction,
+    hold,
+    stripe_fee_cents: int,
+    commit: bool = True,
+):
+    """Book the hammer price taken when an auction closed on a winner.
+
+        debit  platform_clearing   amount - stripe_fee
+        debit  stripe_fees         stripe_fee
+        credit auction_escrow      amount
+
+    This happens before any order exists, which is exactly why it needs its own posting. The
+    alternative — waiting for checkout — meant a winner who never completed left real money
+    in the Stripe balance with no ledger record of it at all.
+
+    Escrow is a liability, not income: the platform is holding the money for a sale that has
+    not completed yet. It is cleared by book_order_paid, or given back by
+    book_auction_refunded.
+    """
+    currency = platform_currency().upper()
+    entries = [
+        (get_platform_account(db, ACCOUNT_PLATFORM_CLEARING, currency), DEBIT,
+         hold.amount_cents - stripe_fee_cents),
+        (get_platform_account(db, ACCOUNT_STRIPE_FEES, currency), DEBIT, stripe_fee_cents),
+        (get_platform_account(db, ACCOUNT_AUCTION_ESCROW, currency), CREDIT, hold.amount_cents),
+    ]
+    return ledger_service.post_transaction(
+        db,
+        txn_type=TXN_AUCTION_CAPTURED,
+        entries=entries,
+        # Keyed on the hold, not the auction: a cascade captures more than one hold against
+        # the same auction, and they are separate movements of real money.
+        idempotency_key=f"auction_captured:{hold.id}",
+        description=f"Hammer price captured for auction {auction.id}",
+        commit=commit,
+    )
+
+
+def book_auction_refunded(db: Session, auction, hold, commit: bool = True):
+    """Give a captured hammer price back — a forfeited winner, or a sale that cannot complete.
+
+        debit  auction_escrow      amount
+        credit platform_clearing   amount
+
+    The same asymmetry as book_refund_issued applies: Stripe does not return its processing
+    fee on a refund, so the stripe_fees debit booked at capture stands and the platform is
+    down by that fee. Crediting it back would show money the platform does not have.
+    """
+    currency = platform_currency().upper()
+    entries = [
+        (get_platform_account(db, ACCOUNT_AUCTION_ESCROW, currency), DEBIT, hold.amount_cents),
+        (get_platform_account(db, ACCOUNT_PLATFORM_CLEARING, currency), CREDIT, hold.amount_cents),
+    ]
+    return ledger_service.post_transaction(
+        db,
+        txn_type=TXN_AUCTION_REFUNDED,
+        entries=entries,
+        idempotency_key=f"auction_refunded:{hold.id}",
+        description=f"Hammer price refunded for auction {auction.id}",
         commit=commit,
     )

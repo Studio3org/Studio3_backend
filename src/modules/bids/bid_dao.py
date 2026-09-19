@@ -16,7 +16,13 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from src.shared.config.auction_config import bid_increment_cents
-from src.shared.models.auction import AUCTION_CLOSING, AUCTION_LIVE, Auction, Hold
+from src.shared.models.auction import (
+    AUCTION_AWAITING_PAYMENT,
+    AUCTION_CLOSING,
+    AUCTION_LIVE,
+    Auction,
+    Hold,
+)
 from src.shared.models.bid import BID_ACTIVE, BID_CANCELLED, BID_OUTBID, Bid
 from src.shared.models.user import User
 from src.shared.utils.app_error import AppError
@@ -132,6 +138,7 @@ def bid_summary(db: Session, auction: Optional[Auction], viewer_id: Optional[uui
         return {}
     highest = get_highest_bid(db, auction.id)
     highest_cents = highest.amount_cents if highest else None
+    winner = db.get(Bid, auction.winning_bid_id) if auction.winning_bid_id else None
     return {
         "auctionId": str(auction.id),
         "auctionStatus": auction.status,
@@ -151,6 +158,23 @@ def bid_summary(db: Session, auction: Optional[Auction], viewer_id: Optional[uui
         ),
         "deliveryMode": auction.delivery_mode,
         "isHighestBidder": bool(highest and viewer_id and highest.bidder_id == viewer_id),
+        # Post-close state. `highest` is the highest *active* bid and goes empty the moment
+        # the close marks a winner, so none of this can be derived from it — which is exactly
+        # why the winner is stored on the auction.
+        "winnerDeadlineAt": (
+            auction.winner_deadline_at.isoformat() if auction.winner_deadline_at else None
+        ),
+        "isWinner": bool(
+            viewer_id and winner is not None and winner.bidder_id == viewer_id
+        ),
+        # Drives the "your card was declined, add another" prompt. Only the winner is told —
+        # a losing bidder has no business knowing the winner's payment failed, and telling
+        # them would leak that the piece may be about to become available again.
+        "awaitingPayment": (
+            auction.status == AUCTION_AWAITING_PAYMENT
+            and bool(viewer_id and winner is not None and winner.bidder_id == viewer_id)
+        ),
+        "winningBidCents": winner.amount_cents if winner else None,
     }
 
 

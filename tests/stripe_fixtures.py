@@ -80,6 +80,18 @@ class StripeStub:
         self.accounts: dict[str, dict] = {}
         # Set to an exception to make the next Transfer.create raise, for the failure paths.
         self.transfer_error: Optional[Exception] = None
+        self.customers: dict[str, dict] = {}
+        self.setup_intents: dict[str, dict] = {}
+        self.payment_methods: dict[str, dict] = {}
+        self.detached: list[str] = []
+        self.captures: list[dict] = []
+        self.cancelled_intents: list[str] = []
+        # Intent ids whose capture must fail. Keyed per intent rather than a single flag so a
+        # cascade test can decline one bidder's card and let the next one through, which is
+        # the whole behaviour under test.
+        self.capture_failures: set[str] = set()
+        # What Stripe "charges" on a capture, so the ledger's fee leg has something real.
+        self.capture_fee_cents: int = 0
 
         self.Webhook = real_stripe.Webhook  # real verification, on purpose
         # construct_event catches stripe.error.SignatureVerificationError by name, so the
@@ -90,7 +102,18 @@ class StripeStub:
         self.Charge = _Namespace(retrieve=self._charge_retrieve)
         self.BalanceTransaction = _Namespace(retrieve=self._balance_transaction_retrieve)
         self.PaymentIntent = _Namespace(
-            create=self._payment_intent_create, retrieve=self._payment_intent_retrieve
+            create=self._payment_intent_create,
+            retrieve=self._payment_intent_retrieve,
+            capture=self._payment_intent_capture,
+            cancel=self._payment_intent_cancel,
+        )
+        self.Customer = _Namespace(create=self._customer_create)
+        self.SetupIntent = _Namespace(create=self._setup_intent_create)
+        self.EphemeralKey = _Namespace(create=self._ephemeral_key_create)
+        self.PaymentMethod = _Namespace(
+            list=self._payment_method_list,
+            retrieve=self._payment_method_retrieve,
+            detach=self._payment_method_detach,
         )
         self.Account = _Namespace(
             create=self._account_create,
@@ -119,6 +142,10 @@ class StripeStub:
         }
         self.charges[charge_id] = charge
         return charge
+
+    def fail_capture(self, intent_id: str) -> None:
+        """Make the capture of this intent raise, as a declined card does."""
+        self.capture_failures.add(intent_id)
 
     def transfers_for(self, order_id) -> list[dict]:
         return [t for t in self.transfers if t.get("transfer_group") == f"order_{order_id}"]
@@ -150,6 +177,7 @@ class StripeStub:
         refund = {
             "id": f"re_{uuid.uuid4().hex[:24]}",
             "charge": kwargs.get("charge"),
+            "payment_intent": kwargs.get("payment_intent"),
             "amount": kwargs.get("amount"),
             "reason": kwargs.get("reason"),
             "status": "succeeded",
@@ -168,17 +196,118 @@ class StripeStub:
         return self.balance_transactions[bt_id]
 
     def _payment_intent_create(self, **kwargs) -> dict:
+        # A manual-capture intent confirmed off-session is an authorisation, and Stripe
+        # reports it as requires_capture. Anything else means the hold did not take, which is
+        # the branch holds_service treats as a failure — so getting this right is what makes
+        # the hold tests exercise the real path.
+        manual = kwargs.get("capture_method") == "manual" and kwargs.get("confirm")
         intent = {
             "id": f"pi_{uuid.uuid4().hex[:24]}",
             "client_secret": f"pi_secret_{uuid.uuid4().hex[:16]}",
             "amount": kwargs.get("amount"),
             "currency": kwargs.get("currency", "usd"),
-            "status": "requires_payment_method",
+            "status": "requires_capture" if manual else "requires_payment_method",
             "transfer_group": kwargs.get("transfer_group"),
             "metadata": kwargs.get("metadata", {}),
         }
+        if manual:
+            charge = self.add_charge(
+                f"ch_{uuid.uuid4().hex[:24]}",
+                fee_cents=self.capture_fee_cents,
+                amount_cents=kwargs.get("amount") or 0,
+            )
+            # capture_before is what the refresh sweep reads to decide a hold is about to
+            # lapse; without it every hold looks like it lasts forever.
+            charge["payment_method_details"] = {
+                "card": {"capture_before": int(time.time()) + 7 * 24 * 3600}
+            }
+            intent["latest_charge"] = charge
         self.payment_intents[intent["id"]] = intent
         return intent
+
+    def _payment_intent_capture(self, intent_id, **kwargs) -> dict:
+        if intent_id in self.capture_failures:
+            raise real_stripe.error.CardError(  # type: ignore[attr-defined]
+                "Your card was declined.", param=None, code="card_declined"
+            )
+        intent = self.payment_intents.get(intent_id)
+        if intent is None:
+            # A hold created by a factory has no intent here. Synthesise one rather than
+            # failing: the test's subject is the cascade, not the stub's bookkeeping.
+            intent = {"id": intent_id, "amount": kwargs.get("amount_to_capture")}
+            self.payment_intents[intent_id] = intent
+        if "latest_charge" not in intent:
+            intent["latest_charge"] = self.add_charge(
+                f"ch_{uuid.uuid4().hex[:24]}",
+                fee_cents=self.capture_fee_cents,
+                amount_cents=kwargs.get("amount_to_capture") or 0,
+            )
+        intent["status"] = "succeeded"
+        self.captures.append({"id": intent_id, "amount": kwargs.get("amount_to_capture")})
+        return intent
+
+    def _payment_intent_cancel(self, intent_id, **kwargs) -> dict:
+        self.cancelled_intents.append(intent_id)
+        intent = self.payment_intents.setdefault(intent_id, {"id": intent_id})
+        intent["status"] = "canceled"
+        return intent
+
+    def add_card(self, customer_id: str, *, last4: str = "4242") -> dict:
+        """Vault a card against a customer, as a completed SetupIntent would."""
+        method = {
+            "id": f"pm_{uuid.uuid4().hex[:16]}",
+            "customer": customer_id,
+            "type": "card",
+            "card": {"brand": "visa", "last4": last4, "exp_month": 12, "exp_year": 2030},
+        }
+        self.payment_methods[method["id"]] = method
+        return method
+
+    def _setup_intent_create(self, **kwargs) -> dict:
+        intent = {
+            "id": f"seti_{uuid.uuid4().hex[:16]}",
+            "client_secret": f"seti_secret_{uuid.uuid4().hex[:16]}",
+            "customer": kwargs.get("customer"),
+            "usage": kwargs.get("usage"),
+            "status": "requires_payment_method",
+        }
+        self.setup_intents[intent["id"]] = intent
+        return intent
+
+    def _ephemeral_key_create(self, **kwargs) -> dict:
+        return {
+            "id": f"ephkey_{uuid.uuid4().hex[:16]}",
+            "secret": f"ek_test_{uuid.uuid4().hex[:24]}",
+            "associated_objects": [{"type": "customer", "id": kwargs.get("customer")}],
+        }
+
+    def _payment_method_list(self, **kwargs) -> dict:
+        customer = kwargs.get("customer")
+        return {
+            "object": "list",
+            "data": [
+                m for m in self.payment_methods.values() if m.get("customer") == customer
+            ],
+        }
+
+    def _payment_method_retrieve(self, payment_method_id, **kwargs) -> dict:
+        if payment_method_id not in self.payment_methods:
+            raise real_stripe.error.InvalidRequestError(  # type: ignore[attr-defined]
+                f"No such PaymentMethod: {payment_method_id}", param="id"
+            )
+        return self.payment_methods[payment_method_id]
+
+    def _payment_method_detach(self, payment_method_id, **kwargs) -> dict:
+        method = self.payment_methods.get(payment_method_id)
+        if method is not None:
+            method["customer"] = None
+            self.detached.append(payment_method_id)
+        return method or {"id": payment_method_id}
+
+    def _customer_create(self, **kwargs) -> dict:
+        customer = {"id": f"cus_{uuid.uuid4().hex[:16]}", "email": kwargs.get("email")}
+        self.customers[customer["id"]] = customer
+        return customer
 
     def _payment_intent_retrieve(self, intent_id, **kwargs) -> dict:
         return self.payment_intents[intent_id]

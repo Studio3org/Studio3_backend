@@ -62,28 +62,58 @@ def refund_order(order_id: uuid.UUID, admin_id: uuid.UUID, reason: str) -> dict:
 
         charge_id = order.stripe_charge_id
         total = order.total_cents
+        # An auction order was paid in two goes: the hammer price captured from the winner's
+        # hold when the auction closed, and the shipping-and-tax balance at checkout.
+        # book_refund_issued reverses the FULL total, so refunding only the balance charge
+        # would have the ledger claim a refund that never happened and leave the buyer out
+        # of pocket by the whole hammer price.
+        prepaid_reference = order.prepaid_reference
+        prepaid_cents = order.prepaid_cents or 0
+        prepaid_fee = order.prepaid_fee_cents or 0
     finally:
         db.close()
 
-    # Stripe call outside the transaction — same reasoning as payout release.
+    # Stripe calls outside the transaction — same reasoning as payout release.
     stripe_fee = 0
-    if stripe_configured() and charge_id:
+    if stripe_configured():
         stripe = get_stripe()
-        try:
-            stripe.Refund.create(
-                charge=charge_id,
-                reason="requested_by_customer",
-                metadata={"order_id": str(order_id), "admin_id": str(admin_id)},
-                idempotency_key=f"refund:{order_id}",
-            )
-            # The original charge's fee, which Stripe keeps on a refund — the ledger
-            # reversal has to account for it rather than netting to zero.
-            charge = stripe.Charge.retrieve(charge_id, expand=["balance_transaction"])
-            bt = charge.get("balance_transaction")
-            stripe_fee = int(bt.get("fee", 0)) if isinstance(bt, dict) else 0
-        except Exception as e:
-            logger.exception("Refund failed for order %s: %s", order_id, e)
-            raise AppError(f"Stripe refund failed: {e}", 502)
+        if charge_id:
+            try:
+                stripe.Refund.create(
+                    charge=charge_id,
+                    reason="requested_by_customer",
+                    metadata={"order_id": str(order_id), "admin_id": str(admin_id)},
+                    idempotency_key=f"refund:{order_id}",
+                )
+                # The original charge's fee, which Stripe keeps on a refund — the ledger
+                # reversal has to account for it rather than netting to zero.
+                charge = stripe.Charge.retrieve(charge_id, expand=["balance_transaction"])
+                bt = charge.get("balance_transaction")
+                stripe_fee = int(bt.get("fee", 0)) if isinstance(bt, dict) else 0
+            except Exception as e:
+                logger.exception("Refund failed for order %s: %s", order_id, e)
+                raise AppError(f"Stripe refund failed: {e}", 502)
+
+        if prepaid_cents and prepaid_reference and not prepaid_reference.startswith("dev_"):
+            # A separate idempotency key: this is a second, genuinely different refund, and
+            # reusing the balance charge's key would make Stripe hand back that refund's
+            # cached response and quietly skip this one.
+            try:
+                stripe.Refund.create(
+                    payment_intent=prepaid_reference,
+                    reason="requested_by_customer",
+                    metadata={"order_id": str(order_id), "admin_id": str(admin_id),
+                              "leg": "auction_hold"},
+                    idempotency_key=f"refund:{order_id}:prepaid",
+                )
+            except Exception as e:
+                logger.exception(
+                    "Hammer-price refund failed for order %s (intent %s): %s",
+                    order_id, prepaid_reference, e,
+                )
+                raise AppError(f"Stripe refund failed: {e}", 502)
+            # Stripe keeps this fee too, so both legs' fees are absorbed.
+            stripe_fee += prepaid_fee
 
     db = SessionLocal()
     try:

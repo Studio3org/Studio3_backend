@@ -605,6 +605,129 @@ Validates the piece is for-sale and `status == "live"` (else `409`), the caller 
 
 ---
 
+## Auctions & bidding
+
+A piece is **either** fixed-price **or** an auction, never both. `listingType` says which, and
+`POST /api/pieces/:id/collect` returns `409` on an auction piece — auctions are bought by
+winning them, not by buying them outright.
+
+### The money model, because it drives every field below
+
+Bidding authorises money rather than taking it. Each bid places a **hold** on the bidder's
+card for the **bid amount only** — shipping and tax come later. Every bidder keeps their hold
+until the auction closes: being outbid by someone else does *not* release your money, because
+you are still in line if the higher bid falls through. The only thing that moves your hold
+mid-auction is raising your own bid.
+
+When the auction closes, the winner's hold is **captured**. That means by the time the winner
+reaches checkout the hammer price is already paid, and checkout collects only the remainder.
+Clients must use `balanceDueCents`, never `totalCents`, when showing what is left to pay.
+
+### Bid summary
+
+Returned by the piece detail endpoint and by every endpoint below. Fields:
+
+| Field | Meaning |
+|-------|---------|
+| `auctionId`, `auctionStatus` | `draft`, `live`, `closing`, `awaiting_payment`, `awaiting_winner`, `closed_sold`, `closed_reserve_not_met`, `closed_no_bids`, `needs_seller_action`, `cancelled` |
+| `startingBidCents` | The artist's stated minimum. The **first bid may land exactly on this number.** |
+| `highestBidCents` | `null` until someone bids. Never conflated with the starting bid. |
+| `minNextBidCents` | What to prefill. Equals `startingBidCents` with no bids, else highest + increment. |
+| `bidIncrementCents` | The band for the current high bid — `0` when there are no bids. Never hardcode this client-side. |
+| `bidCount` | Active bids only. |
+| `opensAt`, `auctionEndsAt` | ISO 8601. An event auction's window comes from the event. |
+| `hasReserve`, `reserveMet` | Met/not-met only. **The reserve amount is never returned.** |
+| `deliveryMode` | `ship` or `pickup` (event auctions). |
+| `isHighestBidder` | Viewer-relative. |
+| `isWinner` | Viewer-relative, post-close. Read from the stored winner, not from the bid ordering. |
+| `awaitingPayment` | `true` only for the winner whose card was declined — drives the "add another card" prompt. Never shown to other bidders. |
+| `winnerDeadlineAt` | When a declined winner loses the piece to the next bidder. `null` once settled. |
+| `winningBidCents` | The hammer price, post-close. |
+
+Increment bands: under $100 → $5 · $100–499 → $10 · $500–1,999 → $25 · $2,000–9,999 → $100 ·
+$10,000+ → $500.
+
+### Saved cards (required before the first bid)
+
+A bid authorises money the moment it is placed, and the same card is **re-authorised weeks
+later with nobody present**. There is no point in that sequence at which a card could be
+collected, so it is vaulted at Stripe up front and referenced by id. Card data never reaches
+this server.
+
+| Method | URL | Notes |
+|--------|-----|-------|
+| POST | `/api/payments/setup-intent` | `201` with `clientSecret`, `customerId`, `ephemeralKeySecret`. Hand all three to Stripe's PaymentSheet — without the ephemeral key the sheet cannot show the customer's existing cards. |
+| GET | `/api/payments/payment-methods` | `{ "paymentMethods": [{ "id", "brand", "last4", "expMonth", "expYear" }] }`. Empty (not an error) for someone who has never bid. |
+| DELETE | `/api/payments/payment-methods/:id` | Ownership is checked against the caller's own Stripe customer; someone else's card answers `404`. |
+
+The Stripe customer is created once and stored on the user, so a card saved last week is
+still listed this week.
+
+### Placing a bid
+
+**POST** `/api/pieces/:id/bids` — Bearer + onboarding. Body:
+`{ "amountCents", "paymentMethodId" }`.
+
+`paymentMethodId` is required on a bidder's first bid on a piece and optional afterwards —
+raising your own bid reuses the card already committed to that auction. Errors: `400` (bidding
+on your own piece, no payment method, not an auction), `402` (the card refused the
+authorisation — the bid is not placed), `409` (auction not open, bidding closed, or below
+`minNextBidCents`). Returns `201` with the bid plus the full bid summary.
+
+A bid placed in the final five minutes of a **standalone** auction pushes the close out by
+five minutes, repeatedly, so nobody wins by sniping. An **event** auction never extends: it
+stops dead 30 minutes before the event ends so the piece can change hands before the room
+empties.
+
+### Winning and checking out
+
+On close the winner's hold is captured and every other bidder is released. The piece moves to
+`auction_won` and the auction to `awaiting_winner`.
+
+**POST** `/api/pieces/:id/auction-checkout` — Bearer + onboarding. Body:
+`{ "addressId", "shippingMethod" }`. Same shape as `collect`, with two additions in the
+response:
+
+```json
+{ "data": { "...": "...", "totalCents": 54625, "prepaidCents": 50000, "balanceDueCents": 4625 } }
+```
+
+`prepaidCents` is the hammer price already captured. `balanceDueCents` is shipping + tax, and
+is what `POST /api/orders/:id/create-payment-intent` will raise its intent for. Errors: `403`
+(not the winner), `409` (auction not ended, already claimed, or the winner's payment has not
+gone through yet).
+
+### When the winner's card fails
+
+The auction goes to `awaiting_payment` rather than being voided. **Both** the winner and the
+seller are notified immediately. The winner has until `winnerDeadlineAt` to fix it — **48
+hours** for a standalone auction, **10 minutes** for an event one, because at an event there
+is a person in the room with another card in their hand. Every runner-up keeps their hold for
+exactly this window; that is what makes the fallback possible.
+
+**POST** `/api/pieces/:id/auction/retry-payment` — Bearer. Body: `{ "paymentMethodId" }`.
+Winner only (`403` otherwise). `409` if there is no payment waiting to be fixed, `402` if the
+new card is declined too (the window continues). On success the sale settles exactly as a
+clean close would.
+
+If the window runs out the piece passes to the next-highest bidder, who gets their own window.
+After a bounded number of attempts the auction is parked as `needs_seller_action` and every
+hold is released — nothing is charged to anyone.
+
+### Seller actions
+
+| Method | URL | Body | Notes |
+|--------|-----|------|-------|
+| POST | `/api/pieces/:id/auction/extend` | `{ "extraDays": 1-3 }` | Once per auction, and only more than 3 days before it closes, so extending cannot be used to control exactly when an auction ends. Never shortens. Not available on event auctions. Bids and holds survive. |
+| POST | `/api/pieces/:id/auction/cancel` | — | Withdraws a live auction. Every bid is voided, every hold released, every bidder notified. The piece is delisted. |
+| POST | `/api/pieces/:id/auction/relist` | `{ "durationDays", "startingBidCents"?, "reserveCents"? }` | Only from `needs_seller_action` (reserve not met, or nobody could pay). Creates a **new** auction row; the old one stays as the record of what happened. Omitted fields inherit the previous auction's terms. |
+
+All three are owner-only and answer `404` — not `403` — for a piece you do not own.
+
+An auction that ends without a sale is never auto-relisted or auto-converted to a fixed price:
+it waits for the seller to decide.
+
+
 ## Quick reference
 
 | Method | URL | Auth | Body |
