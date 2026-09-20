@@ -22,6 +22,7 @@ from src.shared.models.payout import Payout
 from src.shared.models.shipment import Shipment
 from src.shared.models.dispute import Dispute
 from src.shared.models.webhook_event import StripeWebhookEvent
+from src.shared.models.audit import AuditEvent
 from src.shared.models.event import (
     Event,
     EventParticipant,
@@ -68,6 +69,7 @@ __all__ = [
     "Event",
     "EventParticipant",
     "EventPiece",
+    "AuditEvent",
     "EventRsvp",
     "EventSave",
 ]

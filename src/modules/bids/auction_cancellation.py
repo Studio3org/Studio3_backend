@@ -82,8 +82,36 @@ def cancel_auction(
 
     if commit:
         db.commit()
+        _record(db, auction, locked, bids, reason, actor_id)
         notify_cancelled_bidders(db, locked, bids, reason)
     return bids
+
+
+def _record(db, auction, piece, bids, reason: str, actor_id) -> None:
+    """Leave a durable trace of a cancellation.
+
+    This releases every bidder's hold, so "who withdrew this and why" is exactly the question
+    somebody asks a week later — and application logs are gone by then.
+
+    Attributed to a person when one did it, to the system when a sweep did. A seller
+    withdrawing their own auction and a scheduled job doing it are different events.
+    """
+    from src.modules.admin import audit_service
+    from src.shared.models.audit import AUDIT_AUCTION_CANCELLED
+    from src.shared.models.user import User
+
+    actor = db.get(User, actor_id) if actor_id else None
+    detail = {"reason": reason, "cancelledBids": len(bids), "pieceId": str(piece.id)}
+    if actor is None:
+        audit_service.system(
+            db, AUDIT_AUCTION_CANCELLED,
+            subject_type="auction", subject_id=auction.id, detail=detail,
+        )
+    else:
+        audit_service.record(
+            db, AUDIT_AUCTION_CANCELLED, actor=actor,
+            subject_type="auction", subject_id=auction.id, detail=detail,
+        )
 
 
 def notify_cancelled_bidders(

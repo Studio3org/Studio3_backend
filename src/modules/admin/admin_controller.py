@@ -10,6 +10,8 @@ from flask import g, redirect, render_template, request, url_for
 from sqlalchemy import select
 
 from src.shared.config.database import SessionLocal
+from src.shared.models import audit
+from src.modules.admin import audit_service
 from src.shared.models.user import User
 from src.shared.models.piece import Piece
 from src.shared.models.post import Post
@@ -71,6 +73,11 @@ def login():
 
         login_session(user)
         logger.info("Admin login succeeded for %s", email)
+        # The session this creates is what gates refunds and payout releases, so the fact
+        # that it was created is itself worth a durable record.
+        audit_service.record(
+            db, audit.AUDIT_ADMIN_LOGIN, actor=user, subject_type="user", subject_id=user.id
+        )
         return redirect(url_for("admin.orders_list"))
     finally:
         db.close()
@@ -154,6 +161,61 @@ def disputes_queue():
         db.close()
 
 
+def auctions_queue():
+    """What is running, and what is stuck.
+
+    Two lists rather than one because they are read for different reasons: the attention list
+    is work to do, the live list is a thing to watch during an event.
+    """
+    db = SessionLocal()
+    try:
+        return render_template(
+            "admin/auctions.html",
+            admin=g.admin,
+            attention=admin_dao.list_auctions_needing_attention(db),
+            live=admin_dao.list_live_auctions(db),
+            attention_count=admin_dao.count_auctions_needing_attention(db),
+        )
+    finally:
+        db.close()
+
+
+def events_queue():
+    db = SessionLocal()
+    try:
+        return render_template(
+            "admin/events.html",
+            admin=g.admin,
+            rows=admin_dao.list_events(db),
+        )
+    finally:
+        db.close()
+
+
+def audit_log():
+    """Who did what. Read when something has gone wrong and the question is who changed it."""
+    db = SessionLocal()
+    try:
+        action = (request.args.get("action") or "").strip() or None
+        try:
+            page = max(0, int(request.args.get("page") or 0))
+        except ValueError:
+            page = 0
+        per_page = 100
+        return render_template(
+            "admin/audit.html",
+            admin=g.admin,
+            rows=audit_service.recent(
+                db, action=action, limit=per_page, offset=page * per_page
+            ),
+            active_action=action,
+            page=page,
+            actions=audit.AUDIT_ACTIONS,
+        )
+    finally:
+        db.close()
+
+
 def reports_queue():
     db = SessionLocal()
     try:
@@ -230,6 +292,13 @@ def resolve_report(report_id: str):
         report_dao.resolve_report(db, report, g.admin.id, status_map[action], note or None)
     finally:
         db.close()
+    _audit(
+        audit.AUDIT_REPORT_RESOLVED,
+        subject_type="report",
+        subject_id=rid,
+        detail={"outcome": status_map[action]},
+        note=note or None,
+    )
     return redirect(url_for("admin.reports_queue", notice="Report resolved."))
 
 
@@ -255,6 +324,11 @@ def create_shipment(order_id: str):
         return order_detail(order_id, error=e.message)
     finally:
         db.close()
+    _audit(
+        audit.AUDIT_SHIPMENT_CREATED,
+        subject_id=oid,
+        detail={"courier": request.form.get("courier")},
+    )
     return redirect(url_for("admin.order_detail", order_id=order_id))
 
 
@@ -277,6 +351,11 @@ def update_shipment(order_id: str):
         return order_detail(order_id, error=e.message)
     finally:
         db.close()
+    _audit(
+        audit.AUDIT_SHIPMENT_UPDATED,
+        subject_id=oid,
+        detail={"status": request.form.get("status")},
+    )
     return redirect(url_for("admin.order_detail", order_id=order_id))
 
 
@@ -307,11 +386,17 @@ def resolve_dispute(order_id: str):
         if action == "refund":
             disputes_service.refund_order(oid, g.admin.id, reason)
             notice = "Collector refunded."
+            recorded = audit.AUDIT_REFUND_ISSUED
         else:
             disputes_service.release_order(oid, g.admin.id, reason)
             notice = "Order completed and payout released."
+            recorded = audit.AUDIT_PAYOUT_RELEASED
     except AppError as e:
         return order_detail(order_id, error=e.message)
+
+    # After the action has committed. Recording an intention that then failed would produce
+    # a log of things that did not happen.
+    _audit(recorded, subject_id=oid, note=reason)
     return order_detail(order_id, notice=notice)
 
 
@@ -324,5 +409,32 @@ def retry_payout(order_id: str):
     except AppError as e:
         return order_detail(order_id, error=e.message)
     if result.get("status") == "released":
+        _audit(
+            audit.AUDIT_PAYOUT_RETRIED,
+            subject_id=oid,
+            detail={"amountCents": result.get("amountCents")},
+        )
         return order_detail(order_id, notice="Payout released.")
     return order_detail(order_id, error=result.get("reason") or "Payout could not be released.")
+
+
+def _audit(action: str, *, subject_id, subject_type: str = "order",
+           detail: dict | None = None, note: str | None = None) -> None:
+    """Record an ops action against the logged-in admin.
+
+    Opens its own session: the services above manage their own transactions and have already
+    committed by the time this runs, so borrowing one of theirs would mean either reopening a
+    closed session or holding one open across a Stripe call.
+    """
+    db = SessionLocal()
+    try:
+        audit_service.record(
+            db, action,
+            actor=db.get(User, g.admin.id) if getattr(g, "admin", None) else None,
+            subject_type=subject_type,
+            subject_id=subject_id,
+            detail=detail,
+            note=note,
+        )
+    finally:
+        db.close()

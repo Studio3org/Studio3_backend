@@ -72,6 +72,11 @@ def archive_past_events() -> None:
 
 @celery_app.task(name="ledger.reconcile")
 def reconcile_ledger() -> None:
-    """Compare ledger balances against Stripe's balance transactions. Placeholder until
-    Phase 9."""
-    _run("ledger-reconcile", lambda: logger.debug("Ledger reconciliation: not yet implemented."))
+    """Compare what the books say the platform is holding against what Stripe says.
+
+    Reports; never corrects. An automatic correction would paper over the bug that caused the
+    drift and destroy the evidence of it.
+    """
+    from src.modules.admin.reconciliation import reconcile
+
+    _run("ledger-reconcile", reconcile)

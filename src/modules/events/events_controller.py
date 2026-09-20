@@ -20,6 +20,8 @@ from src.shared.models.piece import Piece
 from src.shared.models.user import User
 from src.shared.utils.app_error import AppError
 from src.shared.utils.logger import get_logger
+from src.modules.admin import audit_service
+from src.shared.models import audit
 from src.modules.events import event_state, events_dao, lineup_service, rsvp_service
 from src.modules.pieces.pieces_dao import get_piece
 from src.modules.user.user_dao import get_user_by_id
@@ -243,6 +245,16 @@ def cancel(event_id: str):
             type="event_cancelled",
             title="Event cancelled",
             body=f'"{event.title}" has been cancelled. {reason}',
+        )
+
+        # Cancelling takes down listings, refunds bidders and stands people up. Worth a
+        # durable record of who did it and what it cost.
+        audit_service.record(
+            db, audit.AUDIT_EVENT_CANCELLED,
+            actor=get_user_by_id(db, viewer_id),
+            subject_type="event", subject_id=event.id,
+            detail={**undone, "attendeesNotified": told},
+            note=reason,
         )
 
         result = event_to_dict(db, event, viewer_id=viewer_id)

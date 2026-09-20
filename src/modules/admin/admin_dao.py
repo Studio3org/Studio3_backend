@@ -135,3 +135,132 @@ def list_ledger_for_order(db: Session, order_id: uuid.UUID) -> list[dict]:
         }
         for txn, entry, account in rows
     ]
+
+
+# --- auctions -------------------------------------------------------------------------------
+# Nothing in ops could see an auction until now. Six phases of money-moving auction work
+# shipped with no queue to watch, so a winner whose card failed was visible only in a log
+# line that Render discards within the day.
+
+def list_auctions_needing_attention(db: Session) -> list[dict]:
+    """Auctions that are stuck, in the order they are costing somebody.
+
+    `awaiting_payment` first and deliberately: a winner's card failed and a clock is running
+    — when it expires the piece passes to the next bidder. It is the one state where somebody
+    is about to lose something they won, and the only one an operator can still change the
+    outcome of.
+
+    `needs_seller_action` follows: an auction that ended without a sale. Nobody is out of
+    pocket, but a piece is sitting in limbo waiting on a human.
+    """
+    from src.shared.models.auction import (
+        AUCTION_AWAITING_PAYMENT,
+        AUCTION_NEEDS_SELLER_ACTION,
+        Auction,
+    )
+    from src.shared.models.piece import Piece
+
+    rows = db.execute(
+        select(Auction, Piece, User)
+        .join(Piece, Piece.id == Auction.piece_id)
+        .join(User, User.id == Auction.seller_id)
+        .where(Auction.status.in_((AUCTION_AWAITING_PAYMENT, AUCTION_NEEDS_SELLER_ACTION)))
+        .order_by(
+            # awaiting_payment sorts first because it is the one with a deadline on it.
+            (Auction.status != AUCTION_AWAITING_PAYMENT),
+            Auction.winner_deadline_at.asc().nulls_last(),
+            Auction.closed_at.desc(),
+        )
+    ).all()
+    return [{"auction": a, "piece": p, "seller": u} for a, p, u in rows]
+
+
+def count_auctions_needing_attention(db: Session) -> int:
+    from src.shared.models.auction import (
+        AUCTION_AWAITING_PAYMENT,
+        AUCTION_NEEDS_SELLER_ACTION,
+        Auction,
+    )
+
+    return db.execute(
+        select(func.count(Auction.id)).where(
+            Auction.status.in_((AUCTION_AWAITING_PAYMENT, AUCTION_NEEDS_SELLER_ACTION))
+        )
+    ).scalar_one()
+
+
+def list_live_auctions(db: Session) -> list[dict]:
+    """What is running right now, soonest to close first.
+
+    Includes the highest bid and the bid count, because the question an operator actually
+    has during an event is "is anything about to close with money on it".
+    """
+    from src.shared.models.auction import AUCTION_CLOSING, AUCTION_LIVE, Auction
+    from src.shared.models.bid import BID_ACTIVE, Bid
+    from src.shared.models.piece import Piece
+
+    rows = db.execute(
+        select(
+            Auction,
+            Piece,
+            User,
+            func.count(Bid.id).filter(Bid.status == BID_ACTIVE).label("bid_count"),
+            func.max(Bid.amount_cents).filter(Bid.status == BID_ACTIVE).label("high_bid"),
+        )
+        .join(Piece, Piece.id == Auction.piece_id)
+        .join(User, User.id == Auction.seller_id)
+        .outerjoin(Bid, Bid.auction_id == Auction.id)
+        .where(Auction.status.in_((AUCTION_LIVE, AUCTION_CLOSING)))
+        .group_by(Auction.id, Piece.id, User.id)
+        .order_by(Auction.closes_at.asc().nulls_last())
+    ).all()
+    return [
+        {"auction": a, "piece": p, "seller": u, "bidCount": n, "highBidCents": high}
+        for a, p, u, n, high in rows
+    ]
+
+
+# --- events ---------------------------------------------------------------------------------
+
+def list_events(db: Session, limit: int = 100) -> list[dict]:
+    """Events with their headcount and how much of the bill is actually for sale.
+
+    Ops cares about an event mainly as a container for money: how many works on it are
+    selling, and how many people said they were coming.
+    """
+    from src.shared.models.event import (
+        EVENT_CANCELLED,
+        EVENT_DRAFT,
+        Event,
+        EventPiece,
+        EventRsvp,
+        SELLING_MODES,
+    )
+
+    rows = db.execute(
+        select(
+            Event,
+            User,
+            func.count(func.distinct(EventPiece.id))
+            .filter(EventPiece.mode.in_(SELLING_MODES))
+            .label("selling"),
+            func.count(func.distinct(EventRsvp.id))
+            .filter(EventRsvp.status == "going")
+            .label("going"),
+        )
+        .join(User, User.id == Event.host_id)
+        .outerjoin(EventPiece, EventPiece.event_id == Event.id)
+        .outerjoin(EventRsvp, EventRsvp.event_id == Event.id)
+        .where(Event.status.not_in((EVENT_DRAFT,)))
+        .group_by(Event.id, User.id)
+        .order_by(
+            # Anything cancelled drops to the bottom; otherwise soonest first.
+            (Event.status == EVENT_CANCELLED),
+            Event.starts_at.asc(),
+        )
+        .limit(limit)
+    ).all()
+    return [
+        {"event": e, "host": u, "sellingCount": selling, "goingCount": going}
+        for e, u, selling, going in rows
+    ]

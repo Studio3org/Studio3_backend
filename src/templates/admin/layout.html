@@ -53,8 +53,14 @@
          class="{% block nav_orders %}{% endblock %}">Orders</a>
       <a href="{{ url_for('admin.disputes_queue') }}"
          class="{% block nav_disputes %}{% endblock %}">Needs attention</a>
+      <a href="{{ url_for('admin.auctions_queue') }}"
+         class="{% block nav_auctions %}{% endblock %}">Auctions</a>
+      <a href="{{ url_for('admin.events_queue') }}"
+         class="{% block nav_events %}{% endblock %}">Events</a>
       <a href="{{ url_for('admin.reports_queue') }}"
          class="{% block nav_reports %}{% endblock %}">Reports</a>
+      <a href="{{ url_for('admin.audit_log') }}"
+         class="{% block nav_audit %}{% endblock %}">Audit</a>
     </nav>
     <span class="spacer"></span>
     <span class="muted">{{ admin.email }}</span>

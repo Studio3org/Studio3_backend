@@ -1,0 +1,75 @@
+{% extends "admin/layout.html" %}
+{% block title %}Audit{% endblock %}
+{% block nav_audit %}active{% endblock %}
+
+{% block content %}
+<h1>Audit</h1>
+<div class="panel">
+  <p class="muted" style="margin:0 0 12px">
+    Who did what. Kept in the database rather than the application log, which Render discards
+    — an action that moves somebody else's money needs a record that lasts as long as the
+    money does.
+  </p>
+
+  <form method="get" style="margin-bottom:12px">
+    <select name="action" onchange="this.form.submit()">
+      <option value="">All actions</option>
+      {% for a in actions %}
+      <option value="{{ a }}" {{ 'selected' if a == active_action else '' }}>
+        {{ a.replace('_', ' ') }}
+      </option>
+      {% endfor %}
+    </select>
+    <noscript><button type="submit">Filter</button></noscript>
+  </form>
+
+  {% if rows %}
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr><th>When</th><th>Action</th><th>Who</th><th>Subject</th><th>Detail</th></tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td class="mono">{{ row.created_at.strftime('%d %b %Y %H:%M:%S UTC') }}</td>
+          <td>{{ row.action.replace('_', ' ') }}</td>
+          {# "system" means a scheduled job acted on its own — there is nobody to ask about
+             it, which is worth being able to see at a glance. #}
+          <td class="muted">{{ row.actor_label or row.actor_type }}</td>
+          <td class="mono muted">
+            {% if row.subject_id %}
+              {% if row.subject_type == 'order' %}
+              <a href="{{ url_for('admin.order_detail', order_id=row.subject_id) }}">
+                {{ row.subject_id }}
+              </a>
+              {% else %}
+              {{ row.subject_type }} {{ row.subject_id }}
+              {% endif %}
+            {% else %}—{% endif %}
+          </td>
+          <td class="muted" style="font-size:12px">
+            {{ row.note or '' }}
+            {% if row.detail %}<div class="mono">{{ row.detail }}</div>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if page > 0 or rows|length == 100 %}
+  <p style="margin-top:12px">
+    {% if page > 0 %}
+    <a href="{{ url_for('admin.audit_log', action=active_action, page=page - 1) }}">Newer</a>
+    {% endif %}
+    {% if rows|length == 100 %}
+    <a href="{{ url_for('admin.audit_log', action=active_action, page=page + 1) }}"
+       style="margin-left:12px">Older</a>
+    {% endif %}
+  </p>
+  {% endif %}
+  {% else %}
+  <p class="muted">Nothing recorded yet.</p>
+  {% endif %}
+</div>
+{% endblock %}

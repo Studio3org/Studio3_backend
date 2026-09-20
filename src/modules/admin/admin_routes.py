@@ -76,3 +76,25 @@ def resolve_dispute(order_id):
 @admin_session_required
 def retry_payout(order_id):
     return admin_controller.retry_payout(order_id)
+
+
+# --- the surfaces the last six phases added ------------------------------------------------
+# Auctions, events and the audit trail. None of these existed in ops until now: auction work
+# has been shipping since Phase 3 with no queue anyone could watch.
+
+@admin_bp.get("/auctions")
+@admin_session_required
+def auctions_queue():
+    return admin_controller.auctions_queue()
+
+
+@admin_bp.get("/events")
+@admin_session_required
+def events_queue():
+    return admin_controller.events_queue()
+
+
+@admin_bp.get("/audit")
+@admin_session_required
+def audit_log():
+    return admin_controller.audit_log()

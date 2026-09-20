@@ -38,6 +38,7 @@ from src.shared.models.auction import (
     AUCTION_NEEDS_SELLER_ACTION,
     Auction,
 )
+from src.shared.models.audit import AUDIT_AUCTION_SETTLED, AUDIT_WINNER_CASCADED
 from src.shared.models.bid import BID_FORFEITED, BID_LOST, BID_WON, Bid
 from src.shared.models.piece import Piece
 from src.shared.utils.logger import get_logger
@@ -130,6 +131,11 @@ def settle_on(
     if commit:
         db.commit()
     logger.info("Auction %s settled on bid %s (%d cents)", auction.id, bid.id, bid.amount_cents)
+    _record(
+        db, AUDIT_AUCTION_SETTLED, auction,
+        {"winningBidId": str(bid.id), "amountCents": bid.amount_cents,
+         "cascadeDepth": auction.cascade_depth or 0},
+    )
     return SETTLED
 
 
@@ -245,6 +251,13 @@ def cascade(
     logger.info(
         "Auction %s cascading to bid %s (attempt %d)", auction.id, nxt.id, auction.cascade_depth
     )
+    # Recorded before the attempt: the fact that a bidder was passed over is worth keeping
+    # whether or not the next one's card works either.
+    _record(
+        db, AUDIT_WINNER_CASCADED, auction,
+        {"reason": reason, "forfeitedBidId": str(current.id) if current else None,
+         "nextBidId": str(nxt.id), "cascadeDepth": auction.cascade_depth},
+    )
     return settle_on(db, auction, piece, nxt, commit=commit)
 
 
@@ -269,3 +282,17 @@ def _give_up(
     if commit:
         db.commit()
     return EXHAUSTED
+
+
+def _record(db: Session, action: str, auction: Auction, detail: dict) -> None:
+    """Attribute an auction outcome to the system.
+
+    Always the system: everything in this module runs from the close sweep or the winder
+    -window sweep, with no person behind it. A seller cancelling their own auction is
+    recorded elsewhere, by auction_cancellation, and reads differently on purpose.
+    """
+    from src.modules.admin import audit_service
+
+    audit_service.system(
+        db, action, subject_type="auction", subject_id=auction.id, detail=detail, commit=False
+    )
