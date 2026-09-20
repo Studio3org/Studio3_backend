@@ -322,3 +322,89 @@ def test_the_host_is_never_listed_as_their_own_cohost(db, client, auth_headers):
     )
 
     assert response.get_json()["data"]["cohosts"] == []
+
+
+# --- the room's own screen ----------------------------------------------------------------
+
+def test_an_auction_piece_on_the_bill_carries_its_live_state(db, client, auth_headers):
+    """The screen people look at in the room is the event, not each piece in turn.
+
+    Without live state the lineup could only ever show a starting price — which stops being
+    true the moment somebody bids, and makes the room's own screen the least current thing
+    in it.
+    """
+    from tests.factories import make_bid
+    from src.shared.models.auction import Auction
+
+    host, bidder = make_user(db, seller=True), make_user(db)
+    piece = make_piece(db, host, price_cents=300_00, status="draft")
+    event = make_event(db, host)
+    client.post(
+        f"/api/events/{event.id}/pieces",
+        json={"pieceId": str(piece.id), "mode": "bid", "priceCents": 400_00},
+        headers=auth_headers(host),
+    )
+    client.post(f"/api/events/{event.id}/publish", headers=auth_headers(host))
+    db.expire_all()
+    auction = db.query(Auction).filter_by(piece_id=piece.id).one()
+    make_bid(db, auction, bidder, 450_00)
+
+    response = client.get(f"/api/events/{event.id}", headers=auth_headers(bidder))
+
+    entry = response.get_json()["data"]["lineup"][0]
+    assert entry["mode"] == "bid"
+    live = entry["auction"]
+    assert live["highestBidCents"] == 450_00
+    assert live["bidCount"] == 1
+    # Viewer-relative, so the room's screen can tell you you're winning.
+    assert live["isHighestBidder"] is True
+    assert live["auctionEndsAt"] is not None
+
+
+def test_a_featured_piece_carries_no_auction_state(db, client, auth_headers):
+    host = make_user(db, seller=True)
+    piece = make_piece(db, host, price_cents=300_00, status="live")
+    event = make_event(db, host, status="published")
+    client.post(
+        f"/api/events/{event.id}/pieces",
+        json={"pieceId": str(piece.id), "mode": "featured"},
+        headers=auth_headers(host),
+    )
+
+    response = client.get(f"/api/events/{event.id}", headers=auth_headers(host))
+
+    entry = response.get_json()["data"]["lineup"][0]
+    assert "auction" not in entry
+
+
+def test_the_lineup_reports_who_won_after_the_event(db, client, auth_headers):
+    """An event auction settles in the room, so the lineup has to keep showing the result
+    rather than going blank the moment bidding closes."""
+    from datetime import datetime, timedelta, timezone
+
+    from src.modules.bids import auction_closer
+    from src.shared.models.auction import Auction
+    from tests.factories import make_bid
+
+    host, bidder = make_user(db, seller=True), make_user(db)
+    piece = make_piece(db, host, price_cents=300_00, status="draft")
+    event = make_event(db, host)
+    client.post(
+        f"/api/events/{event.id}/pieces",
+        json={"pieceId": str(piece.id), "mode": "bid", "priceCents": 400_00},
+        headers=auth_headers(host),
+    )
+    client.post(f"/api/events/{event.id}/publish", headers=auth_headers(host))
+    db.expire_all()
+    auction = db.query(Auction).filter_by(piece_id=piece.id).one()
+    make_bid(db, auction, bidder, 500_00)
+    # Wind the clock past the close.
+    auction.closes_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    db.commit()
+    auction_closer.close_expired_auctions()
+
+    response = client.get(f"/api/events/{event.id}", headers=auth_headers(bidder))
+
+    live = response.get_json()["data"]["lineup"][0]["auction"]
+    assert live["winningBidCents"] == 500_00
+    assert live["isWinner"] is True

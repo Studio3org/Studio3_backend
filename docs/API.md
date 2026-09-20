@@ -826,6 +826,56 @@ Cancelling an RSVP flips the row to `cancelled` rather than deleting it, so "pul
 **Cancelling an event notifies everyone who was coming** (`attendeesNotified` in the
 response), alongside taking down the bill.
 
+### QR codes and the room
+
+**GET** `/api/events/:id/qr-codes` — host-only. Returns `eventUrl` plus one entry per work on
+the bill with `{ pieceId, title, mode, priceCents, mediaUrl, url }`.
+
+The `url` is what the code encodes: **a link, not a token**. Scanning it navigates — it
+admits nobody and proves nothing. That is deliberate, and it is what lets a visitor
+photograph a code, send it to someone across the room, and have that work too.
+
+Built server-side so the code printed on the wall and the link the app resolves cannot become
+two different opinions about what a share URL looks like.
+
+### App association
+
+The backend serves both files, at the **site root** (not under `/share` — the platforms fetch
+a fixed path):
+
+| URL | For |
+|-----|-----|
+| `/.well-known/apple-app-site-association` | iOS Universal Links |
+| `/.well-known/assetlinks.json` | Android App Links |
+
+Contents come from `IOS_TEAM_ID`, `IOS_BUNDLE_ID`, `ANDROID_PACKAGE` and
+`ANDROID_CERT_FINGERPRINTS`. **Unset means the file associates nothing** rather than shipping
+a placeholder — a file containing `REPLACE_WITH_TEAM_ID` looks configured and fails in a way
+that costs an afternoon.
+
+`ANDROID_CERT_FINGERPRINTS` is comma-separated and should list *every* signing key whose
+builds must verify: release, the debug key that internally-shared APKs use, and Google's
+re-signing key once the app is on Play. One key means links verify for some of your builds
+and silently not others.
+
+Both must be served over HTTPS with **no redirect** — both platforms treat a redirect as a
+failure, and it is the usual reason association quietly does not work.
+
+The `studio3://` custom scheme needs none of this and works regardless, which is what the QR
+flow falls back to before a domain is pointed anywhere.
+
+### Live lineup state
+
+A `bid` entry in an event's `lineup` carries an `auction` object — the same shape as
+[Bid summary](#bid-summary), including `highestBidCents`, `bidCount`, `auctionEndsAt` and the
+viewer-relative `isHighestBidder` / `isWinner`.
+
+It is there because the screen people look at in a room is the *event*, not each piece in
+turn. Without it a lineup could only show the starting price, which stops being true the
+moment somebody bids.
+
+Every auction at an event shares the event's clock, so one countdown describes them all.
+
 ### Browsing
 
 | Method | URL | Notes |

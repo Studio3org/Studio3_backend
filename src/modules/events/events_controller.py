@@ -574,17 +574,27 @@ def event_to_dict(db, event: Event, viewer_id: Optional[uuid.UUID]) -> dict:
                 db, event.id, ROLE_ARTIST)]
         ],
         "lineup": [
-            lineup_entry_to_dict(db, entry)
+            lineup_entry_to_dict(db, entry, viewer_id=viewer_id)
             for entry in lineup_service.list_lineup(db, event.id)
         ],
     })
     return base
 
 
-def lineup_entry_to_dict(db, entry: EventPiece) -> dict:
+def lineup_entry_to_dict(db, entry: EventPiece, viewer_id: Optional[uuid.UUID] = None) -> dict:
+    """One work on the bill.
+
+    A `bid` entry carries its live auction state — what it is at, how many bids, whether the
+    viewer leads — because the screen people look at in the room is the event, not each piece
+    in turn. Without it the lineup could only show a starting price, which stops being true
+    the moment somebody bids and makes the room's own screen the least current thing in it.
+    """
+    from src.modules.bids import auction_dao, bid_dao
+    from src.shared.models.event import PIECE_BID
+
     piece = db.get(Piece, entry.piece_id)
     artist = db.get(User, piece.user_id) if piece else None
-    return {
+    result = {
         "id": str(entry.id),
         "pieceId": str(entry.piece_id),
         "mode": entry.mode,
@@ -595,7 +605,16 @@ def lineup_entry_to_dict(db, entry: EventPiece) -> dict:
         "mediaUrl": piece.media_url if piece else None,
         "artistUsername": artist.username if artist else None,
         "artistName": artist.name if artist else None,
+        "pieceStatus": piece.status if piece else None,
     }
+
+    if entry.mode == PIECE_BID and piece is not None:
+        auction = auction_dao.get_running_auction(db, piece.id) or (
+            auction_dao.get_settling_auction(db, piece.id)
+        )
+        if auction is not None:
+            result["auction"] = bid_dao.bid_summary(db, auction, viewer_id=viewer_id)
+    return result
 
 
 def _viewer_going(db, event_id, viewer_id) -> bool:
