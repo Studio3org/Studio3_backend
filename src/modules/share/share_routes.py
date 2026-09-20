@@ -125,6 +125,36 @@ def share_series(series_id):
         db.close()
 
 
+@share_bp.get("/event/<event_id>")
+def share_event(event_id):
+    """The page a scanned QR code or a shared event link lands on.
+
+    Only a published event is shareable. A draft answers not-found rather than rendering,
+    because a link is the one way somebody who is not the host could otherwise see one.
+    """
+    from src.modules.events import events_dao
+    from src.shared.models.event import EVENT_PUBLISHED
+
+    web_url = f"{_web_base_url()}/event/{event_id}"
+    db = SessionLocal()
+    try:
+        event = events_dao.get_event(db, _uuid_or_none(event_id))
+        if not event or event.status != EVENT_PUBLISHED:
+            return _not_found(web_url)
+        host = get_user_by_id(db, event.host_id)
+        where = event.venue_name or event.address or ""
+        return _open_app_page(
+            deep_link=f"studio3://event/{event_id}",
+            web_url=web_url,
+            title=event.title,
+            description=(event.description or "").strip()
+            or (f"Hosted by {host.name} at {where}." if host and where else "An event on Studio 3."),
+            image_url=event.cover_media_url,
+        )
+    finally:
+        db.close()
+
+
 def _uuid_or_none(raw: str):
     import uuid
 

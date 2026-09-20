@@ -88,6 +88,7 @@ def create_app(config_overrides: dict | None = None):
     from src.modules.payments.payments_routes import payments_bp
     from src.modules.connect.connect_routes import connect_bp
     from src.modules.share.share_routes import share_bp
+    from src.modules.share.well_known_routes import well_known_bp
     from src.modules.events.events_routes import events_bp
 
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
@@ -112,6 +113,9 @@ def create_app(config_overrides: dict | None = None):
     app.register_blueprint(admin_bp, url_prefix="/admin")
     # Public share/OG-preview pages: HTML, no auth, deliberately outside the /api prefix.
     app.register_blueprint(share_bp, url_prefix="/share")
+    # No prefix: Apple and Google fetch these from a fixed path at the site root, and a
+    # prefixed copy is one nothing ever requests.
+    app.register_blueprint(well_known_bp)
 
     # CSRF applies only to the cookie-authenticated admin forms. The JSON API authenticates
     # with a bearer token that a cross-site form post cannot supply, so blanket checking is

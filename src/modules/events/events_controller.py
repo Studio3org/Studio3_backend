@@ -469,6 +469,59 @@ def list_attendees(event_id: str):
         db.close()
 
 
+def qr_codes(event_id: str):
+    """The links a host prints and puts beside each work in the room.
+
+    Built server-side rather than assembled in the app, so the code on the wall and the code
+    the app resolves can never be two different opinions about what a share URL looks like.
+
+    The QR carries a **link, not a token**. It is navigation: scanning it opens the piece so
+    somebody can bid from where they are standing. It admits nobody and proves nothing, which
+    is what lets a visitor photograph it, send it to a friend, and have that work too.
+    """
+    db = SessionLocal()
+    try:
+        event, viewer_id = _require_host(db, event_id)
+        base = _share_base_url()
+        entries = []
+        for entry in lineup_service.list_lineup(db, event.id):
+            piece = db.get(Piece, entry.piece_id)
+            if piece is None:
+                continue
+            entries.append({
+                "pieceId": str(entry.piece_id),
+                "title": piece.title,
+                "mode": entry.mode,
+                "priceCents": entry.price_cents,
+                "mediaUrl": piece.media_url,
+                # What the QR encodes. The /share/ route renders a preview for anyone who
+                # opens it in a browser and hands the app the deep link when it is installed.
+                "url": f"{base}/share/piece/{entry.piece_id}",
+            })
+        return {
+            "eventId": str(event.id),
+            "eventUrl": f"{base}/share/event/{event.id}",
+            "pieces": entries,
+        }, 200
+    finally:
+        db.close()
+
+
+def _share_base_url() -> str:
+    """The host that serves share links.
+
+    BACKEND_URL rather than FRONTEND_URL: these links are served by this service, and during
+    testing the production web domain is not pointed anywhere. Falling back to the request's
+    own host keeps the codes working on whatever URL the app is actually reaching.
+    """
+    import os
+
+    configured = (os.getenv("BACKEND_URL") or "").strip().rstrip("/")
+    if configured:
+        return configured
+    return request.host_url.rstrip("/")
+
+
 # --- serialization ---------------------------------------------------------------------------
 
 def event_card(db, event: Event, viewer_id: Optional[uuid.UUID]) -> dict:

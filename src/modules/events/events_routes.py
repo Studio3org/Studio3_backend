@@ -58,6 +58,15 @@ def set_rsvp(event_id):
     return _ok("RSVP updated.", data, status)
 
 
+@events_bp.get("/<event_id>/qr-codes")
+@onboarding_required
+@async_handler
+def qr_codes(event_id):
+    """The printable links for the room. Host-only."""
+    data, status = events_controller.qr_codes(event_id)
+    return _ok("OK", data, status)
+
+
 @events_bp.get("/<event_id>/attendees")
 @onboarding_required
 @async_handler

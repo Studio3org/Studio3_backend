@@ -70,6 +70,17 @@ ENV_VARS: tuple[EnvVar, ...] = (
     EnvVar("CORS_ORIGINS", "Extra browser origins, comma-separated."),
     EnvVar("BACKEND_URL", "This service's own public URL, for links it generates."),
 
+    # --- app association -----------------------------------------------------------------
+    # These make a shared https:// link open the app instead of a browser. Unset simply means
+    # association is off — the custom studio3:// scheme still works and needs no verification
+    # — so none of them are required at boot.
+    EnvVar("IOS_TEAM_ID", "Apple Developer Team ID, prefixes the app id in the AASA file."),
+    EnvVar("IOS_BUNDLE_ID", "iOS bundle identifier.", default="com.studio3.discover"),
+    EnvVar("ANDROID_PACKAGE", "Android application id.", default="com.studio3.discover"),
+    EnvVar("ANDROID_CERT_FINGERPRINTS",
+           "SHA-256 signing fingerprints, comma-separated: release, debug, and Play's own "
+           "re-signing key once the app is on Play."),
+
     # --- payments -----------------------------------------------------------------------
     # Without the webhook secret every webhook raises, Stripe retries then gives up, and paid
     # orders are never marked paid — a total revenue failure behind a healthy-looking service.
