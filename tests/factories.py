@@ -296,3 +296,47 @@ def make_address(db: Session, user: User, **overrides) -> Address:
     db.commit()
     db.refresh(address)
     return address
+
+
+def make_event(
+    db: Session,
+    host: User,
+    *,
+    title: str = "Test Event",
+    status: str = "draft",
+    starts_in: timedelta = timedelta(days=7),
+    duration: timedelta = timedelta(hours=3),
+    category: str | None = "gallery_walk",
+    **overrides,
+):
+    """An event a week out, three hours long — long enough that an event auction's close
+    (30 minutes before the end) still lands after its open."""
+    from src.shared.models.event import Event
+
+    now = datetime.now(timezone.utc)
+    starts_at = overrides.pop("starts_at", now + starts_in)
+    event = Event(
+        id=uuid.uuid4(),
+        host_id=host.id,
+        title=title,
+        status=status,
+        starts_at=starts_at,
+        ends_at=overrides.pop("ends_at", starts_at + duration),
+        category=category,
+        timezone="America/Chicago",
+        venue_name="Cedars Union",
+        **overrides,
+    )
+    db.add(event)
+    db.commit()
+    db.refresh(event)
+    return event
+
+
+def make_event_participant(db: Session, event, user: User, *, role: str = "artist"):
+    from src.shared.models.event import EventParticipant
+
+    row = EventParticipant(id=uuid.uuid4(), event_id=event.id, user_id=user.id, role=role)
+    db.add(row)
+    db.commit()
+    return row

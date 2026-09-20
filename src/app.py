@@ -88,6 +88,7 @@ def create_app(config_overrides: dict | None = None):
     from src.modules.payments.payments_routes import payments_bp
     from src.modules.connect.connect_routes import connect_bp
     from src.modules.share.share_routes import share_bp
+    from src.modules.events.events_routes import events_bp
 
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
     app.register_blueprint(user_bp, url_prefix="/api/user")
@@ -106,6 +107,7 @@ def create_app(config_overrides: dict | None = None):
     app.register_blueprint(collections_bp, url_prefix="/api/collections")
     app.register_blueprint(payments_bp, url_prefix="/api/payments")
     app.register_blueprint(connect_bp, url_prefix="/api/artists")
+    app.register_blueprint(events_bp, url_prefix="/api/events")
     # Internal ops UI: HTML, session-cookie auth, deliberately outside the /api prefix.
     app.register_blueprint(admin_bp, url_prefix="/admin")
     # Public share/OG-preview pages: HTML, no auth, deliberately outside the /api prefix.

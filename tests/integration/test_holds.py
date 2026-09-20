@@ -16,7 +16,7 @@ from src.shared.models.auction import (
 )
 from src.shared.models.bid import BID_ACTIVE, BID_OUTBID, Bid
 from src.shared.utils.app_error import AppError
-from tests.factories import make_auction, make_piece, make_user
+from tests.factories import make_auction, make_event, make_piece, make_user
 
 
 def _auction(db, seller, *, starting=200_00, **kw):
@@ -223,13 +223,13 @@ def test_a_late_bid_extends_a_standalone_auction(db):
 
 def test_an_event_auction_does_not_soft_close(db):
     """Bidding stops dead so the piece can change hands before the room empties."""
-    import uuid as _uuid
     from datetime import datetime, timedelta, timezone
 
     seller, bidder = make_user(db, seller=True), make_user(db)
     closing_soon = datetime.now(timezone.utc) + timedelta(minutes=2)
     auction = _auction(
-        db, seller, closes_at=closing_soon, soft_close_enabled=False, event_id=_uuid.uuid4()
+        db, seller, closes_at=closing_soon, soft_close_enabled=False,
+        event_id=make_event(db, seller, status="published").id,
     )
 
     _place(db, auction, bidder, 200_00)

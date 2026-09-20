@@ -728,6 +728,96 @@ An auction that ends without a sale is never auto-relisted or auto-converted to 
 it waits for the seller to decide.
 
 
+## Events
+
+An event is a gathering: when, where, who is on the bill, and which work is shown there.
+
+**Entry is free and open.** Attending is never gated — browse and detail work signed out, and
+`isFree` is always `true` today. Registering exists to let someone transact, not to let them
+in. Paid ticketing is deferred, so there are no ticket or price fields at all.
+
+### Draft, then publish
+
+Creating an event makes a **draft**: private to its host, invisible to every listing, and
+listing nothing. `POST /publish` is what puts it out *and* turns its bill into real listings.
+That split is the point — a host builds and rearranges a bill without work going on sale
+under them.
+
+| Method | URL | Notes |
+|--------|-----|-------|
+| POST | `/api/events` | `{ title, startsAt, endsAt, description?, coverMediaUrl?, category?, timezone?, venueName?, address?, latitude?, longitude? }` → `201`, status `draft`. Times are ISO 8601 UTC; `timezone` is the IANA zone the event happens in, kept so its time reads the same to everyone. |
+| PATCH | `/api/events/:id` | Same fields. `409` on a published event's dates — its auctions already take their window from them and have bids against them. |
+| PUT | `/api/events/:id/people` | `{ cohostUsernames?, artistUsernames? }`. A role that is sent is replaced wholesale (that is how you remove somebody); a role left out is untouched. The host is never added as their own cohost. |
+| POST | `/api/events/:id/publish` | Publishes and lists the bill. Idempotent. Returns `fixedListings` / `auctionListings` counts. `409` if the event has already ended. |
+| POST | `/api/events/:id/cancel` | `{ reason? }`. Takes down every listing the event created and cancels any auction properly — holds released, bidders told. Returns `cancelledAuctions` / `delisted`. |
+
+Host-only endpoints answer **`404`, not `403`**, for someone else's event: whether a given id
+is a real draft is not a stranger's to probe for.
+
+### The bill
+
+`mode` is how a piece appears at *this* event, and the three modes are not equivalent:
+
+| Mode | What it does |
+|------|--------------|
+| `featured` | Shown only. **Nothing** about the piece's own listing changes. |
+| `sale` | Sold at a fixed price at the event. |
+| `bid` | Auctioned in the room, on the event's clock. |
+
+**`sale` and `bid` end whatever listing the piece already had.** A running auction is
+cancelled — every bidder's hold released, every bidder notified that the seller withdrew it.
+That is irreversible, so ask first:
+
+**GET** `/api/events/:id/pieces/:pieceId/tagging-preview` →
+`{ endsAuction, endsFixedListing, activeBidCount, ownedByViewer }`. Use the real numbers in
+the confirmation ("this ends the auction and refunds 4 bidders").
+
+| Method | URL | Notes |
+|--------|-----|-------|
+| POST | `/api/events/:id/pieces` | `{ pieceId, mode, priceCents?, deliveryMode?, sortOrder? }`. `priceCents` required and ≥ $1 for `sale`/`bid`. `deliveryMode` defaults to `pickup` — at an event the work changes hands in the room. |
+| DELETE | `/api/events/:id/pieces/:pieceId` | Removes it from the bill. Deliberately does **not** restore the listing it replaced: those bidders were already refunded and told it was over. |
+
+**Who may do what.** The host runs the bill and may add anyone's work as `featured`. Only the
+**piece's owner** may choose `sale` or `bid` — selling someone else's work, and cancelling
+their auction to do it, is not a host's decision to make (`403`). An artist on the bill may
+add their own work.
+
+Adding a piece with a sale already in flight (`reserved`/`sold`/`auction_won`) answers `409`.
+
+### Event auctions
+
+Publishing a `bid` entry creates an auction whose window is the **event's**:
+
+* opens at `startsAt` — bidding opens when the doors do, not when the host hits publish;
+* closes at `endsAt` **minus 30 minutes**;
+* **no soft close** — it stops dead so the work can be handed over before the room empties.
+
+An event too short for that window (under ~30 minutes) is refused at publish with `400`,
+because bidding would close before it opened.
+
+Everything else about bidding is unchanged — see [Auctions & bidding](#auctions--bidding).
+
+### Browsing
+
+| Method | URL | Notes |
+|--------|-----|-------|
+| GET | `/api/events/browse` | The whole tab in one call: `today`, `following`, `upcoming`, `categories`. |
+| GET | `/api/events?scope=` | `upcoming` (default, accepts `category`, `limit`, `offset`), `today`, `following`, `saved`. The last two need a signed-in viewer (`401`). |
+| GET | `/api/events/:id` | Detail: adds `description`, `cohosts`, `artists`, `lineup`, `saveCount`, `isHost`. A draft answers `404` to anyone but its host. |
+| POST | `/api/events/:id/save` | `{ saved: true|false }` → `{ saved, saveCount }`. |
+
+"Upcoming" is keyed on **`endsAt`**, not `startsAt`: an event that began an hour ago and runs
+until midnight is still happening, and dropping it the moment it started would lose exactly
+the events someone browsing right now is most likely to want.
+
+The `following` scope includes events a followed artist is **billed on**, not just ones they
+host — an artist showing at someone else's gallery is usually the reason to care. Only
+accepted follows count.
+
+Categories: `workshop` · `gallery_walk` · `exhibition` · `talks_panels` ·
+`demos_performances` · `studio_visit` · `popup` · `market` · `auction` · `other`.
+
+
 ## Quick reference
 
 | Method | URL | Auth | Body |

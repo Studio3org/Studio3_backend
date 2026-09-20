@@ -23,7 +23,7 @@ from src.shared.models.auction import (
 )
 from src.shared.models.bid import BID_FORFEITED, BID_LOST, BID_WON, Bid
 from src.shared.models.piece import Piece
-from tests.factories import make_auction, make_bid, make_piece, make_user
+from tests.factories import make_auction, make_bid, make_event, make_piece, make_user
 from tests.helpers import assert_ledger_balanced
 
 
@@ -245,11 +245,13 @@ def test_the_cascade_stops_after_a_bounded_number_of_attempts(db):
 def test_an_event_auction_gets_the_short_window(db):
     """The client was explicit: at an event the room empties, so a failed payment is retried
     on the spot rather than two days later."""
-    import uuid
-
     seller = make_user(db, seller=True)
     _, standalone = _closed_auction(db, seller=seller)
-    _, event = _closed_auction(db, seller=seller, event_id=uuid.uuid4())
+    # A real event row: auctions.event_id is a foreign key now, so an auction can only claim
+    # to belong to an event that exists.
+    _, event = _closed_auction(
+        db, seller=seller, event_id=make_event(db, seller, status="published").id
+    )
 
     assert auction_winner.retry_window(standalone) == auction_winner.RETRY_WINDOW_STANDALONE
     assert auction_winner.retry_window(event) == auction_winner.RETRY_WINDOW_EVENT
