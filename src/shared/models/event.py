@@ -9,6 +9,8 @@ Split across four tables, and the split follows who owns what:
   — because that differs per event and must not be written back onto the piece itself.
 * **EventSave** is the bookmark, kept separate so saving is a cheap insert rather than a
   write to the event row every collector touches.
+* **EventRsvp** is "I'm coming". Distinct from a save: saving is interest, an RSVP is a
+  headcount the host plans a room around.
 
 Entry is free and open by design: attending is not gated, and registering exists to let
 someone transact, not to let them in. There are deliberately no ticket or price columns here
@@ -104,6 +106,7 @@ class Event(Base):
         CheckConstraint(
             "longitude IS NULL OR (longitude BETWEEN -180 AND 180)", name="ck_events_longitude"
         ),
+        CheckConstraint("capacity IS NULL OR capacity > 0", name="ck_events_capacity_positive"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -126,6 +129,10 @@ class Event(Base):
     address = Column(String(500), nullable=True)
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
+
+    # Null means unlimited, which is the default and the common case — entry is free and
+    # open. A number caps RSVPs; the waitlist that turns "full" into a queue is deferred.
+    capacity = Column(Integer, nullable=True)
 
     status = Column(String(16), default=EVENT_DRAFT, server_default=EVENT_DRAFT, nullable=False)
     published_at = Column(DateTime(timezone=True), nullable=True)
@@ -230,3 +237,44 @@ class EventSave(Base):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+
+# --- rsvp status ----------------------------------------------------------------------------
+RSVP_GOING = "going"
+# Kept rather than deleted: "said yes then pulled out" is a different fact from "never
+# answered", and a host reading a headcount the morning of should be able to tell them apart.
+RSVP_CANCELLED = "cancelled"
+RSVP_STATUSES = (RSVP_GOING, RSVP_CANCELLED)
+
+
+class EventRsvp(Base):
+    """Someone saying they will be there.
+
+    Deliberately not a ticket. Entry is free and open, so this does not admit anyone and
+    nothing is charged for it — it is a headcount the host plans a room around, and the
+    thing that makes "the event you're going to was cancelled" a message we can actually
+    send.
+
+    One row per person per event, flipped between `going` and `cancelled`, rather than
+    inserted and deleted. That keeps the unique constraint meaningful, makes re-RSVPing a
+    status change instead of a race, and preserves the difference between pulling out and
+    never replying.
+    """
+
+    __tablename__ = "event_rsvps"
+    __table_args__ = (
+        UniqueConstraint("event_id", "user_id", name="uq_event_rsvp"),
+        CheckConstraint("status IN ('going','cancelled')", name="ck_event_rsvps_status"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    event_id = Column(
+        UUID(as_uuid=True), ForeignKey("events.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    status = Column(String(16), default=RSVP_GOING, server_default=RSVP_GOING, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+    cancelled_at = Column(DateTime(timezone=True), nullable=True)

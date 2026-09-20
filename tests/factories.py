@@ -307,6 +307,7 @@ def make_event(
     starts_in: timedelta = timedelta(days=7),
     duration: timedelta = timedelta(hours=3),
     category: str | None = "gallery_walk",
+    capacity: int | None = None,
     **overrides,
 ):
     """An event a week out, three hours long — long enough that an event auction's close
@@ -323,6 +324,7 @@ def make_event(
         starts_at=starts_at,
         ends_at=overrides.pop("ends_at", starts_at + duration),
         category=category,
+        capacity=capacity,
         timezone="America/Chicago",
         venue_name="Cedars Union",
         **overrides,

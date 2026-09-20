@@ -55,6 +55,7 @@ def create_event(
     address: Optional[str] = None,
     latitude: Optional[float] = None,
     longitude: Optional[float] = None,
+    capacity: Optional[int] = None,
     commit: bool = True,
 ) -> Event:
     """Create an event in draft. Publishing is a separate, deliberate step.
@@ -77,6 +78,7 @@ def create_event(
         address=(address or "").strip() or None,
         latitude=latitude,
         longitude=longitude,
+        capacity=_clean_capacity(capacity),
     )
     db.add(event)
     if commit:
@@ -102,6 +104,41 @@ def validate_category(category: Optional[str]) -> Optional[str]:
     if category not in EVENT_CATEGORIES:
         raise AppError(f"Unknown category '{category}'.", 400)
     return category
+
+
+def _clean_capacity(capacity) -> Optional[int]:
+    """None means unlimited, which is the default and the common case."""
+    if capacity is None or capacity == "":
+        return None
+    try:
+        value = int(capacity)
+    except (TypeError, ValueError):
+        raise AppError("Capacity must be a whole number.", 400) from None
+    if value <= 0:
+        raise AppError("Capacity must be at least 1, or left empty for unlimited.", 400)
+    return value
+
+
+def validate_capacity(db: Session, event: Event, capacity) -> Optional[int]:
+    """A new cap for an event that may already have people coming.
+
+    Lowering it below the current headcount is refused rather than silently applied: the
+    people already on the list said yes in good faith, and there is no mechanism — and no
+    product decision — for choosing which of them to turn away.
+    """
+    value = _clean_capacity(capacity)
+    if value is None:
+        return None
+    from src.modules.events import rsvp_service
+
+    going = rsvp_service.going_count(db, event.id)
+    if value < going:
+        raise AppError(
+            f"{going} people have already said they're coming, so capacity can't be set "
+            f"below {going}.",
+            409,
+        )
+    return value
 
 
 def validate_window(starts_at: datetime, ends_at: datetime) -> None:

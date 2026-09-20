@@ -20,7 +20,7 @@ from src.shared.models.piece import Piece
 from src.shared.models.user import User
 from src.shared.utils.app_error import AppError
 from src.shared.utils.logger import get_logger
-from src.modules.events import event_state, events_dao, lineup_service
+from src.modules.events import event_state, events_dao, lineup_service, rsvp_service
 from src.modules.pieces.pieces_dao import get_piece
 from src.modules.user.user_dao import get_user_by_id
 
@@ -86,6 +86,7 @@ def create():
             address=body.get("address"),
             latitude=body.get("latitude"),
             longitude=body.get("longitude"),
+            capacity=body.get("capacity"),
         )
         return event_to_dict(db, event, viewer_id=host.id), 201
     finally:
@@ -118,6 +119,8 @@ def patch(event_id: str):
             event.latitude = body.get("latitude")
         if "longitude" in body:
             event.longitude = body.get("longitude")
+        if "capacity" in body:
+            event.capacity = events_dao.validate_capacity(db, event, body.get("capacity"))
 
         if "startsAt" in body or "endsAt" in body:
             starts_at = (
@@ -232,8 +235,19 @@ def cancel(event_id: str):
         undone = lineup_service.cancel_lineup(db, event, "event_cancelled", commit=False)
         db.commit()
 
+        # After the commit, and the reason this matters: cancelling used to take down the
+        # listings and tell the bidders, while the people who had arranged their evening
+        # around turning up heard nothing at all.
+        told = rsvp_service.notify_attendees(
+            db, event,
+            type="event_cancelled",
+            title="Event cancelled",
+            body=f'"{event.title}" has been cancelled. {reason}',
+        )
+
         result = event_to_dict(db, event, viewer_id=viewer_id)
         result.update(undone)
+        result["attendeesNotified"] = told
         return result, 200
     finally:
         db.close()
@@ -411,6 +425,50 @@ def list_for_host(username: str):
         db.close()
 
 
+def set_rsvp(event_id: str):
+    """Say you're coming, or take it back. Free — an RSVP is a headcount, not a ticket."""
+    body = request.get_json() or {}
+    going = bool(body.get("going", True))
+    db = SessionLocal()
+    try:
+        viewer_id = _viewer_id()
+        user = get_user_by_id(db, viewer_id)
+        if user is None:
+            raise AppError("User not found.", 404)
+        event = events_dao.get_event(db, _uuid(event_id, "event"))
+        # A draft is 404 to anyone but its host, the same as reading one. Answering "this
+        # event isn't open for RSVPs" would confirm the id belongs to a real unpublished
+        # event, which is exactly what the 404 elsewhere exists to avoid.
+        if not event or (event.status == "draft" and event.host_id != viewer_id):
+            raise AppError("Event not found.", 404)
+
+        rsvp_service.set_rsvp(db, event, user, going=going)
+        return {
+            "going": going,
+            "rsvpCount": rsvp_service.going_count(db, event.id),
+            "spotsLeft": rsvp_service.spots_left(db, event),
+            "isFull": rsvp_service.is_full(db, event),
+        }, 200
+    finally:
+        db.close()
+
+
+def list_attendees(event_id: str):
+    """Who is coming. Host-only: an attendee list is not public."""
+    db = SessionLocal()
+    try:
+        event, _ = _require_host(db, event_id)
+        people = rsvp_service.list_attendees(db, event.id)
+        return {
+            "attendees": [_person(user) for user in people],
+            "rsvpCount": len(people),
+            "capacity": event.capacity,
+            "spotsLeft": rsvp_service.spots_left(db, event),
+        }, 200
+    finally:
+        db.close()
+
+
 # --- serialization ---------------------------------------------------------------------------
 
 def event_card(db, event: Event, viewer_id: Optional[uuid.UUID]) -> dict:
@@ -433,6 +491,11 @@ def event_card(db, event: Event, viewer_id: Optional[uuid.UUID]) -> dict:
         "hostName": host.name if host else None,
         "hostAvatarUrl": host.image if host else None,
         "saved": events_dao.is_saved(db, event.id, viewer_id),
+        "capacity": event.capacity,
+        "rsvpCount": rsvp_service.going_count(db, event.id),
+        "spotsLeft": rsvp_service.spots_left(db, event),
+        "isFull": rsvp_service.is_full(db, event),
+        "viewerIsGoing": _viewer_going(db, event.id, viewer_id),
     }
 
 
@@ -480,6 +543,11 @@ def lineup_entry_to_dict(db, entry: EventPiece) -> dict:
         "artistUsername": artist.username if artist else None,
         "artistName": artist.name if artist else None,
     }
+
+
+def _viewer_going(db, event_id, viewer_id) -> bool:
+    rsvp = rsvp_service.viewer_rsvp(db, event_id, viewer_id)
+    return rsvp is not None and rsvp.status == "going"
 
 
 def _person(user: User) -> dict:

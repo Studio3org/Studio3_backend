@@ -49,6 +49,23 @@ def get_event(event_id):
     return _ok("OK", data, status)
 
 
+@events_bp.post("/<event_id>/rsvp")
+@auth_required
+@async_handler
+def set_rsvp(event_id):
+    """Say you're coming, or take it back. Free — an RSVP is a headcount, not a ticket."""
+    data, status = events_controller.set_rsvp(event_id)
+    return _ok("RSVP updated.", data, status)
+
+
+@events_bp.get("/<event_id>/attendees")
+@onboarding_required
+@async_handler
+def list_attendees(event_id):
+    data, status = events_controller.list_attendees(event_id)
+    return _ok("OK", data, status)
+
+
 @events_bp.post("/<event_id>/save")
 @auth_required
 @async_handler

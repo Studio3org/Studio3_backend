@@ -797,6 +797,35 @@ because bidding would close before it opened.
 
 Everything else about bidding is unchanged — see [Auctions & bidding](#auctions--bidding).
 
+### RSVPs
+
+An RSVP is **not a ticket**. Entry is free and open, so it admits nobody and charges nothing
+— what it buys is that the host knows how many to expect, and that there is somebody to tell
+when the event is called off. Never word it as a purchase.
+
+| Method | URL | Notes |
+|--------|-----|-------|
+| POST | `/api/events/:id/rsvp` | `{ going: true\|false }` → `{ going, rsvpCount, spotsLeft, isFull }`. Idempotent both ways. `409` when a capped event is full, `400` for the host's own event, `404` for a draft. |
+| GET | `/api/events/:id/attendees` | **Host-only** (`404` otherwise) — an attendee list is not public. |
+
+Every event payload carries `rsvpCount`, `capacity`, `spotsLeft`, `isFull` and the
+viewer-relative `viewerIsGoing`.
+
+**`spotsLeft` is null, not zero, when the event is uncapped.** The two mean different things:
+an uncapped event has no number to show, a full one has exactly zero.
+
+**Capacity** is optional and null by default. Setting it caps RSVPs; the check runs under a
+row lock, so two people racing for the last place serialise rather than both being told yes.
+It cannot be lowered below the number already coming (`409`) — those people said yes in good
+faith and there is no mechanism for choosing which to turn away. The waitlist that turns
+"full" into a queue is deferred.
+
+Cancelling an RSVP flips the row to `cancelled` rather than deleting it, so "pulled out" and
+"never replied" stay distinguishable. Cancelled RSVPs are never counted and never notified.
+
+**Cancelling an event notifies everyone who was coming** (`attendeesNotified` in the
+response), alongside taking down the bill.
+
 ### Browsing
 
 | Method | URL | Notes |
