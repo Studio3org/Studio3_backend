@@ -488,12 +488,17 @@ def qr_codes(event_id: str):
             piece = db.get(Piece, entry.piece_id)
             if piece is None:
                 continue
+            artist = db.get(User, piece.user_id)
             entries.append({
                 "pieceId": str(entry.piece_id),
                 "title": piece.title,
                 "mode": entry.mode,
                 "priceCents": entry.price_cents,
                 "mediaUrl": piece.media_url,
+                # A gallery card without the artist's name is missing the point of a
+                # gallery card.
+                "artistName": artist.name if artist else None,
+                "artistUsername": artist.username if artist else None,
                 # What the QR encodes. The /share/ route renders a preview for anyone who
                 # opens it in a browser and hands the app the deep link when it is installed.
                 "url": f"{base}/share/piece/{entry.piece_id}",
