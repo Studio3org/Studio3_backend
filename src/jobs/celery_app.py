@@ -80,6 +80,13 @@ celery_app.conf.update(
             # margin, and re-authorising more often than needed invites more declines.
             "schedule": crontab(hour=3, minute=0),
         },
+        "release-abandoned-orders": {
+            "task": "orders.expire_abandoned",
+            # Every five minutes against a fifteen-minute window: a piece is back on sale
+            # well inside twenty minutes, and the sweep is cheap when there is nothing to do.
+            "schedule": 300.0,
+            "options": {"expires": 290},
+        },
         "expire-waitlist-offers": {
             "task": "events.expire_waitlist_offers",
             "schedule": 300.0,

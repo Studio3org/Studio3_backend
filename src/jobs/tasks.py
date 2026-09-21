@@ -55,6 +55,18 @@ def refresh_holds() -> None:
     _run("hold-refresh", run)
 
 
+@celery_app.task(name="orders.expire_abandoned")
+def expire_abandoned_orders() -> None:
+    """Put artwork back on sale when a checkout was started and never paid for.
+
+    Nothing else does this: every other release is triggered by a Stripe webhook, and a
+    collector who closes the payment sheet produces no webhook at all.
+    """
+    from src.modules.orders.stale_orders import expire_abandoned_orders as run
+
+    _run("abandoned-orders", run)
+
+
 @celery_app.task(name="events.expire_waitlist_offers")
 def expire_waitlist_offers() -> None:
     """Pass an unclaimed waitlist spot to the next person. Placeholder until Phase 7."""

@@ -41,6 +41,7 @@ but never wrong.
 | `auctions.close_expired` | 1 min | Captures the winner, releases everyone else | Auctions run past their end. Money stays held, nobody is charged, nobody is told. **The worst one to lose.** |
 | `auctions.expire_winner_windows` | 1 min | Passes a piece on when a declined winner's window runs out | A stuck winner blocks the piece indefinitely |
 | `auctions.refresh_holds` | 03:00 | Re-authorises holds before the card lets go | Long auctions close on dead authorisations and capture nothing |
+| `orders.expire_abandoned` | 5 min | Cancels checkouts unpaid after 15 min and puts the artwork back on sale | **Every abandoned checkout removes a piece from the marketplace permanently.** No webhook fires when a collector closes the payment sheet, so nothing else releases it |
 | `events.expire_waitlist_offers` | 5 min | Placeholder — deferred with ticketing | — |
 | `events.archive_past` | hourly | Placeholder — deferred | — |
 | `ledger.reconcile` | 04:00 | Compares the books against Stripe, reports drift | Drift accumulates unnoticed |
@@ -67,6 +68,29 @@ but never wrong.
   bidder's card failed). Nothing was charged to anyone. It waits on the seller.
 
 `cascade_depth` above zero means this has already failed for at least one bidder.
+
+### A piece is stuck on "Reserved" and nobody can buy it
+
+Creating an order reserves the piece before any money moves. It is released by payment
+failure, cancellation or refund — all of which need Stripe to tell us something happened, and
+nothing does when a collector just closes the payment sheet.
+
+`orders.expire_abandoned` handles this within 20 minutes. If a piece is still reserved after
+that, either beat is not running, or Stripe refused to cancel the intent — which it does when
+the intent is `processing` or `succeeded`. That second case is not a stuck piece: the money
+is in flight and the webhook is about to finish the order. Check the intent before touching
+anything:
+
+```sql
+SELECT o.id, o.status, o.payment_reference
+  FROM orders o JOIN order_items oi ON oi.order_id = o.id
+ WHERE oi.piece_id = '<piece id>' ORDER BY o.created_at DESC;
+```
+
+Never release a piece by editing `pieces.status` directly — it leaves the order behind,
+still pointing at artwork that now belongs to someone else. Cancel the order instead
+(`PATCH /api/orders/<id>` with `{"status": "cancelled"}`), which releases the piece as part
+of the same transaction.
 
 ### An artist has not been paid
 
