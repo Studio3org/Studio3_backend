@@ -33,8 +33,8 @@ documents what each one is for.
 
 ## 1. Stripe
 
-Studio 3 takes payment from collectors and pays artists through **Stripe Connect Express**.
-Without this section nothing can be bought, bid on or paid out.
+Studio 3 takes payment from collectors and pays artists through **Stripe Connect**, on the
+**Accounts v2** API. Without this section nothing can be bought, bid on or paid out.
 
 ### 1.1 Create the account
 
@@ -50,6 +50,13 @@ Connect is what lets artists receive money. Without it, payouts have nowhere to 
 1. **Connect → Get started**.
 2. Choose **Express** accounts. (Not Standard: Express keeps onboarding inside our flow and
    Stripe handles the artist's identity and tax collection.)
+
+   The code creates artists through `POST /v2/core/accounts` with the **recipient**
+   configuration and `dashboard: "express"` — the v2 equivalent of what the dashboard calls
+   Express. Artists can receive transfers; they never accept a card themselves, because Studio
+   3 is the merchant of record. If account creation fails with `accounts_v2_access_blocked`,
+   Accounts v2 is not enabled on your Stripe account yet — contact Stripe support. Do **not**
+   enable "Accounts v1 support"; the code no longer uses v1 to create accounts.
 3. **Connect → Settings → Branding** — add the Studio 3 name, icon and brand colour. Artists
    see this during onboarding, and an unbranded page looks like a phishing attempt.
 
@@ -96,6 +103,15 @@ Same URL, but tick **"Listen to events on Connected accounts"**. Select:
 
 This is how the platform learns an artist has finished onboarding and can be paid. Without
 it, artists complete onboarding and the app never notices.
+
+> **Watch this on the first real onboarding.** Stripe documents that v2 accounts still emit the
+> v1 `account.updated` event, but says so explicitly only for the *merchant* configuration and
+> is silent about *recipient*, which is the one Studio 3 uses. If the first artist finishes
+> onboarding and `users.stripe_payouts_enabled` stays false while this endpoint shows no
+> delivery, the fix is to subscribe to
+> `v2.core.account[configuration.recipient].capability_status_updated` on the **Your account**
+> scope instead — it is a thin event, so the handler has to fetch the account rather than read
+> it from the payload.
 
 Save and reveal its signing secret too.
 
@@ -554,7 +570,7 @@ Work down it. Each line is something that silently does not work if skipped.
 
 ### Money
 - [ ] Stripe business verification complete
-- [ ] Connect enabled, Express, branding set
+- [ ] Connect enabled, Express + Accounts v2, branding set
 - [ ] `STRIPE_SECRET_KEY` live key on all three Render services
 - [ ] Both webhook endpoints created, **both** secrets in `STRIPE_WEBHOOK_SECRET`
 - [ ] A real test purchase reached **paid** in `/admin/orders`

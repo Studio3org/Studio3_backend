@@ -18,7 +18,12 @@ firebase-admin>=6.5.0,<7
 flask-socketio>=5.3.0,<6
 gevent>=24.2.1,<26
 # Payments: collector charges + Connect payouts to artists.
-stripe>=9.0.0,<13
+# 14.4+ for the /v2 namespace (v2.core.accounts, v2.core.account_links), which Connect
+# onboarding needs: Stripe refuses Accounts v1 creation for new integrations.
+# Held below 15: that major drops dict access on StripeObject, so every `.get()` in the
+# webhook and payout code would raise AttributeError at runtime. The Stripe stubs in the
+# test suite return plain dicts, so no test would have caught it.
+stripe>=14.4,<15
 # CSRF for the cookie-authenticated /admin forms only (the bearer-token API is exempt).
 Flask-WTF>=1.2.0,<2
 # Scheduled work: auction close, hold refresh, waitlist expiry, reconciliation.

@@ -36,7 +36,7 @@ class User(Base):
     is_admin = Column(Boolean, default=False, nullable=False)
     # Stripe Connect (Express) — set once the artist starts onboarding. payouts_enabled is
     # mirrored from the account.updated webhook, not trusted from a client.
-    stripe_account_id = Column(String(255), nullable=True)
+    stripe_account_id = Column(String(255), nullable=True, index=True)
     stripe_payouts_enabled = Column(Boolean, default=False, nullable=False)
     # The Stripe customer this user's saved cards belong to. Required for bidding: a hold is
     # re-authorised off-session weeks later with nobody present, and a payment method has to

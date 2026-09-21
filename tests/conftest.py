@@ -255,8 +255,16 @@ def stripe_stub(monkeypatch):
         # is entirely built on it.
         "src.modules.bids.holds_service",
         "src.modules.payments.payment_methods_controller",
+        # Connect onboarding. Absent from this list until the Accounts v2 move, which is why
+        # the entire onboarding surface had no tests.
+        "src.modules.connect.connect_controller",
     ):
         monkeypatch.setattr(f"{target}.get_stripe", lambda _s=stub: _s, raising=False)
+    # Accounts v2 goes through a separate client, so it needs its own patch.
+    monkeypatch.setattr(
+        "src.modules.connect.connect_controller.get_stripe_v2", lambda _s=stub: _s,
+        raising=False,
+    )
     return stub
 
 
@@ -273,6 +281,7 @@ def stripe_enabled(monkeypatch, stripe_stub):
         "src.modules.payments.payments_controller",
         "src.modules.bids.holds_service",
         "src.modules.payments.payment_methods_controller",
+        "src.modules.connect.connect_controller",
     ):
         monkeypatch.setattr(f"{target}.stripe_configured", lambda: True, raising=False)
     return stripe_stub

@@ -78,6 +78,10 @@ class StripeStub:
         self.refunds: list[dict] = []
         self.payment_intents: dict[str, dict] = {}
         self.accounts: dict[str, dict] = {}
+        # What Connect onboarding actually sent to /v2, so tests can assert the
+        # recipient configuration and the transfers capability were really requested.
+        self.v2_account_requests: list[dict] = []
+        self.v2_account_link_requests: list[dict] = []
         # Set to an exception to make the next Transfer.create raise, for the failure paths.
         self.transfer_error: Optional[Exception] = None
         self.customers: dict[str, dict] = {}
@@ -121,6 +125,12 @@ class StripeStub:
             create_login_link=self._account_login_link,
         )
         self.AccountLink = _Namespace(create=self._account_link_create)
+        # Accounts v2: reached as client.v2.core.accounts.create(...). Connect onboarding is
+        # the only caller; everything else still goes through the v1 namespaces above.
+        self.v2 = _Namespace(core=_Namespace(
+            accounts=_Namespace(create=self._v2_account_create),
+            account_links=_Namespace(create=self._v2_account_link_create),
+        ))
 
     # -- seeding -------------------------------------------------------------------------
 
@@ -328,12 +338,36 @@ class StripeStub:
     def _account_retrieve(self, account_id, **kwargs) -> dict:
         return self.accounts.get(
             account_id,
-            {"id": account_id, "charges_enabled": True, "payouts_enabled": True,
-             "details_submitted": True},
+            # An onboarded recipient account: transfers active, but charges_enabled false,
+            # because we never request a charge capability. That combination is exactly what
+            # payouts_ready() has to get right.
+            {"id": account_id, "charges_enabled": False, "payouts_enabled": True,
+             "details_submitted": True, "capabilities": {"transfers": "active"}},
         )
 
     def _account_login_link(self, account_id, **kwargs) -> dict:
         return {"url": f"https://connect.stripe.test/login/{account_id}"}
 
     def _account_link_create(self, **kwargs) -> dict:
-        return {"url": "https://connect.stripe.test/onboarding"}
+        return {"url": "https://connect.stripe.test/onboarding", "expires_at": 1_800_000_000}
+
+    def _v2_account_create(self, params, options=None) -> _Namespace:
+        """Records the request so tests can assert what was actually asked of Stripe."""
+        self.v2_account_requests.append({"params": params, "options": options or {}})
+        account_id = f"acct_{uuid.uuid4().hex[:16]}"
+        # A freshly created account has completed nothing yet.
+        self.accounts[account_id] = {
+            "id": account_id, "charges_enabled": False, "payouts_enabled": False,
+            "details_submitted": False, "capabilities": {"transfers": "inactive"},
+            "requirements": {"currently_due": ["individual.first_name"],
+                             "disabled_reason": "requirements.past_due"},
+        }
+        return _Namespace(id=account_id, applied_configurations=["recipient"])
+
+    def _v2_account_link_create(self, params, options=None) -> _Namespace:
+        self.v2_account_link_requests.append(params)
+        # RFC 3339, as the real v2 API returns — the controller must convert it.
+        return _Namespace(
+            url="https://connect.stripe.test/v2/onboarding",
+            expires_at="2026-09-21T09:34:10.000Z",
+        )

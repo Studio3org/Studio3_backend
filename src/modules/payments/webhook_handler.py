@@ -18,7 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.shared.config.database import SessionLocal
-from src.shared.config.stripe_client import get_stripe, webhook_secrets
+from src.shared.config.stripe_client import get_stripe, payouts_ready, webhook_secrets
 from src.shared.models.order import Order
 from src.shared.models.payout import (
     PAYOUT_BLOCKED,
@@ -448,7 +448,7 @@ def _on_account_updated(db: Session, account) -> None:
     if not user:
         return
     obj = db.get(User, user.id)
-    enabled = bool(account.get("payouts_enabled")) and bool(account.get("charges_enabled"))
+    enabled = payouts_ready(account)
     if obj.stripe_payouts_enabled != enabled:
         obj.stripe_payouts_enabled = enabled
         db.commit()
