@@ -14,11 +14,14 @@ its value comes from, see `.env.example`.
 Nothing works if any of these is missing, and two of them are easy to forget because nothing
 errors when they are down — things simply stop happening.
 
-| Process | Command | What breaks without it |
-|---|---|---|
-| **web** | `gunicorn` (see `render.yaml`) | Everything, visibly. |
-| **worker** | `celery -A src.jobs.celery_app.celery_app worker` | **Auctions never close.** Silent. |
-| **beat** | `celery -A src.jobs.celery_app.celery_app beat` | Nothing is ever scheduled. Also silent. |
+| Process | Command | On AWS | What breaks without it |
+|---|---|---|---|
+| **web** | `gunicorn` (see `render.yaml`) | `studio3-api.service` | Everything, visibly. |
+| **worker** | `celery -A src.jobs.celery_app.celery_app worker` | `studio3-worker.service` | **Auctions never close.** Silent. |
+| **beat** | `celery -A src.jobs.celery_app.celery_app beat` | `studio3-beat.service` | Nothing is ever scheduled. Also silent. |
+
+Render runs them as three services (`render.yaml`); AWS runs them as three systemd units on
+one EC2 box (`deploy/systemd/`). Same three processes either way.
 
 **Beat must be a single instance.** Two beats means every schedule fires twice — two closes
 for one auction, two capture attempts on one card.
@@ -96,9 +99,28 @@ the operator retry, and a retried refund is a second refund.
 
 ## Deploying
 
-`render.yaml` runs `alembic upgrade head` in the start command, so **a broken migration is an
-outage**. CI applies the full chain to an empty database on every push; that step is the one
-worth watching.
+**Render (staging):** push. `render.yaml` runs `alembic upgrade head` in the start command.
+
+**AWS (production):** `./deploy/deploy.sh` from a laptop with `deploy/config.env` filled in.
+It rsyncs the code, writes `/opt/studio3/.env.production`, then restarts api, worker and beat
+in that order — the API's `ExecStartPre` owns the migration, so the job processes never start
+against a schema it has not reached.
+
+First time on a fresh account, in order:
+
+```
+./deploy/create-infra.sh    # VPC bits, RDS, ElastiCache, EC2 + Elastic IP
+./deploy/setup-domain.sh    # Route 53 A record -> the Elastic IP
+ssh ... 'bash bootstrap-ec2.sh'
+./deploy/deploy.sh
+ssh ... 'cd /opt/studio3 && bash deploy/setup-ssl.sh'
+```
+
+Either way `alembic upgrade head` runs at start, so **a broken migration is an outage**. CI
+applies the full chain to an empty database on every push; that step is the one worth
+watching.
+
+Logs on AWS: `journalctl -u studio3-worker -f`, or `/opt/studio3/logs/`.
 
 Config is checked at boot and the process **refuses to start** with anything required
 missing, naming everything absent at once. That is deliberate: a service that starts without
@@ -112,8 +134,8 @@ Worth knowing before you "fix" one of them:
 
 - **Redis fails open.** A Redis outage degrades; it does not stop the service. `/health` says
   `degraded` while still serving.
-- **`GET /`** is liveness and touches nothing external — Render restarts on it, and a database
-  blip must not be read as a dead process. Point uptime monitoring at `/health` instead.
+- **`GET /`** is liveness and touches nothing external — Render and systemd restart on it, and
+  a database blip must not be read as a dead process. Point uptime monitoring at `/health` instead.
 - **No Stripe key = dev mode.** Checkout auto-confirms and holds are granted without a card.
   Intentional for local work; catastrophic if it ever happened in production, which is why
   the key is required at boot there.

@@ -1,0 +1,26 @@
+[Unit]
+Description=Studiothree Celery worker (auction close, holds, waitlist, reconciliation)
+After=network.target studio3-api.service
+# Not Requires=: the worker is useful even while the API is restarting.
+Wants=studio3-api.service
+
+[Service]
+Type=simple
+User=ec2-user
+Group=ec2-user
+WorkingDirectory=/opt/studio3
+Environment=FLASK_ENV=production
+EnvironmentFile=/opt/studio3/.env.production
+# No alembic here — studio3-api.service owns migrations. Two processes racing
+# `alembic upgrade head` on restart is how you get a half-applied schema.
+ExecStart=/opt/studio3/.venv/bin/celery -A src.jobs.celery_app.celery_app worker \
+  --loglevel=info --concurrency=2 \
+  --logfile /opt/studio3/logs/celery-worker.log
+Restart=always
+RestartSec=5
+# Let a task finish before the process dies on deploy.
+KillSignal=SIGTERM
+TimeoutStopSec=300
+
+[Install]
+WantedBy=multi-user.target

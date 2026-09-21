@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Deploy app code from this laptop to EC2 and restart the API.
+# Deploy app code from this laptop to EC2 and restart the three services:
+# the API (gunicorn), the Celery worker, and Celery beat.
 #
 # Prerequisites:
 #   - create-infra.sh completed (EC2_HOST, DATABASE_URL, REDIS_URL in config.env)
@@ -28,6 +29,22 @@ source "$CONFIG"
 : "${JWT_SECRET:=}"
 : "${SECRET_KEY:=}"
 
+# Everything src/shared/config/settings.py marks required in production. Checked here so a
+# missing value costs a one-line error instead of a synced deploy that crash-loops on boot.
+MISSING=()
+for var in FRONTEND_URL STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET \
+           AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY S3_BUCKET S3_PUBLIC_BASE_URL; do
+  [[ -z "${!var:-}" ]] && MISSING+=("$var")
+done
+if [[ ${#MISSING[@]} -gt 0 ]]; then
+  echo "Required in production but empty in deploy/config.env:"
+  printf '  - %s\n' "${MISSING[@]}"
+  echo
+  echo "The service refuses to boot without them (src/shared/config/settings.py)."
+  echo "Fill them in, or set ALLOW_INCOMPLETE=1 to deploy anyway."
+  [[ "${ALLOW_INCOMPLETE:-}" == "1" ]] || exit 1
+fi
+
 EC2_USER="${EC2_USER:-ec2-user}"
 APP_DIR="/opt/studio3"
 SSH_KEY="${DEPLOY_SSH_KEY/#\~/$HOME}"
@@ -48,7 +65,7 @@ RSYNC=(rsync -az --delete
   --exclude '.DS_Store'
 )
 
-echo "==> Syncing code → ${EC2_USER}@${EC2_HOST}:${APP_DIR}"
+echo "==> Syncing code -> ${EC2_USER}@${EC2_HOST}:${APP_DIR}"
 "${RSYNC[@]}" -e "ssh -i ${SSH_KEY} -o StrictHostKeyChecking=accept-new" \
   "${ROOT}/" "${EC2_USER}@${EC2_HOST}:${APP_DIR}/"
 
@@ -61,10 +78,12 @@ if [[ -z "${SECRET_KEY}" ]]; then
 fi
 
 FRONTEND_URL="${FRONTEND_URL:-https://${DOMAIN:-localhost}}"
+BACKEND_URL="${BACKEND_URL:-https://${DOMAIN:-$EC2_HOST}}"
 AWS_REGION="${AWS_REGION:-us-east-1}"
 
 echo "==> Writing .env.production on server"
-# Build env file locally then scp (avoids shell-escaping hell over SSH)
+# Build env file locally then scp (avoids shell-escaping hell over SSH).
+# Mirrors .env.example; the contract itself is src/shared/config/settings.py.
 TMP_ENV=$(mktemp)
 trap 'rm -f "$TMP_ENV"' EXIT
 cat > "$TMP_ENV" <<EOF
@@ -72,23 +91,50 @@ FLASK_ENV=production
 PORT=9000
 DATABASE_URL=${DATABASE_URL}
 REDIS_URL=${REDIS_URL}
+
 JWT_SECRET=${JWT_SECRET}
 SECRET_KEY=${SECRET_KEY}
 JWT_ACCESS_EXPIRY_MINUTES=${JWT_ACCESS_EXPIRY_MINUTES:-15}
 SALT_ROUNDS=${SALT_ROUNDS:-10}
+
 FRONTEND_URL=${FRONTEND_URL}
+CORS_ORIGINS=${CORS_ORIGINS:-}
+BACKEND_URL=${BACKEND_URL}
+
+STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+PLATFORM_CURRENCY=${PLATFORM_CURRENCY:-usd}
+PLATFORM_COMMISSION_BPS=${PLATFORM_COMMISSION_BPS:-2000}
+PLATFORM_TICKET_COMMISSION_BPS=${PLATFORM_TICKET_COMMISSION_BPS:-800}
+CONNECT_ACCOUNT_COUNTRY=${CONNECT_ACCOUNT_COUNTRY:-US}
+CONNECT_ONBOARDING_BASE_URL=${CONNECT_ONBOARDING_BASE_URL:-https://studio-3.co/connect}
+
 AWS_REGION=${AWS_REGION}
 AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
 AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
 S3_BUCKET=${S3_BUCKET:-}
 S3_PUBLIC_BASE_URL=${S3_PUBLIC_BASE_URL:-}
+LOCAL_MEDIA_DIR=${LOCAL_MEDIA_DIR:-}
+
 SES_FROM_EMAIL=${SES_FROM_EMAIL:-}
 FIREBASE_SERVICE_ACCOUNT_JSON=${FIREBASE_SERVICE_ACCOUNT_JSON:-}
-STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+
+CELERY_BROKER_URL=${CELERY_BROKER_URL:-}
+CELERY_REDIS_DB=${CELERY_REDIS_DB:-1}
+
+APP_STORE_URL=${APP_STORE_URL:-}
+PLAY_STORE_URL=${PLAY_STORE_URL:-}
+IOS_TEAM_ID=${IOS_TEAM_ID:-}
+IOS_BUNDLE_ID=${IOS_BUNDLE_ID:-com.studio3.discover}
+ANDROID_PACKAGE=${ANDROID_PACKAGE:-com.studio3.discover}
+ANDROID_CERT_FINGERPRINTS=${ANDROID_CERT_FINGERPRINTS:-}
+
+SENTRY_DSN=${SENTRY_DSN:-}
 EOF
 
 scp -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new \
   "$TMP_ENV" "${EC2_USER}@${EC2_HOST}:${APP_DIR}/.env.production"
+"${SSH[@]}" "chmod 600 ${APP_DIR}/.env.production"
 
 # Persist generated secrets back into config.env so they stay stable across deploys
 upsert_config() {
@@ -106,29 +152,48 @@ upsert_config() {
 upsert_config JWT_SECRET "$JWT_SECRET"
 upsert_config SECRET_KEY "$SECRET_KEY"
 
-echo "==> Install deps + systemd + restart"
-"${SSH[@]}" bash -s <<REMOTE
+echo "==> Install deps + systemd units + restart api, worker, beat"
+"${SSH[@]}" bash -s <<'REMOTE'
 set -euo pipefail
-cd ${APP_DIR}
+APP_DIR=/opt/studio3
+cd "$APP_DIR"
 mkdir -p logs
 if [[ ! -d .venv ]]; then
   command -v python3.12 >/dev/null && PY=python3.12 || PY=python3
-  \$PY -m venv .venv
+  $PY -m venv .venv
 fi
 source .venv/bin/activate
 pip install -q -r requirements.txt
 
-sudo cp deploy/systemd/studio3-api.service /etc/systemd/system/studio3-api.service
+for unit in studio3-api studio3-worker studio3-beat; do
+  sudo cp "deploy/systemd/${unit}.service" "/etc/systemd/system/${unit}.service"
+done
 sudo systemctl daemon-reload
-sudo systemctl enable studio3-api
+
+# API first: its ExecStartPre runs `alembic upgrade head`, and the job processes must not
+# start against a schema the migration has not reached yet.
+sudo systemctl enable --now studio3-api
 sudo systemctl restart studio3-api
-sleep 2
-sudo systemctl --no-pager --full status studio3-api || true
+sudo systemctl enable --now studio3-worker
+sudo systemctl restart studio3-worker
+sudo systemctl enable --now studio3-beat
+sudo systemctl restart studio3-beat
+
+sleep 3
+for unit in studio3-api studio3-worker studio3-beat; do
+  printf '\n--- %s: %s ---\n' "$unit" "$(systemctl is-active "$unit")"
+  sudo journalctl -u "$unit" -n 8 --no-pager || true
+done
 REMOTE
 
 echo
 echo "Deployed. Health check:"
 echo "  curl -sS http://${EC2_HOST}/"
+echo "  curl -sS http://${EC2_HOST}/health     # dependencies, not just liveness"
 if [[ -n "${DOMAIN:-}" ]]; then
   echo "  After DNS + SSL: https://${DOMAIN}/"
+  echo
+  echo "Stripe: point both the platform and the Connect endpoint at"
+  echo "  https://${DOMAIN}/api/payments/webhook"
+  echo "and put both signing secrets, comma-separated, in STRIPE_WEBHOOK_SECRET."
 fi

@@ -1,0 +1,23 @@
+[Unit]
+Description=Studiothree Celery beat (schedule ticker)
+After=network.target
+Wants=studio3-worker.service
+
+[Service]
+Type=simple
+User=ec2-user
+Group=ec2-user
+WorkingDirectory=/opt/studio3
+Environment=FLASK_ENV=production
+EnvironmentFile=/opt/studio3/.env.production
+# Exactly one of these may run. Two beats means every schedule fires twice, and
+# these schedules capture card holds — a double fire is a double charge attempt.
+ExecStart=/opt/studio3/.venv/bin/celery -A src.jobs.celery_app.celery_app beat \
+  --loglevel=info \
+  --schedule /opt/studio3/logs/celerybeat-schedule \
+  --logfile /opt/studio3/logs/celery-beat.log
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

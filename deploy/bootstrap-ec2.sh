@@ -19,7 +19,7 @@ echo "==> Installing system packages (Amazon Linux 2023)"
 sudo dnf update -y
 sudo dnf install -y git nginx gcc openssl-devel libffi-devel
 
-# Prefer Python 3.12 (matches runtime.txt); fall back to 3.11
+# Prefer Python 3.12 (matches .python-version); fall back to 3.11
 PY=""
 if sudo dnf install -y python3.12 python3.12-pip python3.12-devel 2>/dev/null; then
   PY=python3.12
@@ -41,8 +41,8 @@ if ! command -v certbot >/dev/null 2>&1; then
 fi
 
 echo "==> App directory ${APP_DIR}"
-sudo mkdir -p "$APP_DIR"
-sudo chown "${APP_USER}:${APP_USER}" "$APP_DIR"
+sudo mkdir -p "$APP_DIR/logs"
+sudo chown -R "${APP_USER}:${APP_USER}" "$APP_DIR"
 
 if [[ ! -d "${APP_DIR}/.venv" ]]; then
   "$PY" -m venv "${APP_DIR}/.venv"
@@ -81,4 +81,17 @@ fi
 sudo systemctl enable nginx
 sudo systemctl restart nginx
 
+# 2 GB of RAM with gunicorn + a Celery worker + beat all resident leaves little headroom,
+# and pip building gevent/cryptography from source is the peak. A swapfile turns an OOM
+# kill during deploy into a slow deploy.
+if [[ ! -f /swapfile ]]; then
+  echo "==> Adding 2G swapfile"
+  sudo dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+  sudo chmod 600 /swapfile
+  sudo mkswap /swapfile >/dev/null
+  sudo swapon /swapfile
+  grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab >/dev/null
+fi
+
 echo "==> Done ($PY). Next: run deploy/deploy.sh from your laptop, then setup-ssl.sh on EC2."
+echo "    deploy.sh installs three units: studio3-api, studio3-worker, studio3-beat."
