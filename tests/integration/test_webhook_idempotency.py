@@ -154,6 +154,8 @@ def test_refund_of_a_completed_order_is_accepted(db, client, stripe_stub):
     db.commit()
     money.book_order_paid(db, order, stripe_fee_cents=0)
     charge = stripe_stub.add_charge("ch_test_1", fee_cents=0, amount_cents=order.total_cents)
+    # Stripe states how much came back; a full refund is what this test is about.
+    charge = {**charge, "amount_refunded": order.total_cents}
 
     response = post_webhook(client, make_event("charge.refunded", charge))
 
@@ -217,3 +219,117 @@ def test_nothing_is_recorded_when_the_signature_fails(db, client, stripe_stub):
     assert db.execute(
         select(func.count()).select_from(StripeWebhookEvent.__table__)
     ).scalar_one() == 0
+
+
+# --- refunds that arrive from outside the app ------------------------------------------------
+
+def _paid_order(db, *, artwork_cents, charge_id, prepaid_cents=0, fee_cents=0):
+    """A paid order with its ledger booked, as the webhook would have left it."""
+    from src.modules.payments import money
+    from tests.factories import make_order, make_piece, make_user
+
+    seller, buyer = make_user(db, seller=True), make_user(db)
+    piece = make_piece(db, seller, price_cents=artwork_cents, status="sold")
+    order = make_order(
+        db, buyer=buyer, seller=seller, piece=piece,
+        artwork_cents=artwork_cents, shipping_cents=0, tax_cents=0,
+        status="paid", stripe_charge_id=charge_id,
+    )
+    if prepaid_cents:
+        order.prepaid_cents = prepaid_cents
+        db.commit()
+    money.book_order_paid(db, order, stripe_fee_cents=fee_cents)
+    return order
+
+
+def test_a_partial_refund_is_recorded_not_booked(db, client, stripe_stub):
+    """book_refund_issued reverses the WHOLE order. Booking it against a partial refund puts
+    a hole in the ledger the size of the difference — and nothing errors, so the books just
+    stop matching the money until reconciliation notices days later."""
+    from src.shared.models.audit import AuditEvent
+    from src.shared.models.ledger import LedgerTransaction
+    from src.shared.models.order import Order
+    from tests.stripe_fixtures import make_event, post_webhook
+
+    order = _paid_order(db, artwork_cents=500_00, charge_id="ch_partial")
+    before = db.query(LedgerTransaction).count()
+
+    response = post_webhook(client, make_event("charge.refunded", {
+        "id": "ch_partial", "amount": 500_00, "amount_refunded": 50_00,
+    }))
+
+    assert response.status_code == 200
+    db.expire_all()
+    assert db.query(LedgerTransaction).count() == before, "a partial refund was booked in full"
+    assert db.get(Order, order.id).status == "paid", "order marked refunded on a partial refund"
+    flagged = db.query(AuditEvent).filter_by(action="refund_needs_review").one()
+    assert flagged.detail["refundedCents"] == 50_00
+    assert flagged.detail["orderTotalCents"] == 500_00
+
+
+def test_refunding_one_charge_of_an_auction_order_is_not_a_full_refund(db, client, stripe_stub):
+    """An auction win is paid in two charges — the hammer price at close and the balance at
+    checkout. Refunding the balance charge in full still leaves the hammer price taken."""
+    from src.shared.models.audit import AuditEvent
+    from src.shared.models.ledger import LedgerTransaction
+    from src.shared.models.order import Order
+    from tests.stripe_fixtures import make_event, post_webhook
+
+    # $500 hammer price already captured; $46.25 balance charged at checkout.
+    order = _paid_order(
+        db, artwork_cents=500_00, charge_id="ch_balance", prepaid_cents=500_00
+    )
+    before = db.query(LedgerTransaction).count()
+
+    response = post_webhook(client, make_event("charge.refunded", {
+        # The balance charge, refunded in full — but only part of the order.
+        "id": "ch_balance", "amount": 46_25, "amount_refunded": 46_25,
+    }))
+
+    assert response.status_code == 200
+    db.expire_all()
+    assert db.query(LedgerTransaction).count() == before
+    assert db.get(Order, order.id).status == "paid"
+    flagged = db.query(AuditEvent).filter_by(action="refund_needs_review").one()
+    assert flagged.detail["prepaidCents"] == 500_00
+
+
+def test_a_genuine_full_refund_from_the_dashboard_is_still_booked(db, client, stripe_stub):
+    """The case this handler exists for must keep working."""
+    from src.shared.models.audit import AuditEvent
+    from src.shared.models.order import Order
+    from tests.helpers import assert_ledger_balanced
+    from tests.stripe_fixtures import make_event, post_webhook
+
+    order = _paid_order(db, artwork_cents=300_00, charge_id="ch_full")
+    stripe_stub.add_charge("ch_full", fee_cents=0, amount_cents=300_00)
+
+    response = post_webhook(client, make_event("charge.refunded", {
+        "id": "ch_full", "amount": 300_00, "amount_refunded": 300_00,
+    }))
+
+    assert response.status_code == 200
+    db.expire_all()
+    assert db.get(Order, order.id).status == "refunded"
+    assert db.query(AuditEvent).filter_by(action="refund_needs_review").count() == 0
+    assert_ledger_balanced(db)
+
+
+def test_the_confirmation_of_our_own_refund_is_still_a_no_op(db, client, stripe_stub):
+    """Our admin refund books the reversal itself, so the webhook that follows must not
+    book a second one."""
+    from src.shared.models.ledger import LedgerTransaction
+    from src.shared.models.order import Order
+    from tests.stripe_fixtures import make_event, post_webhook
+
+    order = _paid_order(db, artwork_cents=200_00, charge_id="ch_already")
+    db.get(Order, order.id).status = "refunded"
+    db.commit()
+    before = db.query(LedgerTransaction).count()
+
+    post_webhook(client, make_event("charge.refunded", {
+        "id": "ch_already", "amount": 200_00, "amount_refunded": 200_00,
+    }))
+
+    db.expire_all()
+    assert db.query(LedgerTransaction).count() == before

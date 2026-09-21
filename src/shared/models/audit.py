@@ -47,6 +47,10 @@ AUDIT_ADMIN_LOGIN = "admin_login"
 # than only logged because drift is often investigated days later, and Render's logs are gone
 # by then.
 AUDIT_LEDGER_DRIFT = "ledger_drift_detected"
+# A refund arrived from outside the app that does not cover the whole order — a partial one,
+# or one charge of an auction's two. Recorded rather than booked: apportioning it across
+# commission, shipping and tax is a product decision nobody has made.
+AUDIT_REFUND_NEEDS_REVIEW = "refund_needs_review"
 
 # Ordered for the filter dropdown: the ones an operator looks for first.
 AUDIT_ACTIONS = (
@@ -62,6 +66,7 @@ AUDIT_ACTIONS = (
     AUDIT_SHIPMENT_UPDATED,
     AUDIT_ADMIN_LOGIN,
     AUDIT_LEDGER_DRIFT,
+    AUDIT_REFUND_NEEDS_REVIEW,
 )
 
 # Who or what did it. An operator is a person; the system is a scheduled job acting on its

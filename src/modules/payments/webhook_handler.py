@@ -299,23 +299,94 @@ def _on_payment_failed(db: Session, intent) -> None:
 
 
 def _on_charge_refunded(db: Session, charge) -> None:
-    """Stripe confirming a refund. The admin resolve path books the ledger reversal when it
-    initiates the refund, so this is normally a confirmation no-op — but it also covers a
-    refund issued directly from the Stripe dashboard, which nothing else would catch."""
-    order = db.execute(
+    """Stripe confirming a refund.
+
+    Normally a no-op: our own admin refund books the ledger reversal and marks the order
+    before Stripe ever calls back. What this really covers is a refund issued **by hand in
+    the Stripe dashboard**, which nothing else would catch.
+
+    And that is why it has to be careful. `book_refund_issued` reverses the *whole* order —
+    the artist's share, the commission and the tax. Booking it against anything less than a
+    complete refund puts a hole in the ledger the size of the difference, which nothing
+    errors on: the books simply stop matching the money until the nightly reconciliation
+    notices days later.
+
+    Two ways a refund can be less than complete, and both used to slip through:
+
+    * **A partial refund.** Stripe sends `charge.refunded` for these too — its own
+      documentation says so on the event picker.
+    * **One charge of an auction order.** An auction win is paid in two charges: the hammer
+      price captured at close, and the balance at checkout. Refunding the balance charge in
+      full is still only part of the order.
+
+    Anything short of the full order total is therefore recorded for a human rather than
+    guessed at. Apportioning a partial refund across commission, shipping and tax is a
+    product decision nobody has made, and inventing one here would be worse than leaving it
+    on the ops queue.
+    """
+    row = db.execute(
         Order.__table__.select().where(Order.stripe_charge_id == charge["id"])
     ).first()
-    if not order:
+    if not row:
         logger.warning("charge.refunded for unknown charge %s.", charge["id"])
         return
-    order = orders_dao.get_order_for_update(db, order.id)
+    order = orders_dao.get_order_for_update(db, row.id)
     if order.status == "refunded":
+        # Our own refund path already booked it. This is the confirmation.
         return
+
+    refunded_cents = int(charge.get("amount_refunded") or 0)
+    # What this charge was for: the whole order, or only the balance left after an auction
+    # captured the hammer price at close.
+    prepaid = order.prepaid_cents or 0
+    covers_whole_order = prepaid == 0 and refunded_cents >= order.total_cents
+
+    if not covers_whole_order:
+        _flag_incomplete_refund(db, order, charge, refunded_cents, prepaid)
+        return
+
     orders_dao.transition_order(db, order, "refunded", commit=False)
     orders_dao.release_pieces(db, order, commit=False)
     money.book_refund_issued(db, order, stripe_fee_cents=_stripe_fee_for_charge(charge), commit=False)
     db.commit()
     logger.info("Order %s refunded (via Stripe).", order.id)
+
+
+def _flag_incomplete_refund(db: Session, order, charge, refunded_cents: int, prepaid: int) -> None:
+    """A refund that does not cover the whole order. Recorded, never booked.
+
+    The order is deliberately left alone: its status, its piece and its ledger all still
+    describe a sale that mostly happened, which is the truth until somebody decides what the
+    partial refund means.
+    """
+    from src.modules.admin import audit_service
+    from src.shared.models.audit import AUDIT_REFUND_NEEDS_REVIEW
+
+    reason = (
+        "an auction order is paid in two charges, so refunding one is only part of it"
+        if prepaid
+        else "the refund is less than the order total"
+    )
+    logger.error(
+        "Partial refund on order %s (%d of %d cents refunded) — NOT booked: %s",
+        order.id, refunded_cents, order.total_cents, reason,
+    )
+    audit_service.system(
+        db,
+        AUDIT_REFUND_NEEDS_REVIEW,
+        subject_type="order",
+        subject_id=order.id,
+        detail={
+            "refundedCents": refunded_cents,
+            "orderTotalCents": order.total_cents,
+            "prepaidCents": prepaid,
+            "chargeId": charge.get("id"),
+        },
+        note=(
+            f"Refunded outside the app and {reason}. The ledger has NOT been adjusted — "
+            "decide how it should be apportioned before booking anything."
+        ),
+    )
 
 
 # --- chargebacks -----------------------------------------------------------------------

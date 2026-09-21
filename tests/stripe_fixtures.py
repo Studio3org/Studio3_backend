@@ -138,6 +138,9 @@ class StripeStub:
         charge = {
             "id": charge_id,
             "amount": amount_cents,
+            # Real charges always carry this. Leaving it out let a test assert a full refund
+            # against a payload that did not actually say one had happened.
+            "amount_refunded": 0,
             "balance_transaction": bt if expand_balance_transaction else bt_id,
         }
         self.charges[charge_id] = charge
