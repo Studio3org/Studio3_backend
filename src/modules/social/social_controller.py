@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from src.shared.config.database import SessionLocal
-from src.shared.models.social import Follow, Like, Comment, Save, Collection, CollectionItem
+from src.shared.models.social import Follow, Like, Comment, Save
 from src.shared.models.user import User
 from src.shared.models.piece import Piece
 from src.shared.models.post import Post

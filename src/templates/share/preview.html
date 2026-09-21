@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{ title }}</title>
+  <meta name="description" content="{{ description }}">
+  <link rel="canonical" href="{{ canonical_url }}">
+
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="{{ title }}">
+  <meta property="og:description" content="{{ description }}">
+  <meta property="og:url" content="{{ canonical_url }}">
+  {% if image_url %}<meta property="og:image" content="{{ image_url }}">{% endif %}
+
+  <meta name="twitter:card" content="{{ 'summary_large_image' if image_url else 'summary' }}">
+  <meta name="twitter:title" content="{{ title }}">
+  <meta name="twitter:description" content="{{ description }}">
+  {% if image_url %}<meta name="twitter:image" content="{{ image_url }}">{% endif %}
+
+  <!-- Crawlers stop here and read the tags above; a real browser (JS-capable) continues on. -->
+  <meta http-equiv="refresh" content="0;url={{ canonical_url }}">
+</head>
+<body>
+  <p>Redirecting to <a href="{{ canonical_url }}">Studio 3</a>&hellip;</p>
+</body>
+</html>

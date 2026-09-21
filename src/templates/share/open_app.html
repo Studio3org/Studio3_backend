@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f5f2ee; color: #231f1b;
+           font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    .wrap { max-width: 480px; margin: 0 auto; padding: 40px 24px; text-align: center; }
+    .cover { width: 100%; max-width: 260px; border-radius: 12px; margin-bottom: 20px;
+              object-fit: cover; aspect-ratio: 4 / 5; background: #e8e5df; }
+    h1 { font-size: 18px; font-weight: 600; margin: 0 0 6px; }
+    .desc { color: #8c8880; font-size: 14px; margin: 0 0 28px; }
+    #banner { display: none; }
+    #banner.show { display: block; }
+    .banner-copy { font-size: 14px; margin-bottom: 16px; }
+    .store-row { display: flex; gap: 12px; justify-content: center; margin-bottom: 20px; flex-wrap: wrap; }
+    .store-row img { height: 44px; }
+    .continue-link { color: #6baed6; font-size: 13px; text-decoration: none; }
+    .spinner { width: 20px; height: 20px; border-radius: 50%; margin: 0 auto 20px;
+               border: 2px solid #e8e5df; border-top-color: #352f2a;
+               animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    {% if image_url %}<img class="cover" src="{{ image_url }}" alt="">{% endif %}
+    <h1>{{ title }}</h1>
+    <p class="desc">{{ description }}</p>
+
+    <div id="opening">
+      <div class="spinner"></div>
+      <p class="desc">Opening in Studio 3&hellip;</p>
+    </div>
+
+    <div id="banner">
+      <p class="banner-copy">Get the Studio 3 app to see this</p>
+      <div class="store-row">
+        <a href="{{ app_store_url }}">
+          <img src="https://tools.applemediaservices.com/api/badges/download-on-the-app-store/black/en-us"
+               alt="Download on the App Store">
+        </a>
+        <a href="{{ play_store_url }}">
+          <img src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png"
+               alt="Get it on Google Play">
+        </a>
+      </div>
+      <a class="continue-link" href="{{ canonical_url }}">Continue in browser &rarr;</a>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var deepLink = {{ deep_link | tojson }};
+      var opened = false;
+      var mark = function () { opened = true; };
+      document.addEventListener('visibilitychange', function () {
+        if (document.hidden) mark();
+      });
+      window.addEventListener('pagehide', mark);
+      window.addEventListener('blur', mark);
+
+      // Custom URL scheme — works without any domain/App-Links verification, so this is
+      // the one thing here that can actually open the app before that's set up. If nothing
+      // claims the scheme, the browser just stays put (at worst a brief silent no-op).
+      window.location.replace(deepLink);
+
+      setTimeout(function () {
+        if (opened) return;
+        document.getElementById('opening').style.display = 'none';
+        document.getElementById('banner').className = 'show';
+      }, 1200);
+    })();
+  </script>
+</body>
+</html>

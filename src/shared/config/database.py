@@ -42,6 +42,9 @@ def get_engine() -> Engine:
             pool_recycle=300,
             pool_size=10,
             max_overflow=20,
+            # Without this a hung Postgres blocks until the OS TCP timeout (~2 min), which
+            # would make the /health readiness probe hang rather than report degraded.
+            connect_args={"connect_timeout": 5},
         )
     return _engine
 

@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, String, Boolean, Text, Float
+from sqlalchemy import Column, DateTime, String, Boolean, Text, Float, Integer
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 
@@ -29,12 +29,35 @@ class User(Base):
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
     email_verified = Column(Boolean, default=False, nullable=False)
+    # "Primary interest" categorization (artist|collector|enthusiast) shown in onboarding —
+    # NOT an authorization role. Admin access is is_admin below; never gate on this.
     role = Column(String(32), nullable=True)
     seller_enabled = Column(Boolean, default=False, nullable=False)
+    is_admin = Column(Boolean, default=False, nullable=False)
+    # Stripe Connect (Express) — set once the artist starts onboarding. payouts_enabled is
+    # mirrored from the account.updated webhook, not trusted from a client.
+    stripe_account_id = Column(String(255), nullable=True)
+    stripe_payouts_enabled = Column(Boolean, default=False, nullable=False)
+    # The Stripe customer this user's saved cards belong to. Required for bidding: a hold is
+    # re-authorised off-session weeks later with nobody present, and a payment method has to
+    # belong to a customer to be reusable at all. Added by migration 031 but missed here, so
+    # ensure_customer raised AttributeError on the first real bid — invisible until now only
+    # because the hold tests run in dev mode, which skips Stripe entirely.
+    stripe_customer_id = Column(String(255), nullable=True, unique=True)
+    # Reduced commission for a specific artist, in basis points. Null = the standard
+    # platform rate; set only for the client's named lower-rate tier.
+    commission_bps_override = Column(Integer, nullable=True)
     onboarding_complete = Column(Boolean, default=False, nullable=False)
     taste_preferences = Column(JSONB, nullable=True)  # {mediums, styles, themes}
     last_username_change_at = Column(DateTime(timezone=True), nullable=True)
     pronouns = Column(String(50), nullable=True)
+    website = Column(String(500), nullable=True)
+    instagram = Column(String(100), nullable=True)
+    twitter = Column(String(100), nullable=True)
+    # Free-text "primary discipline" shown on the profile (e.g. "Digital Art") — UI-suggested
+    # presets, not an enforced enum, same convention as pronouns above.
+    category = Column(String(50), nullable=True)
+    tags = Column(JSONB, nullable=True)  # list[str], up to 8 — discipline/style keywords
     # "Magnum opus" banner: a manually-pinned piece/post, or an auto-selection rule
     # computed at read time (no cron exists to materialize this — see user_serializers.py).
     banner_target_type = Column(String(16), nullable=True)  # piece|post

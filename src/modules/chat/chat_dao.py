@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import select, or_, and_, tuple_
+from sqlalchemy import select, or_, tuple_
 from sqlalchemy.orm import Session
 
 from src.shared.models.block import Block

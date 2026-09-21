@@ -1,0 +1,48 @@
+# Tooling config only. This project is not pip-installable and declares no build backend
+# on purpose — Render's build is `pip install -r requirements.txt`, which never reads this
+# file. Adding a [build-system] table here would change that.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# `-q` keeps CI output readable; `--strict-markers` turns a typo'd marker into an error
+# rather than a silently skipped test.
+addopts = "-q --strict-markers"
+markers = [
+    "slow: tests that spawn real threads to exercise row locking",
+]
+# Tests are stored with no __init__.py, so pytest prepends the rootdir to sys.path and
+# `import src.app` resolves the same way it does under run.py.
+filterwarnings = [
+    "error::DeprecationWarning:src.*",
+]
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["src/templates/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = [".venv", "alembic/versions", "graphify-out", "logs"]
+
+[tool.ruff.lint]
+# Deliberately narrow. This codebase predates any linter, and the full default set flags
+# ~490 findings that are almost entirely style and modernization (line length, Optional[X]
+# vs X | None, import ordering). Auto-rewriting 100+ files would bury every real change in
+# review noise for no correctness gain.
+#
+# So: start with the rules that catch actual mistakes — pyflakes (undefined names, unused
+# imports and variables) and syntax errors. Widening this to E/W/I/UP is a worthwhile
+# separate pass, done on its own commit so the diff is reviewable as formatting.
+select = ["F", "E9"]
+
+[tool.ruff.lint.per-file-ignores]
+# Imported for the side effect of registering models on Base.metadata.
+"tests/conftest.py" = ["F401"]

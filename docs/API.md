@@ -605,6 +605,298 @@ Validates the piece is for-sale and `status == "live"` (else `409`), the caller 
 
 ---
 
+## Auctions & bidding
+
+A piece is **either** fixed-price **or** an auction, never both. `listingType` says which, and
+`POST /api/pieces/:id/collect` returns `409` on an auction piece — auctions are bought by
+winning them, not by buying them outright.
+
+### The money model, because it drives every field below
+
+Bidding authorises money rather than taking it. Each bid places a **hold** on the bidder's
+card for the **bid amount only** — shipping and tax come later. Every bidder keeps their hold
+until the auction closes: being outbid by someone else does *not* release your money, because
+you are still in line if the higher bid falls through. The only thing that moves your hold
+mid-auction is raising your own bid.
+
+When the auction closes, the winner's hold is **captured**. That means by the time the winner
+reaches checkout the hammer price is already paid, and checkout collects only the remainder.
+Clients must use `balanceDueCents`, never `totalCents`, when showing what is left to pay.
+
+### Bid summary
+
+Returned by the piece detail endpoint and by every endpoint below. Fields:
+
+| Field | Meaning |
+|-------|---------|
+| `auctionId`, `auctionStatus` | `draft`, `live`, `closing`, `awaiting_payment`, `awaiting_winner`, `closed_sold`, `closed_reserve_not_met`, `closed_no_bids`, `needs_seller_action`, `cancelled` |
+| `startingBidCents` | The artist's stated minimum. The **first bid may land exactly on this number.** |
+| `highestBidCents` | `null` until someone bids. Never conflated with the starting bid. |
+| `minNextBidCents` | What to prefill. Equals `startingBidCents` with no bids, else highest + increment. |
+| `bidIncrementCents` | The band for the current high bid — `0` when there are no bids. Never hardcode this client-side. |
+| `bidCount` | Active bids only. |
+| `opensAt`, `auctionEndsAt` | ISO 8601. An event auction's window comes from the event. |
+| `hasReserve`, `reserveMet` | Met/not-met only. **The reserve amount is never returned.** |
+| `deliveryMode` | `ship` or `pickup` (event auctions). |
+| `isHighestBidder` | Viewer-relative. |
+| `isWinner` | Viewer-relative, post-close. Read from the stored winner, not from the bid ordering. |
+| `awaitingPayment` | `true` only for the winner whose card was declined — drives the "add another card" prompt. Never shown to other bidders. |
+| `winnerDeadlineAt` | When a declined winner loses the piece to the next bidder. `null` once settled. |
+| `winningBidCents` | The hammer price, post-close. |
+
+Increment bands: under $100 → $5 · $100–499 → $10 · $500–1,999 → $25 · $2,000–9,999 → $100 ·
+$10,000+ → $500.
+
+### Saved cards (required before the first bid)
+
+A bid authorises money the moment it is placed, and the same card is **re-authorised weeks
+later with nobody present**. There is no point in that sequence at which a card could be
+collected, so it is vaulted at Stripe up front and referenced by id. Card data never reaches
+this server.
+
+| Method | URL | Notes |
+|--------|-----|-------|
+| POST | `/api/payments/setup-intent` | `201` with `clientSecret`, `customerId`, `ephemeralKeySecret`. Hand all three to Stripe's PaymentSheet — without the ephemeral key the sheet cannot show the customer's existing cards. |
+| GET | `/api/payments/payment-methods` | `{ "paymentMethods": [{ "id", "brand", "last4", "expMonth", "expYear" }] }`. Empty (not an error) for someone who has never bid. |
+| DELETE | `/api/payments/payment-methods/:id` | Ownership is checked against the caller's own Stripe customer; someone else's card answers `404`. |
+
+The Stripe customer is created once and stored on the user, so a card saved last week is
+still listed this week.
+
+### Placing a bid
+
+**POST** `/api/pieces/:id/bids` — Bearer + onboarding. Body:
+`{ "amountCents", "paymentMethodId" }`.
+
+`paymentMethodId` is required on a bidder's first bid on a piece and optional afterwards —
+raising your own bid reuses the card already committed to that auction. Errors: `400` (bidding
+on your own piece, no payment method, not an auction), `402` (the card refused the
+authorisation — the bid is not placed), `409` (auction not open, bidding closed, or below
+`minNextBidCents`). Returns `201` with the bid plus the full bid summary.
+
+A bid placed in the final five minutes of a **standalone** auction pushes the close out by
+five minutes, repeatedly, so nobody wins by sniping. An **event** auction never extends: it
+stops dead 30 minutes before the event ends so the piece can change hands before the room
+empties.
+
+### Winning and checking out
+
+On close the winner's hold is captured and every other bidder is released. The piece moves to
+`auction_won` and the auction to `awaiting_winner`.
+
+**POST** `/api/pieces/:id/auction-checkout` — Bearer + onboarding. Body:
+`{ "addressId", "shippingMethod" }`. Same shape as `collect`, with two additions in the
+response:
+
+```json
+{ "data": { "...": "...", "totalCents": 54625, "prepaidCents": 50000, "balanceDueCents": 4625 } }
+```
+
+`prepaidCents` is the hammer price already captured. `balanceDueCents` is shipping + tax, and
+is what `POST /api/orders/:id/create-payment-intent` will raise its intent for. Errors: `403`
+(not the winner), `409` (auction not ended, already claimed, or the winner's payment has not
+gone through yet).
+
+### When the winner's card fails
+
+The auction goes to `awaiting_payment` rather than being voided. **Both** the winner and the
+seller are notified immediately. The winner has until `winnerDeadlineAt` to fix it — **48
+hours** for a standalone auction, **10 minutes** for an event one, because at an event there
+is a person in the room with another card in their hand. Every runner-up keeps their hold for
+exactly this window; that is what makes the fallback possible.
+
+**POST** `/api/pieces/:id/auction/retry-payment` — Bearer. Body: `{ "paymentMethodId" }`.
+Winner only (`403` otherwise). `409` if there is no payment waiting to be fixed, `402` if the
+new card is declined too (the window continues). On success the sale settles exactly as a
+clean close would.
+
+If the window runs out the piece passes to the next-highest bidder, who gets their own window.
+After a bounded number of attempts the auction is parked as `needs_seller_action` and every
+hold is released — nothing is charged to anyone.
+
+### Seller actions
+
+| Method | URL | Body | Notes |
+|--------|-----|------|-------|
+| POST | `/api/pieces/:id/auction/extend` | `{ "extraDays": 1-3 }` | Once per auction, and only more than 3 days before it closes, so extending cannot be used to control exactly when an auction ends. Never shortens. Not available on event auctions. Bids and holds survive. |
+| POST | `/api/pieces/:id/auction/cancel` | — | Withdraws a live auction. Every bid is voided, every hold released, every bidder notified. The piece is delisted. |
+| POST | `/api/pieces/:id/auction/relist` | `{ "durationDays", "startingBidCents"?, "reserveCents"? }` | Only from `needs_seller_action` (reserve not met, or nobody could pay). Creates a **new** auction row; the old one stays as the record of what happened. Omitted fields inherit the previous auction's terms. |
+
+All three are owner-only and answer `404` — not `403` — for a piece you do not own.
+
+An auction that ends without a sale is never auto-relisted or auto-converted to a fixed price:
+it waits for the seller to decide.
+
+
+## Events
+
+An event is a gathering: when, where, who is on the bill, and which work is shown there.
+
+**Entry is free and open.** Attending is never gated — browse and detail work signed out, and
+`isFree` is always `true` today. Registering exists to let someone transact, not to let them
+in. Paid ticketing is deferred, so there are no ticket or price fields at all.
+
+### Draft, then publish
+
+Creating an event makes a **draft**: private to its host, invisible to every listing, and
+listing nothing. `POST /publish` is what puts it out *and* turns its bill into real listings.
+That split is the point — a host builds and rearranges a bill without work going on sale
+under them.
+
+| Method | URL | Notes |
+|--------|-----|-------|
+| POST | `/api/events` | `{ title, startsAt, endsAt, description?, coverMediaUrl?, category?, timezone?, venueName?, address?, latitude?, longitude? }` → `201`, status `draft`. Times are ISO 8601 UTC; `timezone` is the IANA zone the event happens in, kept so its time reads the same to everyone. |
+| PATCH | `/api/events/:id` | Same fields. `409` on a published event's dates — its auctions already take their window from them and have bids against them. |
+| PUT | `/api/events/:id/people` | `{ cohostUsernames?, artistUsernames? }`. A role that is sent is replaced wholesale (that is how you remove somebody); a role left out is untouched. The host is never added as their own cohost. |
+| POST | `/api/events/:id/publish` | Publishes and lists the bill. Idempotent. Returns `fixedListings` / `auctionListings` counts. `409` if the event has already ended. |
+| POST | `/api/events/:id/cancel` | `{ reason? }`. Takes down every listing the event created and cancels any auction properly — holds released, bidders told. Returns `cancelledAuctions` / `delisted`. |
+
+Host-only endpoints answer **`404`, not `403`**, for someone else's event: whether a given id
+is a real draft is not a stranger's to probe for.
+
+### The bill
+
+`mode` is how a piece appears at *this* event, and the three modes are not equivalent:
+
+| Mode | What it does |
+|------|--------------|
+| `featured` | Shown only. **Nothing** about the piece's own listing changes. |
+| `sale` | Sold at a fixed price at the event. |
+| `bid` | Auctioned in the room, on the event's clock. |
+
+**`sale` and `bid` end whatever listing the piece already had.** A running auction is
+cancelled — every bidder's hold released, every bidder notified that the seller withdrew it.
+That is irreversible, so ask first:
+
+**GET** `/api/events/:id/pieces/:pieceId/tagging-preview` →
+`{ endsAuction, endsFixedListing, activeBidCount, ownedByViewer }`. Use the real numbers in
+the confirmation ("this ends the auction and refunds 4 bidders").
+
+| Method | URL | Notes |
+|--------|-----|-------|
+| POST | `/api/events/:id/pieces` | `{ pieceId, mode, priceCents?, deliveryMode?, sortOrder? }`. `priceCents` required and ≥ $1 for `sale`/`bid`. `deliveryMode` defaults to `pickup` — at an event the work changes hands in the room. |
+| DELETE | `/api/events/:id/pieces/:pieceId` | Removes it from the bill. Deliberately does **not** restore the listing it replaced: those bidders were already refunded and told it was over. |
+
+**Who may do what.** The host runs the bill and may add anyone's work as `featured`. Only the
+**piece's owner** may choose `sale` or `bid` — selling someone else's work, and cancelling
+their auction to do it, is not a host's decision to make (`403`). An artist on the bill may
+add their own work.
+
+Adding a piece with a sale already in flight (`reserved`/`sold`/`auction_won`) answers `409`.
+
+### Event auctions
+
+Publishing a `bid` entry creates an auction whose window is the **event's**:
+
+* opens at `startsAt` — bidding opens when the doors do, not when the host hits publish;
+* closes at `endsAt` **minus 30 minutes**;
+* **no soft close** — it stops dead so the work can be handed over before the room empties.
+
+An event too short for that window (under ~30 minutes) is refused at publish with `400`,
+because bidding would close before it opened.
+
+Everything else about bidding is unchanged — see [Auctions & bidding](#auctions--bidding).
+
+### RSVPs
+
+An RSVP is **not a ticket**. Entry is free and open, so it admits nobody and charges nothing
+— what it buys is that the host knows how many to expect, and that there is somebody to tell
+when the event is called off. Never word it as a purchase.
+
+| Method | URL | Notes |
+|--------|-----|-------|
+| POST | `/api/events/:id/rsvp` | `{ going: true\|false }` → `{ going, rsvpCount, spotsLeft, isFull }`. Idempotent both ways. `409` when a capped event is full, `400` for the host's own event, `404` for a draft. |
+| GET | `/api/events/:id/attendees` | **Host-only** (`404` otherwise) — an attendee list is not public. |
+
+Every event payload carries `rsvpCount`, `capacity`, `spotsLeft`, `isFull` and the
+viewer-relative `viewerIsGoing`.
+
+**`spotsLeft` is null, not zero, when the event is uncapped.** The two mean different things:
+an uncapped event has no number to show, a full one has exactly zero.
+
+**Capacity** is optional and null by default. Setting it caps RSVPs; the check runs under a
+row lock, so two people racing for the last place serialise rather than both being told yes.
+It cannot be lowered below the number already coming (`409`) — those people said yes in good
+faith and there is no mechanism for choosing which to turn away. The waitlist that turns
+"full" into a queue is deferred.
+
+Cancelling an RSVP flips the row to `cancelled` rather than deleting it, so "pulled out" and
+"never replied" stay distinguishable. Cancelled RSVPs are never counted and never notified.
+
+**Cancelling an event notifies everyone who was coming** (`attendeesNotified` in the
+response), alongside taking down the bill.
+
+### QR codes and the room
+
+**GET** `/api/events/:id/qr-codes` — host-only. Returns `eventUrl` plus one entry per work on
+the bill with `{ pieceId, title, mode, priceCents, mediaUrl, url }`.
+
+The `url` is what the code encodes: **a link, not a token**. Scanning it navigates — it
+admits nobody and proves nothing. That is deliberate, and it is what lets a visitor
+photograph a code, send it to someone across the room, and have that work too.
+
+Built server-side so the code printed on the wall and the link the app resolves cannot become
+two different opinions about what a share URL looks like.
+
+### App association
+
+The backend serves both files, at the **site root** (not under `/share` — the platforms fetch
+a fixed path):
+
+| URL | For |
+|-----|-----|
+| `/.well-known/apple-app-site-association` | iOS Universal Links |
+| `/.well-known/assetlinks.json` | Android App Links |
+
+Contents come from `IOS_TEAM_ID`, `IOS_BUNDLE_ID`, `ANDROID_PACKAGE` and
+`ANDROID_CERT_FINGERPRINTS`. **Unset means the file associates nothing** rather than shipping
+a placeholder — a file containing `REPLACE_WITH_TEAM_ID` looks configured and fails in a way
+that costs an afternoon.
+
+`ANDROID_CERT_FINGERPRINTS` is comma-separated and should list *every* signing key whose
+builds must verify: release, the debug key that internally-shared APKs use, and Google's
+re-signing key once the app is on Play. One key means links verify for some of your builds
+and silently not others.
+
+Both must be served over HTTPS with **no redirect** — both platforms treat a redirect as a
+failure, and it is the usual reason association quietly does not work.
+
+The `studio3://` custom scheme needs none of this and works regardless, which is what the QR
+flow falls back to before a domain is pointed anywhere.
+
+### Live lineup state
+
+A `bid` entry in an event's `lineup` carries an `auction` object — the same shape as
+[Bid summary](#bid-summary), including `highestBidCents`, `bidCount`, `auctionEndsAt` and the
+viewer-relative `isHighestBidder` / `isWinner`.
+
+It is there because the screen people look at in a room is the *event*, not each piece in
+turn. Without it a lineup could only show the starting price, which stops being true the
+moment somebody bids.
+
+Every auction at an event shares the event's clock, so one countdown describes them all.
+
+### Browsing
+
+| Method | URL | Notes |
+|--------|-----|-------|
+| GET | `/api/events/browse` | The whole tab in one call: `today`, `following`, `upcoming`, `categories`. |
+| GET | `/api/events?scope=` | `upcoming` (default, accepts `category`, `limit`, `offset`), `today`, `following`, `saved`. The last two need a signed-in viewer (`401`). |
+| GET | `/api/events/:id` | Detail: adds `description`, `cohosts`, `artists`, `lineup`, `saveCount`, `isHost`. A draft answers `404` to anyone but its host. |
+| POST | `/api/events/:id/save` | `{ saved: true|false }` → `{ saved, saveCount }`. |
+
+"Upcoming" is keyed on **`endsAt`**, not `startsAt`: an event that began an hour ago and runs
+until midnight is still happening, and dropping it the moment it started would lose exactly
+the events someone browsing right now is most likely to want.
+
+The `following` scope includes events a followed artist is **billed on**, not just ones they
+host — an artist showing at someone else's gallery is usually the reason to care. Only
+accepted follows count.
+
+Categories: `workshop` · `gallery_walk` · `exhibition` · `talks_panels` ·
+`demos_performances` · `studio_visit` · `popup` · `market` · `auction` · `other`.
+
+
 ## Quick reference
 
 | Method | URL | Auth | Body |

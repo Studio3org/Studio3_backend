@@ -1,0 +1,55 @@
+{% extends "admin/layout.html" %}
+{% block title %}Orders{% endblock %}
+{% block nav_orders %}active{% endblock %}
+{% block content %}
+<h1>Orders</h1>
+
+<div class="panel filters">
+  <a href="{{ url_for('admin.orders_list') }}"
+     class="{{ 'active' if not active_status else '' }}">All ({{ total if not active_status else counts.values()|sum }})</a>
+  {% for status in statuses %}
+    {% if counts.get(status) %}
+      <a href="{{ url_for('admin.orders_list', status=status) }}"
+         class="{{ 'active' if active_status == status else '' }}">
+        {{ status.replace('_', ' ') }} ({{ counts.get(status) }})
+      </a>
+    {% endif %}
+  {% endfor %}
+</div>
+
+<div class="panel table-scroll">
+  <table>
+    <thead>
+      <tr>
+        <th>Order</th><th>Status</th><th>Total</th><th>Buyer</th><th>Seller</th><th>Placed</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for order in orders %}
+      <tr>
+        <td class="mono"><a href="{{ url_for('admin.order_detail', order_id=order.id) }}">{{ order.id.hex[:8] }}</a></td>
+        <td><span class="pill {{ order.status }}">{{ order.status.replace('_', ' ') }}</span></td>
+        <td>${{ '%.2f'|format(order.total_cents / 100) }}</td>
+        <td class="mono muted">{{ order.buyer_id.hex[:8] }}</td>
+        <td class="mono muted">{{ order.seller_id.hex[:8] }}</td>
+        <td class="muted">{{ order.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="muted">No orders{{ ' in this status' if active_status else '' }}.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if total > per_page %}
+<div class="panel">
+  {% if page > 1 %}
+    <a href="{{ url_for('admin.orders_list', status=active_status, page=page - 1) }}">← Previous</a>
+  {% endif %}
+  <span class="muted">Page {{ page }} of {{ (total // per_page) + (1 if total % per_page else 0) }}</span>
+  {% if page * per_page < total %}
+    <a href="{{ url_for('admin.orders_list', status=active_status, page=page + 1) }}">Next →</a>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

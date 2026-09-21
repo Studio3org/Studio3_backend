@@ -1,0 +1,49 @@
+{% extends "admin/layout.html" %}
+{% block title %}Events{% endblock %}
+{% block nav_events %}active{% endblock %}
+
+{% block content %}
+<h1>Events</h1>
+<div class="panel">
+  <p class="muted" style="margin:0 0 12px">
+    Published and past events. Drafts are the host's private working copy and are not shown.
+  </p>
+  {% if rows %}
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>Event</th><th>Host</th><th>When</th>
+          <th>Status</th><th>Selling</th><th>Going</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td>
+            {{ row.event.title }}
+            {% if row.event.venue_name %}
+            <div class="muted" style="font-size:12px">{{ row.event.venue_name }}</div>
+            {% endif %}
+          </td>
+          <td class="muted">@{{ row.host.username }}</td>
+          <td class="mono">{{ row.event.starts_at.strftime('%d %b %Y %H:%M UTC') }}</td>
+          <td>
+            <span class="pill {{ 'failed' if row.event.status == 'cancelled' else '' }}">
+              {{ row.event.status }}
+            </span>
+          </td>
+          {# Works actually for sale or under auction, not the whole bill: a featured piece
+             carries no money and is not ops' concern. #}
+          <td>{{ row.sellingCount }}</td>
+          <td>{{ row.goingCount }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">No events yet.</p>
+  {% endif %}
+</div>
+{% endblock %}

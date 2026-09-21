@@ -4,7 +4,8 @@ This guide walks you through setting up and running the Studiothree Discover bac
 
 ## Prerequisites
 
-- **Python 3.12** recommended for production (see `runtime.txt`); **3.9+** for local
+- **Python 3.12** for production, pinned in `.python-version` (the file Render reads);
+  **3.9+** for local
 - **PostgreSQL** – running and accessible
 - **Redis** – running and accessible (sessions, OTP, and Socket.IO pub/sub)
 - (Optional) **AWS SES + credentials** – for OTP and password-reset emails
@@ -55,7 +56,7 @@ Optional for full features:
 - **SES** – `SES_FROM_EMAIL` (verified SES sender) plus AWS credentials used by boto3 for OTP/reset email
 - **S3** – `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `S3_BUCKET`, `S3_PUBLIC_BASE_URL` (all required together for real uploads)
 - **Firebase** – `FIREBASE_SERVICE_ACCOUNT_JSON` or `FIREBASE_SERVICE_ACCOUNT_PATH` for push
-- **CORS / Socket.IO** – `FRONTEND_URL` (allowed browser origin; credentials enabled)
+- **CORS / Socket.IO** – `FRONTEND_URL` (primary origin, local web app `http://localhost:5173`) plus optional `CORS_ORIGINS` (comma-separated extra origins; credentials enabled). Development also allows `:5173`, `:5713`, and `:3000`.
 - **Stripe** – leave `STRIPE_SECRET_KEY` unset until payment capture is implemented (confirm auto-pays in that mode)
 
 ## 5. Database
@@ -120,7 +121,7 @@ Set `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, and `SECRET_KEY` in `.env.product
 | `Redis connection failed` | Redis is running; `REDIS_URL` is correct. |
 | `ModuleNotFoundError: src` | Run commands from the **project root** (where `run.py` and `src/` are). |
 | OTP / reset emails not sent | `SES_FROM_EMAIL` set; AWS credentials valid for SES; no errors in `logs/error.log`. |
-| Socket.IO / chat realtime broken | Redis up; prod started with `gunicorn -k gevent -w 1`; `FRONTEND_URL` matches the web client origin. |
-| `do not call blocking functions from the mainloop` | Do not use eventlet; use gevent + Python 3.12 (see `runtime.txt`). |
+| Socket.IO / chat realtime broken | Redis up; prod started with `gunicorn -k gevent -w 1`; `FRONTEND_URL` / `CORS_ORIGINS` include the web client origin. |
+| `do not call blocking functions from the mainloop` | Do not use eventlet; use gevent + Python 3.12 (see `.python-version`). |
 
 Logs are written under the `logs/` directory (e.g. `error.log`, `combined.log`).

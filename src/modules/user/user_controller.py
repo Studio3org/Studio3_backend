@@ -1,7 +1,7 @@
 """User profile, onboarding, seller, username change."""
 import uuid
 
-from flask import request, g, redirect, url_for
+from flask import request, g
 
 from src.shared.config.database import SessionLocal
 from src.shared.constants import ALLOWED_ROLES
@@ -11,7 +11,7 @@ from src.shared.username.constants import RATE_USERNAME_CHANGE_PER_USER
 from src.shared.utils.app_error import AppError
 from src.shared.utils.rate_limit import rate_limit_user
 from src.modules.auth.auth_dao import find_user_by_username_or_history
-from src.modules.user.user_dao import get_user_by_id, update_user_fields, delist_user_pieces
+from src.modules.user.user_dao import get_user_by_id, update_user_fields
 from src.modules.user.user_serializers import user_to_dict
 from src.modules.pieces.pieces_dao import list_user_pieces, get_piece
 from src.modules.social import social_dao
@@ -70,6 +70,31 @@ def patch_me():
             fields["phone"] = (body.get("phone") or "").strip() or None
         if "pronouns" in body:
             fields["pronouns"] = body.get("pronouns")
+        if "website" in body:
+            website = (body.get("website") or "").strip() or None
+            if website and len(website) > 500:
+                raise AppError("Website must be 500 characters or fewer.", 400)
+            fields["website"] = website
+        if "instagram" in body:
+            instagram = (body.get("instagram") or "").strip().lstrip("@") or None
+            if instagram and len(instagram) > 100:
+                raise AppError("Instagram handle must be 100 characters or fewer.", 400)
+            fields["instagram"] = instagram
+        if "twitter" in body:
+            twitter = (body.get("twitter") or "").strip().lstrip("@") or None
+            if twitter and len(twitter) > 100:
+                raise AppError("Twitter/X handle must be 100 characters or fewer.", 400)
+            fields["twitter"] = twitter
+        if "category" in body:
+            category = (body.get("category") or "").strip() or None
+            if category and len(category) > 50:
+                raise AppError("Category must be 50 characters or fewer.", 400)
+            fields["category"] = category
+        if "tags" in body:
+            tags = body.get("tags") or []
+            if not isinstance(tags, list) or len(tags) > 8 or any(not isinstance(t, str) for t in tags):
+                raise AppError("tags must be a list of at most 8 strings.", 400)
+            fields["tags"] = [t.strip().lstrip("#") for t in tags if t.strip()]
         if "mediums" in body:
             taste = dict(user.taste_preferences or {})
             taste["mediums"] = body.get("mediums") or []
@@ -288,11 +313,16 @@ def seller_disable():
                 400,
             )
         user = update_user_fields(db, user, seller_enabled=False)
-        # Defensive no-op by this point: the checks above guarantee no active listings
-        # remain, so this has nothing left to delist. Kept as a safety net, not the
-        # primary enforcement (that's the pre-check above).
-        delist_user_pieces(db, user.id)
-        return {"sellerEnabled": False}, 200
+        # Not the defensive no-op it was once assumed to be: the pre-check above only looks
+        # at in-progress *orders*, so a live auction with bids reaches here. It has to be
+        # cancelled properly — holds released, bidders told — not silently delisted.
+        from src.modules.bids.auction_cancellation import REASON_SELLER_DEACTIVATED
+        from src.modules.pieces import listing_service
+
+        result = listing_service.delist_all_for_seller(
+            db, user.id, reason=REASON_SELLER_DEACTIVATED
+        )
+        return {"sellerEnabled": False, **result}, 200
     finally:
         db.close()
 
@@ -302,6 +332,54 @@ def seller_status():
     try:
         user = get_user_by_id(db, uuid.UUID(g.user["id"]))
         return {"sellerEnabled": user.seller_enabled, "location": user.location}, 200
+    finally:
+        db.close()
+
+
+def commission_quote():
+    """What the seller keeps on a hypothetical sale, at their own rate.
+
+    The app cannot work this out itself: the rate is per-seller (the reduced tier is a
+    property of the artist, not the listing) and inclusive of processing fees, so any
+    client-side arithmetic would drift from what checkout actually books. One server answer,
+    used for the "you'll receive" line on the listing form.
+    """
+    from flask import request
+
+    from src.shared.config import commission as commission_policy
+
+    raw_price = request.args.get("priceCents")
+    try:
+        price_cents = int(raw_price)
+    except (TypeError, ValueError):
+        raise AppError("priceCents is required and must be a whole number of cents.", 400) from None
+    if price_cents < 0:
+        raise AppError("priceCents cannot be negative.", 400)
+
+    sale_kind = (request.args.get("saleKind") or commission_policy.SALE_ART).strip().lower()
+    if sale_kind not in commission_policy.SALE_KINDS:
+        raise AppError(
+            f"saleKind must be one of: {', '.join(commission_policy.SALE_KINDS)}.", 400
+        )
+
+    db = SessionLocal()
+    try:
+        user = get_user_by_id(db, uuid.UUID(g.user["id"]))
+        bps = commission_policy.resolve_bps(user, sale_kind)
+        commission = commission_policy.commission_cents(price_cents, bps)
+        return {
+            "priceCents": price_cents,
+            "saleKind": sale_kind,
+            "commissionBps": bps,
+            "commissionCents": commission,
+            # What the seller actually receives. Commission comes out of the price, never on
+            # top of it, so this is always less than priceCents.
+            "netCents": price_cents - commission,
+            # False means this sale is too small for the commission to cover processing.
+            # Surfaced so a host pricing a cheap ticket finds out now, not at reconciliation.
+            "coversProcessingFee": commission_policy.covers_stripe_fee(price_cents, bps),
+            "breakEvenCents": commission_policy.break_even_cents(bps),
+        }, 200
     finally:
         db.close()
 

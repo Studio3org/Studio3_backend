@@ -1,0 +1,75 @@
+{% extends "admin/layout.html" %}
+{% block title %}Disputes{% endblock %}
+{% block nav_disputes %}active{% endblock %}
+{% block content %}
+<h1>Needs attention</h1>
+
+<div class="panel filters">
+  <a href="{{ url_for('admin.disputes_queue', status='open') }}"
+     class="{{ 'active' if active_status == 'open' else '' }}">Open ({{ open_count }})</a>
+  <a href="{{ url_for('admin.disputes_queue', status='resolved_refund') }}"
+     class="{{ 'active' if active_status == 'resolved_refund' else '' }}">Refunded</a>
+  <a href="{{ url_for('admin.disputes_queue', status='resolved_release') }}"
+     class="{{ 'active' if active_status == 'resolved_release' else '' }}">Released</a>
+  <a href="{{ url_for('admin.disputes_queue') }}?status="
+     class="{{ 'active' if not active_status else '' }}">All</a>
+</div>
+
+<div class="panel table-scroll">
+  <h2 style="font-size:15px;margin-top:0;">Disputes</h2>
+  <table>
+    <thead>
+      <tr><th>Order</th><th>Opened</th><th>Amount held</th><th>Reason</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td class="mono">
+          <a href="{{ url_for('admin.order_detail', order_id=row.order.id) }}">{{ row.order.id.hex[:8] }}</a>
+        </td>
+        <td class="muted">{{ row.dispute.created_at.strftime('%Y-%m-%d') }}</td>
+        <td>${{ '%.2f'|format(row.order.total_cents / 100) }}</td>
+        <td>{{ row.dispute.reason[:120] }}{% if row.dispute.reason|length > 120 %}…{% endif %}</td>
+        <td><span class="pill {{ 'disputed' if row.dispute.status == 'open' else 'completed' }}">
+          {{ row.dispute.status.replace('_', ' ') }}</span></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">Nothing here — no disputes in this state.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="panel table-scroll">
+  <h2 style="font-size:15px;margin-top:0;">
+    Failed payouts ({{ failed_count }})
+  </h2>
+  <p class="muted" style="margin-top:0;">
+    A failed payout means an artist is unpaid on a delivered order. These need clearing.
+  </p>
+  <table>
+    <thead><tr><th>Order</th><th>Artist</th><th>Reason</th><th></th></tr></thead>
+    <tbody>
+      {% for row in failed_payouts %}
+      <tr>
+        <td class="mono">
+          <a href="{{ url_for('admin.order_detail', order_id=row.order.id) }}">{{ row.order.id.hex[:8] }}</a>
+        </td>
+        <td>{{ row.seller.name }} <span class="muted">{{ row.seller.email }}</span></td>
+        <td style="color:var(--danger);">{{ row.payout.failure_reason or 'Unknown' }}</td>
+        <td>
+          {% if row.order.status == 'completed' %}
+          <form method="post" action="{{ url_for('admin.retry_payout', order_id=row.order.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit">Retry</button>
+          </form>
+          {% else %}<span class="muted">order {{ row.order.status }}</span>{% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" class="muted">No failed payouts.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

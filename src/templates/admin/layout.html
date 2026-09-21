@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Admin{% endblock %} · Studiothree Ops</title>
+  <style>
+    :root {
+      --bg: #f6f6f4; --panel: #fff; --ink: #1a1a18; --muted: #6b6b66;
+      --line: #e2e2dd; --accent: #2f5d50; --warn: #a8471f; --danger: #9b2226;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink);
+           font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    header { background: var(--panel); border-bottom: 1px solid var(--line);
+             padding: 12px 20px; display: flex; align-items: center; gap: 20px; }
+    header .brand { font-weight: 600; letter-spacing: -0.01em; }
+    header nav a { color: var(--muted); text-decoration: none; margin-right: 16px; }
+    header nav a:hover, header nav a.active { color: var(--accent); }
+    header .spacer { flex: 1; }
+    header form { margin: 0; }
+    main { padding: 24px 20px; max-width: 1200px; margin: 0 auto; }
+    h1 { font-size: 20px; margin: 0 0 16px; }
+    .panel { background: var(--panel); border: 1px solid var(--line);
+             border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line);
+             vertical-align: top; }
+    th { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+    .table-scroll { overflow-x: auto; }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 999px;
+            font-size: 12px; background: #eceae4; }
+    .pill.paid, .pill.completed { background: #dff0e6; color: #1c5738; }
+    .pill.disputed, .pill.failed { background: #fbe3dc; color: var(--danger); }
+    .pill.awaiting_confirmation, .pill.shipped { background: #fdf1d6; color: var(--warn); }
+    .muted { color: var(--muted); }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+    a { color: var(--accent); }
+    button { font: inherit; padding: 6px 12px; border: 1px solid var(--line);
+             background: var(--panel); border-radius: 6px; cursor: pointer; }
+    button:hover { border-color: var(--accent); }
+    .filters a { display: inline-block; margin-right: 10px; padding: 4px 10px;
+                 border-radius: 6px; text-decoration: none; }
+    .filters a.active { background: var(--accent); color: #fff; }
+  </style>
+</head>
+<body>
+  {% if admin %}
+  <header>
+    <span class="brand">Studiothree Ops</span>
+    <nav>
+      <a href="{{ url_for('admin.orders_list') }}"
+         class="{% block nav_orders %}{% endblock %}">Orders</a>
+      <a href="{{ url_for('admin.disputes_queue') }}"
+         class="{% block nav_disputes %}{% endblock %}">Needs attention</a>
+      <a href="{{ url_for('admin.auctions_queue') }}"
+         class="{% block nav_auctions %}{% endblock %}">Auctions</a>
+      <a href="{{ url_for('admin.events_queue') }}"
+         class="{% block nav_events %}{% endblock %}">Events</a>
+      <a href="{{ url_for('admin.reports_queue') }}"
+         class="{% block nav_reports %}{% endblock %}">Reports</a>
+      <a href="{{ url_for('admin.audit_log') }}"
+         class="{% block nav_audit %}{% endblock %}">Audit</a>
+    </nav>
+    <span class="spacer"></span>
+    <span class="muted">{{ admin.email }}</span>
+    <form method="post" action="{{ url_for('admin.logout') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit">Sign out</button>
+    </form>
+  </header>
+  {% endif %}
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

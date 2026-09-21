@@ -1,0 +1,93 @@
+{% extends "admin/layout.html" %}
+{% block title %}Auctions{% endblock %}
+{% block nav_auctions %}active{% endblock %}
+
+{% block content %}
+<h1>Auctions</h1>
+
+{# Work to do, first. An auction in awaiting_payment has a clock running: when it expires
+   the piece passes to the next bidder, so this is the one list where looking sooner
+   changes the outcome. #}
+<div class="panel">
+  <h2 style="font-size:15px;margin:0 0 4px">Needs attention ({{ attention_count }})</h2>
+  <p class="muted" style="margin:0 0 12px">
+    A winner whose card was declined has until their deadline before the piece passes to the
+    next bidder. An auction that ended without a sale is waiting on its seller.
+  </p>
+  {% if attention %}
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>Piece</th><th>Seller</th><th>State</th>
+          <th>Deadline</th><th>Cascades</th><th>Closed</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in attention %}
+        <tr>
+          <td>{{ row.piece.title or 'Untitled' }}</td>
+          <td class="muted">@{{ row.seller.username }}</td>
+          <td>
+            <span class="pill {{ 'failed' if row.auction.status == 'awaiting_payment' else '' }}">
+              {{ row.auction.status.replace('_', ' ') }}
+            </span>
+          </td>
+          <td class="mono">
+            {{ row.auction.winner_deadline_at.strftime('%d %b %H:%M UTC')
+               if row.auction.winner_deadline_at else '—' }}
+          </td>
+          {# How many bidders have already been passed over. A number above zero means this
+             one has failed more than once. #}
+          <td>{{ row.auction.cascade_depth }}</td>
+          <td class="mono muted">
+            {{ row.auction.closed_at.strftime('%d %b %H:%M') if row.auction.closed_at else '—' }}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">Nothing stuck.</p>
+  {% endif %}
+</div>
+
+{# Watched during an event rather than worked through. The question it answers is "is
+   anything about to close with money on it". #}
+<div class="panel">
+  <h2 style="font-size:15px;margin:0 0 12px">Running now ({{ live|length }})</h2>
+  {% if live %}
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>Piece</th><th>Seller</th><th>Bids</th>
+          <th>High bid</th><th>Closes</th><th>Kind</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in live %}
+        <tr>
+          <td>{{ row.piece.title or 'Untitled' }}</td>
+          <td class="muted">@{{ row.seller.username }}</td>
+          <td>{{ row.bidCount }}</td>
+          <td class="mono">
+            {{ '$%.2f'|format(row.highBidCents / 100) if row.highBidCents else '—' }}
+          </td>
+          <td class="mono">
+            {{ row.auction.closes_at.strftime('%d %b %H:%M UTC') if row.auction.closes_at else '—' }}
+          </td>
+          {# An event auction stops dead at its close; a standalone one extends on a late
+             bid. Which it is changes what "closes" means. #}
+          <td class="muted">{{ 'Event' if row.auction.event_id else 'Standalone' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">No auctions running.</p>
+  {% endif %}
+</div>
+{% endblock %}

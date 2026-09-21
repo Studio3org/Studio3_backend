@@ -1,0 +1,461 @@
+{
+  "demoPassword": "Studio3Demo!25",
+  "emailDomain": "studio3demo.app",
+  "accounts": [
+    {
+      "username": "mayawhitfield",
+      "name": "Maya Whitfield",
+      "location": "Brooklyn, NY",
+      "bio": "Oil painter based in Brooklyn. Portraits and quiet still lifes, built up in thin glazes.",
+      "avatarUrl": "https://picsum.photos/seed/maya-avatar/300/300",
+      "materials": [
+        "Oil paint",
+        "Linen canvas",
+        "Cold-pressed varnish"
+      ],
+      "styleTags": [
+        "Portraiture",
+        "Realism",
+        "Fine Art"
+      ],
+      "medium": "oil",
+      "series": {
+        "name": "Quiet Interiors",
+        "pieces": [
+          {
+            "key": "maya-p1",
+            "title": "Morning Light, Studio Window",
+            "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/2/27/Oil_on_Canvas_Portrait_of_Dred_Scott_%28cropped%29.jpg/1280px-Oil_on_Canvas_Portrait_of_Dred_Scott_%28cropped%29.jpg",
+            "mediaAspectRatio": "3:4",
+            "caption": "Oil on linen, 24x30in. Painted over three sessions chasing the light at 7am.",
+            "isForSale": true,
+            "priceCents": 185000
+          },
+          {
+            "key": "maya-p2",
+            "title": "Still Life with Blue Bowl",
+            "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/2/20/Emile_Bernard_Still_Life_with_Oranges_and_a_Fan_1895_Oil_on_canvas_60.6_x_83.8_cm.jpg/1280px-Emile_Bernard_Still_Life_with_Oranges_and_a_Fan_1895_Oil_on_canvas_60.6_x_83.8_cm.jpg",
+            "mediaAspectRatio": "16:9",
+            "caption": "Oil on linen, 16x20in.",
+            "isForSale": true,
+            "priceCents": 95000
+          }
+        ]
+      },
+      "standalonePieces": [
+        {
+          "key": "maya-p3",
+          "title": "Self Portrait, Late Autumn",
+          "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ee/Still-life_two_1970_oil_painting_by_Alvar_Andersson_1916_2003_Askim_Sweden.jpg/1280px-Still-life_two_1970_oil_painting_by_Alvar_Andersson_1916_2003_Askim_Sweden.jpg",
+          "mediaAspectRatio": "3:4",
+          "caption": "Oil on canvas, 20x24in. Not for sale — personal favorite.",
+          "isForSale": false
+        }
+      ],
+      "scenes": [
+        {
+          "mediaType": "image",
+          "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3f/Jacques-Enguerrand_Gourgue%2C_still_life%2C_oil_on_masonite_with_frame%2C_1960.jpg/1280px-Jacques-Enguerrand_Gourgue%2C_still_life%2C_oil_on_masonite_with_frame%2C_1960.jpg",
+          "mediaAspectRatio": "16:9",
+          "caption": "Mixing today's palette before the light changes.",
+          "linkedPieceKey": null
+        },
+        {
+          "mediaType": "image",
+          "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2d/19th-century_oval_portrait_miniature_of_woman_oil_painting_by_Valentine_Manchon_Duchesne_-_with_scale.jpg/1280px-19th-century_oval_portrait_miniature_of_woman_oil_painting_by_Valentine_Manchon_Duchesne_-_with_scale.jpg",
+          "mediaAspectRatio": "3:4",
+          "caption": "Detail pass on the blue bowl piece.",
+          "linkedPieceKey": "maya-p2"
+        },
+        {
+          "mediaType": "video",
+          "mediaUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+          "thumbnailUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/2/27/Oil_on_Canvas_Portrait_of_Dred_Scott_%28cropped%29.jpg/1280px-Oil_on_Canvas_Portrait_of_Dred_Scott_%28cropped%29.jpg",
+          "mediaAspectRatio": "16:9",
+          "caption": "Time-lapse: block-in to finished portrait.",
+          "linkedPieceKey": "maya-p1"
+        }
+      ]
+    },
+    {
+      "username": "jonahcole",
+      "name": "Jonah Cole",
+      "location": "Austin, TX",
+      "bio": "Wheel-thrown stoneware, fired in a small gas kiln outside Austin. Function first, always.",
+      "avatarUrl": "https://picsum.photos/seed/jonah-avatar/300/300",
+      "materials": [
+        "Stoneware clay",
+        "Ash glaze",
+        "Cone 10 firing"
+      ],
+      "styleTags": [
+        "Ceramics",
+        "Functional Art",
+        "Minimalism"
+      ],
+      "medium": "mixed_media",
+      "series": {
+        "name": "Kiln Batch No. 12",
+        "pieces": [
+          {
+            "key": "jonah-p1",
+            "title": "Speckled Stoneware Pitcher",
+            "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/b/be/Footed_bowl_with_applied_crabs%2C_by_Miyagawa_Kozan_I%2C_dated_1881%2C_ceramic%2C_brown_glaze_-_Tokyo_National_Museum_-_Tokyo%2C_Japan_-_DSC09317.jpg/1280px-Footed_bowl_with_applied_crabs%2C_by_Miyagawa_Kozan_I%2C_dated_1881%2C_ceramic%2C_brown_glaze_-_Tokyo_National_Museum_-_Tokyo%2C_Japan_-_DSC09317.jpg",
+            "mediaAspectRatio": "16:9",
+            "caption": "Wheel-thrown, ash glaze, holds a full quart.",
+            "isForSale": true,
+            "priceCents": 12000
+          },
+          {
+            "key": "jonah-p2",
+            "title": "Nesting Bowl Set, Three Pieces",
+            "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Octagonal_bowl_with_dragon_and_phoenix_designs%2C_China%2C_20th_century%2C_glazed_ceramic%2C_Doris_Duke_Foundation.jpg/1280px-Octagonal_bowl_with_dragon_and_phoenix_designs%2C_China%2C_20th_century%2C_glazed_ceramic%2C_Doris_Duke_Foundation.jpg",
+            "mediaAspectRatio": "3:4",
+            "caption": "Set of three nesting bowls, cone 10 stoneware.",
+            "isForSale": true,
+            "priceCents": 18000
+          }
+        ]
+      },
+      "standalonePieces": [
+        {
+          "key": "jonah-p3",
+          "title": "Wood-Fired Vase, Ash Drip",
+          "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/70/Bowl%2C_Jian_ware%2C_China%2C_Southern_Song_dynasty%2C_1100s-1200s_AD%2C_ceramic%2C_black_glaze_with_hare%27s_fur_marks_-_Tokyo_National_Museum_-_Tokyo%2C_Japan_-_DSC08425.jpg/1280px-Bowl%2C_Jian_ware%2C_China%2C_Southern_Song_dynasty%2C_1100s-1200s_AD%2C_ceramic%2C_black_glaze_with_hare%27s_fur_marks_-_Tokyo_National_Museum_-_Tokyo%2C_Japan_-_DSC08425.jpg",
+          "mediaAspectRatio": "16:9",
+          "caption": "Anagama wood-fired, natural ash drip glaze.",
+          "isForSale": true,
+          "priceCents": 22000
+        }
+      ],
+      "scenes": [
+        {
+          "mediaType": "image",
+          "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2d/Fragment_of_a_Post_Medieval%2C_17th_century%2C_tin_glazed_ceramic_bowl_from_Montelupo%2C_AD.1600-1700._%28FindID_777961%29.jpg/1280px-Fragment_of_a_Post_Medieval%2C_17th_century%2C_tin_glazed_ceramic_bowl_from_Montelupo%2C_AD.1600-1700._%28FindID_777961%29.jpg",
+          "mediaAspectRatio": "3:4",
+          "caption": "Wedging clay before this morning's batch.",
+          "linkedPieceKey": null
+        },
+        {
+          "mediaType": "image",
+          "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Persian_Ceramic_Bowl_with_Turquoise_Glaze.jpg/1280px-Persian_Ceramic_Bowl_with_Turquoise_Glaze.jpg",
+          "mediaAspectRatio": "16:9",
+          "caption": "Loading the kiln for the nesting bowl set.",
+          "linkedPieceKey": "jonah-p2"
+        },
+        {
+          "mediaType": "video",
+          "mediaUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+          "thumbnailUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/b/be/Footed_bowl_with_applied_crabs%2C_by_Miyagawa_Kozan_I%2C_dated_1881%2C_ceramic%2C_brown_glaze_-_Tokyo_National_Museum_-_Tokyo%2C_Japan_-_DSC09317.jpg/1280px-Footed_bowl_with_applied_crabs%2C_by_Miyagawa_Kozan_I%2C_dated_1881%2C_ceramic%2C_brown_glaze_-_Tokyo_National_Museum_-_Tokyo%2C_Japan_-_DSC09317.jpg",
+          "mediaAspectRatio": "16:9",
+          "caption": "Throwing a pitcher from center to lip.",
+          "linkedPieceKey": "jonah-p1"
+        }
+      ]
+    },
+    {
+      "username": "avathompson",
+      "name": "Ava Thompson",
+      "location": "Portland, OR",
+      "bio": "Hand-woven wall hangings and naturally-dyed textiles, working out of a shared studio in Portland.",
+      "avatarUrl": "https://picsum.photos/seed/ava-avatar/300/300",
+      "materials": [
+        "Wool roving",
+        "Cotton warp",
+        "Botanical dye"
+      ],
+      "styleTags": [
+        "Textile Art",
+        "Fiber Art",
+        "Abstract"
+      ],
+      "medium": "mixed_media",
+      "series": {
+        "name": "Dye Garden",
+        "pieces": [
+          {
+            "key": "ava-p1",
+            "title": "Indigo Gradient Wall Hanging",
+            "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0e/Woven_Wall_Hanging_MET_DP230562.jpg/1280px-Woven_Wall_Hanging_MET_DP230562.jpg",
+            "mediaAspectRatio": "3:4",
+            "caption": "Hand-woven wool, indigo vat dyed gradient, 3ft x 4ft.",
+            "isForSale": true,
+            "priceCents": 32000
+          },
+          {
+            "key": "ava-p2",
+            "title": "Madder Root Tapestry",
+            "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/2/24/Woven_Wall_Hanging_MET_wb-x.103.4g.jpeg/1280px-Woven_Wall_Hanging_MET_wb-x.103.4g.jpeg",
+            "mediaAspectRatio": "16:9",
+            "caption": "Naturally dyed with madder root, wool on cotton warp.",
+            "isForSale": true,
+            "priceCents": 28000
+          }
+        ]
+      },
+      "standalonePieces": [
+        {
+          "key": "ava-p3",
+          "title": "Small Loom Sampler, Undyed Wool",
+          "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c6/Woven_Wall_Hanging_MET_wb-x.103.4b.jpeg/1280px-Woven_Wall_Hanging_MET_wb-x.103.4b.jpeg",
+          "mediaAspectRatio": "3:4",
+          "caption": "Study piece, undyed wool on cotton warp.",
+          "isForSale": true,
+          "priceCents": 9000
+        }
+      ],
+      "scenes": [
+        {
+          "mediaType": "image",
+          "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a6/Woven_Wall_Hanging_MET_wb-x.103.4i.jpeg/1280px-Woven_Wall_Hanging_MET_wb-x.103.4i.jpeg",
+          "mediaAspectRatio": "16:9",
+          "caption": "Dye pot simmering on the stove — indigo day.",
+          "linkedPieceKey": null
+        },
+        {
+          "mediaType": "image",
+          "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/TAPESTRY_WEAVE_ON_A_FRAME_LOOM_%283%29.jpg/1280px-TAPESTRY_WEAVE_ON_A_FRAME_LOOM_%283%29.jpg",
+          "mediaAspectRatio": "3:4",
+          "caption": "Warping the loom for the madder tapestry.",
+          "linkedPieceKey": "ava-p2"
+        },
+        {
+          "mediaType": "video",
+          "mediaUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4",
+          "thumbnailUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0e/Woven_Wall_Hanging_MET_DP230562.jpg/1280px-Woven_Wall_Hanging_MET_DP230562.jpg",
+          "mediaAspectRatio": "16:9",
+          "caption": "Weft pass, weaving the indigo gradient.",
+          "linkedPieceKey": "ava-p1"
+        }
+      ]
+    },
+    {
+      "username": "diegoramirez",
+      "name": "Diego Ramirez",
+      "location": "Santa Fe, NM",
+      "bio": "Welded steel and reclaimed wood sculpture, drawing on high-desert landscapes around Santa Fe.",
+      "avatarUrl": "https://picsum.photos/seed/diego-avatar/300/300",
+      "materials": [
+        "Welded steel",
+        "Reclaimed wood",
+        "Patina finish"
+      ],
+      "styleTags": [
+        "Sculpture",
+        "Contemporary",
+        "Industrial"
+      ],
+      "medium": "mixed_media",
+      "series": {
+        "name": "Mesa Forms",
+        "pieces": [
+          {
+            "key": "diego-p1",
+            "title": "Standing Form No. 4",
+            "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/08/Abstract_metal_sculpture_in_Skulpturenpark_Katzow_06.jpg/1280px-Abstract_metal_sculpture_in_Skulpturenpark_Katzow_06.jpg",
+            "mediaAspectRatio": "3:4",
+            "caption": "Welded steel, patina finish, 5ft tall.",
+            "isForSale": true,
+            "priceCents": 275000
+          },
+          {
+            "key": "diego-p2",
+            "title": "Standing Form No. 5",
+            "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fa/Abstract_metal_sculpture_in_Skulpturenpark_Katzow_01.jpg/1280px-Abstract_metal_sculpture_in_Skulpturenpark_Katzow_01.jpg",
+            "mediaAspectRatio": "16:9",
+            "caption": "Welded steel, patina finish, 5.5ft tall.",
+            "isForSale": true,
+            "priceCents": 275000
+          }
+        ]
+      },
+      "standalonePieces": [
+        {
+          "key": "diego-p3",
+          "title": "Reclaimed Beam Bench",
+          "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/3/34/Chrome_steel%2C_abstract_sculpture._Gy%C3%B6rgy_Segesdi_work_in_1982._-_Alkot%C3%A1s_St.%2C_Budapest.JPG/1280px-Chrome_steel%2C_abstract_sculpture._Gy%C3%B6rgy_Segesdi_work_in_1982._-_Alkot%C3%A1s_St.%2C_Budapest.JPG",
+          "mediaAspectRatio": "16:9",
+          "caption": "Reclaimed timber beam, steel legs, functional sculpture.",
+          "isForSale": true,
+          "priceCents": 145000
+        }
+      ],
+      "scenes": [
+        {
+          "mediaType": "image",
+          "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5e/Abstract_metal_sculpture_in_Skulpturenpark_Katzow_11.jpg/1280px-Abstract_metal_sculpture_in_Skulpturenpark_Katzow_11.jpg",
+          "mediaAspectRatio": "3:4",
+          "caption": "Welding sparks on Form No. 4.",
+          "linkedPieceKey": "diego-p1"
+        },
+        {
+          "mediaType": "image",
+          "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c6/Angela_Conner_%27Renaissance%27_water_sculpture%2C_Hatfield_House%2C_Hertfordshire%2C_England_1.jpg/1280px-Angela_Conner_%27Renaissance%27_water_sculpture%2C_Hatfield_House%2C_Hertfordshire%2C_England_1.jpg",
+          "mediaAspectRatio": "16:9",
+          "caption": "Applying patina in the studio yard.",
+          "linkedPieceKey": null
+        },
+        {
+          "mediaType": "video",
+          "mediaUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4",
+          "thumbnailUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fa/Abstract_metal_sculpture_in_Skulpturenpark_Katzow_01.jpg/1280px-Abstract_metal_sculpture_in_Skulpturenpark_Katzow_01.jpg",
+          "mediaAspectRatio": "16:9",
+          "caption": "Grinding welds smooth on Form No. 5.",
+          "linkedPieceKey": "diego-p2"
+        }
+      ]
+    },
+    {
+      "username": "chloebennett",
+      "name": "Chloe Bennett",
+      "location": "Nashville, TN",
+      "bio": "Mixed-media illustrator collaging risograph prints, ink, and paper scraps into pop-leaning pieces.",
+      "avatarUrl": "https://picsum.photos/seed/chloe-avatar/300/300",
+      "materials": [
+        "Ink",
+        "Risograph print",
+        "Paper collage"
+      ],
+      "styleTags": [
+        "Illustration",
+        "Pop Art",
+        "Mixed Media"
+      ],
+      "medium": "ink",
+      "series": {
+        "name": "Paper Trail",
+        "pieces": [
+          {
+            "key": "chloe-p1",
+            "title": "Neon Diner, No. 2",
+            "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/5/58/Ink_and_Marker_Robot_Illustration_20.jpg/1280px-Ink_and_Marker_Robot_Illustration_20.jpg",
+            "mediaAspectRatio": "3:4",
+            "caption": "Riso print and ink collage, edition of 25.",
+            "isForSale": true,
+            "priceCents": 42000
+          },
+          {
+            "key": "chloe-p2",
+            "title": "Neon Diner, No. 3",
+            "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7e/Jean_Goulden_-_Gouache%2C_silver_paint_and_pencil_on_paper_cut_outs_collaged_on_paper.jpg/1280px-Jean_Goulden_-_Gouache%2C_silver_paint_and_pencil_on_paper_cut_outs_collaged_on_paper.jpg",
+            "mediaAspectRatio": "3:4",
+            "caption": "Riso print and ink collage, edition of 25.",
+            "isForSale": true,
+            "priceCents": 42000
+          }
+        ]
+      },
+      "standalonePieces": [
+        {
+          "key": "chloe-p3",
+          "title": "Corner Store, Riso Print",
+          "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5b/FNAC_Paper_Cuts_Large-Scale_Collage_2018.jpg/1280px-FNAC_Paper_Cuts_Large-Scale_Collage_2018.jpg",
+          "mediaAspectRatio": "16:9",
+          "caption": "Single-color riso print, small run.",
+          "isForSale": true,
+          "priceCents": 15000
+        }
+      ],
+      "scenes": [
+        {
+          "mediaType": "image",
+          "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/Ink_and_Marker_Robot_Illustration_24.jpg/1280px-Ink_and_Marker_Robot_Illustration_24.jpg",
+          "mediaAspectRatio": "3:4",
+          "caption": "Cutting paper scraps for this week's collage.",
+          "linkedPieceKey": null
+        },
+        {
+          "mediaType": "image",
+          "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f1/Rm._317%2C_1996%2C_coloured_paper_on_wall%2C_various_dimensions.jpg/1280px-Rm._317%2C_1996%2C_coloured_paper_on_wall%2C_various_dimensions.jpg",
+          "mediaAspectRatio": "16:9",
+          "caption": "Riso press run for Neon Diner No. 3.",
+          "linkedPieceKey": "chloe-p2"
+        },
+        {
+          "mediaType": "video",
+          "mediaUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+          "thumbnailUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/5/58/Ink_and_Marker_Robot_Illustration_20.jpg/1280px-Ink_and_Marker_Robot_Illustration_20.jpg",
+          "mediaAspectRatio": "16:9",
+          "caption": "Layering collage elements for the Diner series.",
+          "linkedPieceKey": "chloe-p1"
+        }
+      ]
+    },
+    {
+      "username": "marcuslee",
+      "name": "Marcus Lee",
+      "location": "Chicago, IL",
+      "bio": "Spray paint and acrylic murals across Chicago's South Side, plus studio canvases in the same voice.",
+      "avatarUrl": "https://picsum.photos/seed/marcus-avatar/300/300",
+      "materials": [
+        "Spray paint",
+        "Acrylic",
+        "Brick wall"
+      ],
+      "styleTags": [
+        "Street Art",
+        "Mural",
+        "Graffiti"
+      ],
+      "medium": "acrylic",
+      "series": {
+        "name": "South Side Blocks",
+        "pieces": [
+          {
+            "key": "marcus-p1",
+            "title": "Block Portrait, 63rd St",
+            "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/b/be/Random_graffiti_art_%28Unsplash%29.jpg/1280px-Random_graffiti_art_%28Unsplash%29.jpg",
+            "mediaAspectRatio": "16:9",
+            "caption": "Spray paint on canvas, studio version of the 63rd St mural.",
+            "isForSale": true,
+            "priceCents": 65000
+          },
+          {
+            "key": "marcus-p2",
+            "title": "Block Portrait, Ashland Ave",
+            "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/9/97/Court_Street%2C_Buffalo%2C_NY_-_52686140998.jpg/1280px-Court_Street%2C_Buffalo%2C_NY_-_52686140998.jpg",
+            "mediaAspectRatio": "3:4",
+            "caption": "Spray paint on canvas, studio version of the Ashland Ave mural.",
+            "isForSale": true,
+            "priceCents": 65000
+          }
+        ]
+      },
+      "standalonePieces": [
+        {
+          "key": "marcus-p3",
+          "title": "Canvas Study for Ashland Mural",
+          "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/5/53/Amsterdam_photo_of_street-art_-_A_remote_and_colorful_wall-painting_in_the_city-center%3B_geotagged_free_urban_picture%2C_in_public_domain_Commons%3B_Dutch_photography%2C_Fons_Heijnsbroek%2C_The_Netherlands_%2825383955203%29.jpg/1280px-thumbnail.jpg",
+          "mediaAspectRatio": "16:9",
+          "caption": "Acrylic study, planning colors before the wall.",
+          "isForSale": true,
+          "priceCents": 28000
+        }
+      ],
+      "scenes": [
+        {
+          "mediaType": "image",
+          "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/87/Niagara_Street%2C_Buffalo%2C_NY.jpg/1280px-Niagara_Street%2C_Buffalo%2C_NY.jpg",
+          "mediaAspectRatio": "3:4",
+          "caption": "Sketching the wall layout before caps come out.",
+          "linkedPieceKey": "marcus-p1"
+        },
+        {
+          "mediaType": "image",
+          "mediaUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Mural_paintings_on_the_wall_of_an_office_building_of_Ratatie_7_and_Dixi_in_Tikkurila%2C_Vantaa%2C_Finland%2C_2021_May.jpg/1280px-Mural_paintings_on_the_wall_of_an_office_building_of_Ratatie_7_and_Dixi_in_Tikkurila%2C_Vantaa%2C_Finland%2C_2021_May.jpg",
+          "mediaAspectRatio": "16:9",
+          "caption": "Capping the mural on a cold morning.",
+          "linkedPieceKey": null
+        },
+        {
+          "mediaType": "video",
+          "mediaUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4",
+          "thumbnailUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/b/be/Random_graffiti_art_%28Unsplash%29.jpg/1280px-Random_graffiti_art_%28Unsplash%29.jpg",
+          "mediaAspectRatio": "16:9",
+          "caption": "Full mural time-lapse, 63rd Street.",
+          "linkedPieceKey": "marcus-p1"
+        }
+      ]
+    }
+  ]
+}

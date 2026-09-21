@@ -18,8 +18,15 @@ from src.modules.posts.posts_dao import post_to_dict
 from src.modules.user.user_dao import get_user_by_id
 from src.modules.social import social_dao
 
+from src.modules.pieces import piece_state
+
 DEFAULT_LIMIT = 20
 MAX_LIMIT = 50
+
+# Live work plus sold/reserved/auction_won so home can show Available vs Collected.
+# Read from piece_state rather than restated here: the two lists drifted, and `auction_won`
+# being absent meant a piece silently vanished from every feed the moment its auction closed.
+_FEED_PIECE_STATUSES = piece_state.PUBLIC_STATUSES
 
 
 def _encode_cursor(created_at, item_id) -> str:
@@ -133,7 +140,9 @@ def following_feed():
         )
         following_ids.append(me.id)
         piece_query = select(Piece).where(
-            Piece.user_id.in_(following_ids), Piece.deleted_at.is_(None), Piece.status == "live"
+            Piece.user_id.in_(following_ids),
+            Piece.deleted_at.is_(None),
+            Piece.status.in_(_FEED_PIECE_STATUSES),
         )
         post_query = select(Post).where(
             Post.user_id.in_(following_ids), Post.deleted_at.is_(None), Post.status == "live"
@@ -148,7 +157,10 @@ def explore_feed():
     viewer_id = uuid.UUID(g.user["id"]) if getattr(g, "user", None) else None
     db = SessionLocal()
     try:
-        piece_query = select(Piece).where(Piece.deleted_at.is_(None), Piece.status == "live")
+        piece_query = select(Piece).where(
+            Piece.deleted_at.is_(None),
+            Piece.status.in_(_FEED_PIECE_STATUSES),
+        )
         post_query = select(Post).where(Post.deleted_at.is_(None), Post.status == "live")
 
         if medium == "video":

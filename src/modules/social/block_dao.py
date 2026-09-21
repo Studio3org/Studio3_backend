@@ -1,6 +1,5 @@
 """Blocked-accounts DAO."""
 import uuid
-from typing import Optional
 
 from sqlalchemy import select, or_, and_, delete
 from sqlalchemy.orm import Session

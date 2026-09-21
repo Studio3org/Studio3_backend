@@ -3,7 +3,7 @@ import uuid
 
 from flask import Blueprint, g
 
-from src.middlewares.auth_middleware import onboarding_required, optional_auth, auth_required
+from src.middlewares.auth_middleware import onboarding_required, optional_auth
 from src.shared.utils.api_response import success_response
 from src.shared.utils.async_handler import async_handler
 from src.modules.pieces import pieces_controller
@@ -73,3 +73,62 @@ def collect(piece_id):
     from src.modules.orders import orders_controller
     data, status = orders_controller.collect(piece_id)
     return _ok("Order created.", data, status)
+
+
+@pieces_bp.post("/<piece_id>/bids")
+@onboarding_required
+@async_handler
+def place_bid(piece_id):
+    from src.modules.bids import bid_controller
+    data, status = bid_controller.place_bid(piece_id)
+    return _ok("Bid placed.", data, status)
+
+
+@pieces_bp.post("/<piece_id>/auction-checkout")
+@onboarding_required
+@async_handler
+def auction_checkout(piece_id):
+    from src.modules.orders import orders_controller
+    data, status = orders_controller.auction_checkout(piece_id)
+    return _ok("Order created.", data, status)
+
+
+# --- auction lifecycle ---------------------------------------------------------------------
+# Under /pieces/<id>/auction rather than a top-level /auctions resource: every client already
+# holds a piece id, and a piece has at most one auction that matters at a time. Routing by
+# auction id would mean every caller first had to ask which auction is the current one.
+
+@pieces_bp.post("/<piece_id>/auction/extend")
+@onboarding_required
+@async_handler
+def extend_auction(piece_id):
+    from src.modules.bids import auction_controller
+    data, status = auction_controller.extend(piece_id)
+    return _ok("Auction extended.", data, status)
+
+
+@pieces_bp.post("/<piece_id>/auction/cancel")
+@onboarding_required
+@async_handler
+def cancel_auction(piece_id):
+    from src.modules.bids import auction_controller
+    data, status = auction_controller.cancel(piece_id)
+    return _ok("Auction cancelled.", data, status)
+
+
+@pieces_bp.post("/<piece_id>/auction/relist")
+@onboarding_required
+@async_handler
+def relist_auction(piece_id):
+    from src.modules.bids import auction_controller
+    data, status = auction_controller.relist(piece_id)
+    return _ok("Auction relisted.", data, status)
+
+
+@pieces_bp.post("/<piece_id>/auction/retry-payment")
+@onboarding_required
+@async_handler
+def retry_auction_payment(piece_id):
+    from src.modules.bids import auction_controller
+    data, status = auction_controller.retry_winner_payment(piece_id)
+    return _ok("Payment completed.", data, status)

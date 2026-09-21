@@ -139,6 +139,14 @@ def seller_analytics():
     return _ok("OK", data, status)
 
 
+@user_bp.get("/me/commission-quote")
+@auth_required
+@async_handler
+def commission_quote():
+    data, status = user_controller.commission_quote()
+    return _ok("OK", data, status)
+
+
 @user_bp.get("/me/series")
 @auth_required
 @async_handler
