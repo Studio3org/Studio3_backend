@@ -26,6 +26,7 @@ documents what each one is for.
 5. [Apple](#5-apple) — push, deep links, TestFlight
 6. [Google / Firebase](#6-google--firebase) — push, signing, Play
 7. [Sentry](#7-sentry-optional) — optional
+7b. [The boot warning, and what to ignore](#7b-the-boot-warning-and-what-to-ignore)
 8. [Pre-launch checklist](#8-pre-launch-checklist)
 
 ---
@@ -148,7 +149,9 @@ password-reset email.
 2. Name it, e.g. `studio3-media`. Pick a region and use the same one throughout.
 3. **Block all public access: ON.** Images are served through CloudFront, not from the bucket
    directly.
-4. **Permissions → CORS**, so the app can upload straight to S3:
+4. **Permissions → CORS** — only needed if a *browser* will upload. CORS is a browser
+   mechanism and the Flutter app's HTTP client does not enforce it, so a mobile-only launch
+   can skip this. Set it when the web app arrives:
 
 ```json
 [
@@ -499,6 +502,49 @@ Error tracking. Unset means Sentry is never initialised — no cost, no noise.
 
 Payloads are scrubbed before sending — webhook bodies, shipping addresses and client secrets
 are stripped, so a crash report cannot become a copy of a customer's details.
+
+---
+
+## 7b. The boot warning, and what to ignore
+
+On startup the service logs one line naming everything optional that is unset:
+
+```
+WARNING Optional configuration not set (12): ANDROID_CERT_FINGERPRINTS, APP_STORE_URL,
+BACKEND_URL, CELERY_BROKER_URL, CORS_ORIGINS, FIREBASE_SERVICE_ACCOUNT_PATH, IOS_TEAM_ID,
+LOCAL_MEDIA_DIR, PLAY_STORE_URL, SENTRY_DSN, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET.
+Those features are disabled.
+```
+
+It is a warning, not an error — anything genuinely required stops the process instead, by
+name. But it does not distinguish "you have not done this yet" from "this is supposed to be
+empty", so read it against this table.
+
+**Four of these should stay unset.** Setting them is the exception, and setting them wrongly
+causes problems that nothing warns about.
+
+| Variable | Why leaving it empty is correct |
+|---|---|
+| `CELERY_BROKER_URL` | Empty means the worker derives its broker from `REDIS_URL`, on the database index in `CELERY_REDIS_DB` — deliberately **not** the cache index, so an eviction policy cannot silently drop queued jobs. Only set this to point the queue at a *different* Redis instance. Set it to the same URL as the cache and you risk losing jobs that move money. |
+| `CORS_ORIGINS` | `FRONTEND_URL` is always allowed already. This is only for *additional* browser origins. The mobile app is not a browser and CORS does not apply to it, so for a mobile-only launch this stays empty. |
+| `FIREBASE_SERVICE_ACCOUNT_PATH` | The alternative to `FIREBASE_SERVICE_ACCOUNT_JSON`, not an addition. Use the JSON one on Render — there is no filesystem to put a key file on, and an ephemeral disk would lose it on every deploy. Set exactly one. |
+| `LOCAL_MEDIA_DIR` | Only used as a fallback when S3 is unconfigured. S3 *is* configured, so this is dead weight. |
+
+**The other eight are real** and each has a section above:
+
+| Variable | Section | Consequence while unset |
+|---|---|---|
+| `STRIPE_SECRET_KEY` | [§1.3](#13-get-the-api-key) | Dev mode — checkout auto-confirms, holds granted without a card. Fine locally, catastrophic in production (and it is required there, so the service will refuse to boot). |
+| `STRIPE_WEBHOOK_SECRET` | [§1.4](#14-create-the-webhook-endpoints) | Every webhook is rejected. Collectors are charged and orders never marked paid. |
+| `BACKEND_URL` | [§3.1](#31-set-the-variables) | QR codes and share links fall back to the request's own host. Works, but a code printed from a staging build points at staging forever. |
+| `IOS_TEAM_ID` | [§5.1](#51-team-id) | `https://` links do not open the iOS app. `studio3://` still works. |
+| `ANDROID_CERT_FINGERPRINTS` | [§6.3](#63-release-keystore) | Same, for Android. |
+| `APP_STORE_URL` | [§5.5](#55-app-store-listing) | Someone without the app, opening a share link, gets no download button. |
+| `PLAY_STORE_URL` | [§6.5](#65-play-store-listing) | Same, for Android. |
+| `SENTRY_DSN` | [§7](#7-sentry-optional) | No error tracking. Genuinely optional. |
+
+**Locally, most of these staying unset is correct.** A development machine wants dev-mode
+Stripe and no Sentry. The list to care about is the one the *production* service logs.
 
 ---
 
