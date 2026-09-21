@@ -11,6 +11,7 @@ PURPOSE_DIRS = {
     "piece": "pieces",
     "post": "posts",
     "chat": "chat",
+    "event": "events",
 }
 
 
@@ -34,6 +35,12 @@ def build_media_key(
     ext = ext_for_content_type(content_type)
     folder = PURPOSE_DIRS.get(purpose, purpose)
     if purpose in ("profile", "cover"):
+        # One fixed object per user, deliberately: a profile has exactly one avatar and one
+        # banner, and replacing them should not leave the old bytes behind.
+        #
+        # Nothing that can exist more than once per user may use these. Event covers did,
+        # which meant every event a host published overwrote their profile banner and then
+        # displayed it as the event's own — the same S3 object under two names.
         filename = "avatar" if purpose == "profile" else "banner"
         return user_key(username, folder, f"{filename}.{ext}")
     cid = content_id or str(uuid.uuid4())

@@ -317,8 +317,10 @@ Distance computed via the haversine formula in raw SQL (no PostGIS on this Postg
 **POST** `{{baseUrl}}/api/media/presign` (Bearer)
 
 ```json
-{ "purpose": "profile" | "cover" | "piece" | "post", "contentType": "image/jpeg", "pieceId": "optional", "postId": "optional" }
+{ "purpose": "profile" | "cover" | "piece" | "post" | "chat" | "event", "contentType": "image/jpeg", "pieceId": "optional", "postId": "optional", "eventId": "optional" }
 ```
+
+`purpose` decides the key shape. `profile` and `cover` are the signed-in user's avatar and **profile banner** — one fixed object each, so a new upload replaces the old one. Everything else is addressed by id and gets its own object; use `event` for an event's cover flyer, never `cover`, which would overwrite the host's profile banner and then serve it as the event image.
 
 `contentType`: `image/jpeg`, `image/png`, `image/webp` (max 20MB), or `video/mp4` (max 100MB) — video is supported for any purpose. Response: `{ "presignedPutUrl", "url", "key", "devMode" }` — upload to `presignedPutUrl`, then pass `url` when creating/updating content. `devMode: true` when S3 isn't configured (local dev) — `presignedPutUrl` is `null` and `url` is a placeholder.
 

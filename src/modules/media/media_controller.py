@@ -13,9 +13,12 @@ def presign():
     body = request.get_json() or {}
     purpose = (body.get("purpose") or "").strip().lower()
     content_type = (body.get("contentType") or body.get("content_type") or "").strip()
-    content_id = body.get("pieceId") or body.get("postId") or body.get("content_id")
+    content_id = (
+        body.get("pieceId") or body.get("postId") or body.get("eventId")
+        or body.get("content_id")
+    )
 
-    if purpose not in ("profile", "cover", "piece", "post", "chat"):
+    if purpose not in ("profile", "cover", "piece", "post", "chat", "event"):
         raise AppError("Invalid purpose.", 400)
     if not content_type:
         raise AppError("contentType is required.", 400)
