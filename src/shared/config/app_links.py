@@ -28,6 +28,12 @@ LINK_PATHS = (
     ("/share/piece/*", "The share preview for a piece"),
     ("/share/series/*", "The share preview for a series"),
     ("/share/event/*", "The share preview for an event"),
+    # Where Stripe returns an artist after Connect onboarding. Claimed so the platform
+    # hands the URL straight to the app; without it the artist lands in a browser at the
+    # end of payout setup, which is where this was found — as a 404, because neither the
+    # route nor this entry existed.
+    ("/connect/return", "Returning from Stripe Connect onboarding"),
+    ("/connect/refresh", "A Connect onboarding link that expired"),
 )
 
 
