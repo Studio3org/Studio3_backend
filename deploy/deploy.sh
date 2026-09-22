@@ -23,14 +23,24 @@ fi
 # A value containing shell syntax — the Firebase service-account JSON is the one
 # that bites — fails here as "command not found" naming a fragment of the value.
 # Say what it actually means, since the message alone points nowhere useful.
-if ! source "$CONFIG" 2>/dev/null; then
-  echo "Could not read $CONFIG." >&2
-  echo "This file is sourced by bash, so any value containing braces, quotes or" >&2
-  echo "spaces must be wrapped in single quotes — FIREBASE_SERVICE_ACCOUNT_JSON" >&2
-  echo "especially. Re-run for the line number:" >&2
-  echo "  bash -n $CONFIG" >&2
+# Checked on stderr rather than the exit status, because the failure that matters here
+# does not fail. An unquoted value containing a space — CORS_ORIGINS with two origins,
+# say — assigns the first word and runs the rest as a command: bash complains, source
+# still returns 0, and the deploy proceeds with a silently truncated value.
+CONFIG_ERR=$(source "$CONFIG" 2>&1 >/dev/null)
+if [[ -n "$CONFIG_ERR" ]]; then
+  echo "$CONFIG could not be read cleanly:" >&2
+  echo >&2
+  echo "$CONFIG_ERR" >&2
+  echo >&2
+  echo "This file is sourced by bash, so any value containing spaces, commas," >&2
+  echo "braces or quotes must be wrapped in single quotes:" >&2
+  echo "  CORS_ORIGINS='https://a.example.com,https://b.example.com'" >&2
+  echo >&2
+  echo "Refusing to deploy — the value would arrive truncated." >&2
   exit 1
 fi
+# shellcheck disable=SC1090
 source "$CONFIG"
 
 : "${EC2_HOST:?Run create-infra.sh first (EC2_HOST empty)}"
@@ -115,7 +125,7 @@ JWT_ACCESS_EXPIRY_MINUTES=${JWT_ACCESS_EXPIRY_MINUTES:-15}
 SALT_ROUNDS=${SALT_ROUNDS:-10}
 
 FRONTEND_URL=${FRONTEND_URL}
-CORS_ORIGINS=${CORS_ORIGINS:-}
+CORS_ORIGINS='${CORS_ORIGINS:-}'
 BACKEND_URL=${BACKEND_URL}
 
 STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
