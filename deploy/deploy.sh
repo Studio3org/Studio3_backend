@@ -225,14 +225,32 @@ for unit in studio3-api studio3-worker studio3-beat; do
 done
 REMOTE
 
+# Report against whatever is actually configured, and check rather than remind. The
+# closing text used to print the raw IP and tell you to point Stripe at the domain on
+# every single run, long after both were done — advice that is always shown is advice
+# nobody reads.
+BASE="${BACKEND_URL:-http://${EC2_HOST}}"
+
 echo
-echo "Deployed. Health check:"
-echo "  curl -sS http://${EC2_HOST}/"
-echo "  curl -sS http://${EC2_HOST}/health     # dependencies, not just liveness"
-if [[ -n "${DOMAIN:-}" ]]; then
-  echo "  After DNS + SSL: https://${DOMAIN}/"
+echo "Deployed. Checking ${BASE} ..."
+live=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "${BASE}/" || echo "000")
+ready=$(curl -sS --max-time 20 "${BASE}/health" 2>/dev/null || echo "")
+
+if [[ "$live" == "200" ]]; then
+  echo "  liveness  200"
+else
+  echo "  liveness  ${live}  <- the service is not answering; journalctl -u studio3-api"
+fi
+
+case "$ready" in
+  *'"status":"ok"'*) echo "  readiness ok — database, redis, s3 and stripe all reachable" ;;
+  "")               echo "  readiness no response from /health" ;;
+  *)                echo "  readiness DEGRADED:"; echo "    $ready" ;;
+esac
+
+# Only worth saying when it is still true.
+if [[ "$BASE" == http://* ]]; then
   echo
-  echo "Stripe: point both the platform and the Connect endpoint at"
-  echo "  https://${DOMAIN}/api/payments/webhook"
-  echo "and put both signing secrets, comma-separated, in STRIPE_WEBHOOK_SECRET."
+  echo "Still on plain HTTP. iOS and the browser both refuse it, and Stripe requires"
+  echo "HTTPS for Connect return URLs — run deploy/setup-ssl.sh on the server."
 fi
