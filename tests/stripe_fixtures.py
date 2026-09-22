@@ -10,6 +10,8 @@ import hmac
 import json
 import time
 import uuid
+
+import stripe
 from typing import Any, Optional
 
 import stripe as real_stripe
@@ -209,6 +211,17 @@ class StripeStub:
         return self.balance_transactions[bt_id]
 
     def _payment_intent_create(self, **kwargs) -> dict:
+        # Stripe refuses these two together, and this stub used to accept them — so the
+        # hold tests passed against a call the real API rejected every time, and bidding
+        # was broken in production with a green suite. A stub that is more permissive than
+        # the thing it stands in for tests nothing.
+        if kwargs.get("off_session") and kwargs.get("setup_future_usage"):
+            raise stripe.error.InvalidRequestError(
+                "You cannot confirm with `off_session=true` when `setup_future_usage` is "
+                "also set on the PaymentIntent.",
+                param="setup_future_usage",
+            )
+
         # A manual-capture intent confirmed off-session is an authorisation, and Stripe
         # reports it as requires_capture. Anything else means the hold did not take, which is
         # the branch holds_service treats as a failure — so getting this right is what makes
