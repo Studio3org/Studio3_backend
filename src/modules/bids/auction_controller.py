@@ -13,6 +13,8 @@ from flask import g, request
 from src.shared.config.database import SessionLocal
 from src.shared.models.auction import (
     AUCTION_AWAITING_PAYMENT,
+    AUCTION_CLOSED_NO_BIDS,
+    AUCTION_CLOSED_RESERVE_NOT_MET,
     AUCTION_NEEDS_SELLER_ACTION,
     Auction,
 )
@@ -105,6 +107,13 @@ def cancel(piece_id: str):
         db.close()
 
 
+RELISTABLE_AUCTION_STATUSES = (
+    AUCTION_NEEDS_SELLER_ACTION,     # bids came in under the reserve
+    AUCTION_CLOSED_NO_BIDS,          # nobody bid at all
+    AUCTION_CLOSED_RESERVE_NOT_MET,  # closed under reserve without parking for a decision
+)
+
+
 def relist(piece_id: str):
     """Run a fresh auction on a piece whose last one ended without a sale.
 
@@ -125,8 +134,17 @@ def relist(piece_id: str):
             .order_by(Auction.created_at.desc())
             .limit(1)
         ).mappings().first()
-        if not previous or previous["status"] != AUCTION_NEEDS_SELLER_ACTION:
-            raise AppError("This piece has no auction waiting on a decision.", 409)
+        # Every ending where nobody was charged and nobody is owed anything. This used to
+        # accept needs_seller_action alone, which meant the commonest failure — an auction
+        # that simply got no bids — left the work delisted with nothing offering to try
+        # again. closed_sold and cancelled stay out: one has a buyer behind it, the other
+        # was somebody deciding to stop.
+        if not previous or previous["status"] not in RELISTABLE_AUCTION_STATUSES:
+            raise AppError(
+                "This piece has no unsold auction to relist." if previous
+                else "This piece has never been auctioned.",
+                409,
+            )
         if auction_dao.get_running_auction(db, piece.id) is not None:
             raise AppError("This piece already has an auction running.", 409)
 
