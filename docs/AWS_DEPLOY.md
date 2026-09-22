@@ -200,6 +200,23 @@ S3_PUBLIC_BASE_URL=https://....cloudfront.net
 back into this file. Do not clear them afterwards: changing `JWT_SECRET` signs out every user,
 and changing `SECRET_KEY` also ends every admin session.
 
+### The first admin
+
+A new environment has no admin account and no way to create one from the app, so set these
+before the first deploy:
+
+```ini
+ADMIN_EMAIL=you@studio-3.co
+ADMIN_PASSWORD=<at least 8 characters>
+```
+
+The deploy creates that account and marks it admin. It only ever **creates**: if the email
+already belongs to an account it is promoted and the existing password is left alone, so
+re-deploying can never undo a rotation.
+
+Sign in, change the password, then **clear `ADMIN_PASSWORD` from `config.env`**. A live
+credential sitting in a deploy config is a copy of the keys to the refund button.
+
 `PLATFORM_COMMISSION_BPS` has no default anywhere, deliberately — 10% and 20% differ by half
 of what an artist earns, and that is not a number to inherit by accident.
 
@@ -262,6 +279,9 @@ anywhere, because the signature check simply rejects every delivery.
 curl https://api.studio-3.co/            # liveness — touches nothing external
 curl https://api.studio-3.co/health      # readiness — checks Postgres and Redis
 ```
+
+And sign in to the console at `https://api.studio-3.co/admin` — or, once the web app points
+here, through **Profile Settings → Staff → Admin console**.
 
 Then on the server:
 

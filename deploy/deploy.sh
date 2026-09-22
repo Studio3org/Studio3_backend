@@ -153,6 +153,11 @@ IOS_BUNDLE_ID=${IOS_BUNDLE_ID:-com.studio3.discover}
 ANDROID_PACKAGE=${ANDROID_PACKAGE:-com.studio3.discover}
 ANDROID_CERT_FINGERPRINTS=${ANDROID_CERT_FINGERPRINTS:-}
 
+# Creates the first admin if no account with this email exists yet. Without it a new
+# environment has nobody who can reach the ops console, and no way to make one.
+ADMIN_EMAIL=${ADMIN_EMAIL:-}
+ADMIN_PASSWORD='${ADMIN_PASSWORD:-}'
+
 SENTRY_DSN=${SENTRY_DSN:-}
 EOF
 
@@ -202,6 +207,13 @@ sudo systemctl enable --now studio3-worker
 sudo systemctl restart studio3-worker
 sudo systemctl enable --now studio3-beat
 sudo systemctl restart studio3-beat
+
+# After the API, because that unit's ExecStartPre is what runs the migrations and the
+# users table has to exist. A no-op when ADMIN_EMAIL/ADMIN_PASSWORD are unset, and a
+# no-op on every deploy after the first.
+sudo -u ec2-user bash -lc 'cd /opt/studio3 && \
+  FLASK_ENV=production .venv/bin/python scripts/bootstrap_admin.py' || \
+  echo "!! admin bootstrap failed — the app is still up; see the message above"
 
 # Watchdog for the failure systemd cannot see: beat running but no longer
 # scheduling. It is a timer, not a service, so it is enabled separately.
