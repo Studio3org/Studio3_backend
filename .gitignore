@@ -42,3 +42,9 @@ graphify-out/
 CLAUDE.md
 # Test-only env (points at the studio3_test database)
 .env.test
+
+# AWS console credential downloads. These land in the working directory with an
+# innocuous name and are a live key pair — never in a commit, never in a diff.
+*accessKeys.csv
+*_accessKeys.csv
+credentials.csv
