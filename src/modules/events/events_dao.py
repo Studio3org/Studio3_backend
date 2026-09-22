@@ -16,9 +16,11 @@ from src.shared.models.event import (
     EVENT_PUBLISHED,
     ROLE_ARTIST,
     ROLE_COHOST,
+    RSVP_GOING,
     Event,
     EventParticipant,
     EventPiece,
+    EventRsvp,
     EventSave,
 )
 from src.shared.models.social import Follow
@@ -328,6 +330,26 @@ def list_for_host(
     if viewer_id != host_id:
         stmt = stmt.where(Event.status == EVENT_PUBLISHED)
     return list(db.execute(stmt.order_by(Event.starts_at.desc())).scalars())
+
+
+def list_going(db: Session, viewer_id: uuid.UUID, *, limit: int = DEFAULT_LIMIT) -> list[Event]:
+    """Events this viewer has RSVP'd `going` to — past and upcoming both.
+
+    Unlike the browse scopes, this deliberately isn't windowed to what's still ahead: a
+    "Registered" list that drops an event the moment it starts would be useless to someone
+    checking it from the door.
+    """
+    going = select(EventRsvp.event_id).where(
+        EventRsvp.user_id == viewer_id, EventRsvp.status == RSVP_GOING
+    )
+    return list(
+        db.execute(
+            select(Event)
+            .where(Event.status == EVENT_PUBLISHED, Event.id.in_(going))
+            .order_by(Event.starts_at.desc())
+            .limit(_clamp(limit))
+        ).scalars()
+    )
 
 
 def category_summaries(db: Session) -> list[dict]:

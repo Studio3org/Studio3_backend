@@ -431,6 +431,14 @@ def list_events():
             if viewer_id is None:
                 raise AppError("Sign in to see events from people you follow.", 401)
             events = events_dao.list_from_following(db, viewer_id, limit=limit)
+        elif scope == "hosting":
+            if viewer_id is None:
+                raise AppError("Sign in to see your events.", 401)
+            events = events_dao.list_for_host(db, viewer_id, viewer_id=viewer_id)
+        elif scope == "going":
+            if viewer_id is None:
+                raise AppError("Sign in to see events you've registered for.", 401)
+            events = events_dao.list_going(db, viewer_id, limit=limit)
         elif scope == "today":
             events = events_dao.list_today(db, limit=limit)
         else:
@@ -616,6 +624,7 @@ def event_card(db, event: Event, viewer_id: Optional[uuid.UUID]) -> dict:
         "spotsLeft": rsvp_service.spots_left(db, event),
         "isFull": rsvp_service.is_full(db, event),
         "viewerIsGoing": _viewer_going(db, event.id, viewer_id),
+        "isHost": event.host_id == viewer_id,
     }
 
 
@@ -628,7 +637,6 @@ def event_to_dict(db, event: Event, viewer_id: Optional[uuid.UUID]) -> dict:
         "longitude": event.longitude,
         "publishedAt": event.published_at.isoformat() if event.published_at else None,
         "cancellationReason": event.cancellation_reason,
-        "isHost": event.host_id == viewer_id,
         "saveCount": events_dao.count_saves(db, event.id),
         "cohosts": [
             _person(user) for row, user in

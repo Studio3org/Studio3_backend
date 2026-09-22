@@ -343,6 +343,37 @@ def test_the_following_feed_includes_events_a_followed_artist_is_billed_on(db, c
     assert "Group show" in [e["title"] for e in response.get_json()["data"]["events"]]
 
 
+def test_hosting_scope_lists_only_the_viewers_own_events_drafts_included(db, client, auth_headers):
+    host, someone_else = make_user(db, seller=True), make_user(db, seller=True)
+    draft = make_event(db, host, title="Unpublished preview", status="draft")
+    make_event(db, someone_else, title="Someone else's show", status="published")
+
+    response = client.get("/api/events?scope=hosting", headers=auth_headers(host))
+
+    assert response.status_code == 200
+    titles = [e["title"] for e in response.get_json()["data"]["events"]]
+    assert "Unpublished preview" in titles
+    assert "Someone else's show" not in titles
+    assert response.get_json()["data"]["events"][0]["id"] == str(draft.id)
+
+
+def test_going_scope_lists_events_the_viewer_rsvpd_to(db, client, auth_headers):
+    host, collector = make_user(db, seller=True), make_user(db)
+    going = make_event(db, host, title="RSVP'd show", status="published")
+    skipped = make_event(db, host, title="Not going", status="published")
+    client.post(f"/api/events/{going.id}/rsvp", json={"going": True},
+                headers=auth_headers(collector))
+
+    response = client.get("/api/events?scope=going", headers=auth_headers(collector))
+
+    assert response.status_code == 200
+    events = response.get_json()["data"]["events"]
+    titles = [e["title"] for e in events]
+    assert "RSVP'd show" in titles
+    assert "Not going" not in titles
+    assert events[0]["rsvpCount"] == 1
+
+
 def test_setting_the_bill_replaces_rather_than_appends(db, client, auth_headers):
     host = make_user(db, seller=True)
     a, b = make_user(db), make_user(db)
