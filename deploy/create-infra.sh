@@ -118,9 +118,24 @@ authorize_once --group-id "$REDIS_SG" --protocol tcp --port 6379 --source-group 
 # --- AMI ---
 AMI_ID="${EC2_AMI_ID:-}"
 if [[ -z "$AMI_ID" ]]; then
+  # SSM's public parameter is the canonical pointer to the current AL2023 image, but
+  # reading it needs ssm:GetParameters — a permission a deploy user has no other reason
+  # to hold. Fall back to asking EC2 directly, which AmazonEC2FullAccess already covers,
+  # so the IAM setup does not have to grow a policy for one lookup.
   AMI_ID=$(aws ssm get-parameters \
     --names /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64 \
-    --query 'Parameters[0].Value' --output text)
+    --query 'Parameters[0].Value' --output text 2>/dev/null || true)
+  if [[ -z "$AMI_ID" || "$AMI_ID" == "None" ]]; then
+    echo "==> SSM lookup unavailable; asking EC2 for the newest AL2023 image"
+    AMI_ID=$(aws ec2 describe-images --owners amazon \
+      --filters "Name=name,Values=al2023-ami-2023.*-kernel-6.1-x86_64" \
+                "Name=state,Values=available" \
+      --query 'sort_by(Images,&CreationDate)[-1].ImageId' --output text)
+  fi
+fi
+if [[ -z "$AMI_ID" || "$AMI_ID" == "None" ]]; then
+  echo "Could not resolve an AMI. Set EC2_AMI_ID in deploy/config.env." >&2
+  exit 1
 fi
 echo "AMI: $AMI_ID"
 
