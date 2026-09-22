@@ -125,6 +125,14 @@ def cancel_event(event_id):
     return _ok("Event cancelled.", data, status)
 
 
+@events_bp.delete("/<event_id>")
+@onboarding_required
+@async_handler
+def delete_event(event_id):
+    data, status = events_controller.delete_event(event_id)
+    return _ok("Event deleted.", data, status)
+
+
 # --- the bill ---------------------------------------------------------------------------------
 
 @events_bp.post("/<event_id>/pieces")

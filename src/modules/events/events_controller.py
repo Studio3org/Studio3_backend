@@ -265,6 +265,56 @@ def cancel(event_id: str):
         db.close()
 
 
+def delete_event(event_id: str):
+    """Remove a hosted event outright.
+
+    A draft is nobody's problem but the host's — it is deleted with nothing else to do. A
+    published event has to be taken off first: its listings released, any auction cancelled
+    and refunded, its attendees told the event isn't happening — the same work `cancel` does —
+    before the row itself is removed, so nobody who RSVP'd or was bidding just finds it gone.
+
+    Title and id are read into locals before the row is deleted: the session expires an
+    object's attributes on commit, and re-reading one off a row that is no longer there is
+    exactly the `event.title` access the audit call below would otherwise make.
+    """
+    db = SessionLocal()
+    try:
+        event, viewer_id = _require_host(db, event_id)
+        event_uuid = event.id
+        event_title = event.title
+        was_published = event.status == EVENT_PUBLISHED
+        undone = {"cancelledAuctions": 0, "delisted": 0}
+        told = 0
+
+        if was_published:
+            event_state.transition_event(
+                db, event, EVENT_CANCELLED, reason="host_deleted", commit=False
+            )
+            event.cancellation_reason = "Event deleted by host"
+            undone = lineup_service.cancel_lineup(db, event, "event_deleted", commit=False)
+            db.commit()
+            told = rsvp_service.notify_attendees(
+                db, event,
+                type="event_cancelled",
+                title="Event cancelled",
+                body=f'"{event_title}" has been removed by its host.',
+            )
+
+        events_dao.delete_event(db, event)
+
+        audit_service.record(
+            db, audit.AUDIT_EVENT_DELETED,
+            actor=get_user_by_id(db, viewer_id),
+            subject_type="event", subject_id=event_uuid,
+            detail={**undone, "attendeesNotified": told, "wasPublished": was_published},
+            note=f'"{event_title}" deleted by host',
+        )
+
+        return {"deleted": True}, 200
+    finally:
+        db.close()
+
+
 # --- host: the bill ---------------------------------------------------------------------------
 
 def add_lineup_piece(event_id: str):

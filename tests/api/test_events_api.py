@@ -152,6 +152,52 @@ def test_cancelling_reports_what_it_took_down(db, client, auth_headers):
     assert body["cancellationReason"] == "Venue flooded"
 
 
+def test_deleting_a_draft_just_removes_it(db, client, auth_headers):
+    host = make_user(db, seller=True)
+    event = make_event(db, host)
+
+    response = client.delete(f"/api/events/{event.id}", headers=auth_headers(host))
+
+    assert response.status_code == 200
+    assert response.get_json()["data"]["deleted"] is True
+    db.expire_all()
+    assert db.get(Event, event.id) is None
+
+
+def test_deleting_a_published_event_winds_it_down_first(db, client, auth_headers):
+    host = make_user(db, seller=True)
+    piece = make_piece(db, host, price_cents=300_00, status="draft")
+    event = make_event(db, host)
+    client.post(
+        f"/api/events/{event.id}/pieces",
+        json={"pieceId": str(piece.id), "mode": "bid", "priceCents": 400_00},
+        headers=auth_headers(host),
+    )
+    client.post(f"/api/events/{event.id}/publish", headers=auth_headers(host))
+
+    response = client.delete(f"/api/events/{event.id}", headers=auth_headers(host))
+
+    assert response.status_code == 200
+    assert response.get_json()["data"]["deleted"] is True
+    db.expire_all()
+    # The row is gone, same as a draft — but the piece it was auctioning came down with it
+    # rather than being left listed under an event that no longer exists.
+    assert db.get(Event, event.id) is None
+    db.refresh(piece)
+    assert piece.status == "delisted"
+
+
+def test_a_stranger_cannot_delete_someone_elses_event(db, client, auth_headers):
+    host, stranger = make_user(db, seller=True), make_user(db, seller=True)
+    event = make_event(db, host)
+
+    response = client.delete(f"/api/events/{event.id}", headers=auth_headers(stranger))
+
+    assert response.status_code == 404
+    db.expire_all()
+    assert db.get(Event, event.id) is not None
+
+
 # --- the bill ---------------------------------------------------------------------------------
 
 def test_the_tagging_preview_says_what_would_be_ended(db, client, auth_headers):

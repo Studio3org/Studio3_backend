@@ -42,6 +42,7 @@ AUDIT_AUCTION_CANCELLED = "auction_cancelled"
 AUDIT_AUCTION_SETTLED = "auction_settled"
 AUDIT_WINNER_CASCADED = "winner_cascaded"
 AUDIT_EVENT_CANCELLED = "event_cancelled"
+AUDIT_EVENT_DELETED = "event_deleted"
 AUDIT_ADMIN_LOGIN = "admin_login"
 # Written by the nightly reconciliation when the ledger and Stripe disagree. Recorded rather
 # than only logged because drift is often investigated days later, and Render's logs are gone
@@ -61,6 +62,7 @@ AUDIT_ACTIONS = (
     AUDIT_WINNER_CASCADED,
     AUDIT_AUCTION_SETTLED,
     AUDIT_EVENT_CANCELLED,
+    AUDIT_EVENT_DELETED,
     AUDIT_REPORT_RESOLVED,
     AUDIT_SHIPMENT_CREATED,
     AUDIT_SHIPMENT_UPDATED,

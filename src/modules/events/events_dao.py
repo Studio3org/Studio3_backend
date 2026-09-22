@@ -363,5 +363,18 @@ def count_lineup(db: Session, event_id: uuid.UUID) -> int:
     ).scalar_one()
 
 
+def delete_event(db: Session, event: Event) -> None:
+    """Remove the event row itself, once whatever it listed has already been taken down.
+
+    Every child row — the lineup, RSVPs, saves, cohost/artist entries — has
+    `ondelete="CASCADE"` on its `event_id`, so this one delete is enough; there is nothing
+    left over for a caller to clean up by hand. Deleting a piece's own listing is a different,
+    narrower operation (`pieces_dao.delete_piece`, a soft delete) and is never touched here —
+    an event coming down never takes the artist's piece down with it.
+    """
+    db.delete(event)
+    db.commit()
+
+
 def _clamp(limit: int) -> int:
     return max(1, min(limit or DEFAULT_LIMIT, MAX_LIMIT))
