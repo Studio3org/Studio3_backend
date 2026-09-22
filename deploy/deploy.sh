@@ -84,30 +84,15 @@ echo "==> Syncing code -> ${EC2_USER}@${EC2_HOST}:${APP_DIR}"
 "${RSYNC[@]}" -e "ssh -i ${SSH_KEY} -o StrictHostKeyChecking=accept-new" \
   "${ROOT}/" "${EC2_USER}@${EC2_HOST}:${APP_DIR}/"
 
-# Generated once and written back to config.env, never re-rolled.
-#
-# These used to be minted fresh whenever they were empty, which worked the first
-# time and quietly signed everyone out on every deploy after it: a new JWT_SECRET
-# invalidates every access token, and a new SECRET_KEY kills every admin cookie
-# session. Persisting them makes the second deploy a no-op instead of a logout.
-persist_secret() {
-  local name="$1" value="${2:-}"
-  if [[ -z "$value" ]]; then
-    value=$(openssl rand -hex 32)
-    if grep -q "^${name}=" "$CONFIG"; then
-      # BSD and GNU sed disagree about -i, so rewrite via a temp file instead.
-      local tmp
-      tmp=$(mktemp)
-      sed "s|^${name}=.*|${name}=${value}|" "$CONFIG" > "$tmp" && mv "$tmp" "$CONFIG"
-    else
-      printf '%s=%s\n' "$name" "$value" >> "$CONFIG"
-    fi
-    echo "==> Generated ${name} and saved it to deploy/config.env (keep this file safe)"
-  fi
-  printf '%s' "$value"
-}
-JWT_SECRET=$(persist_secret JWT_SECRET "${JWT_SECRET}")
-SECRET_KEY=$(persist_secret SECRET_KEY "${SECRET_KEY}")
+# Generated on the first deploy only. upsert_config further down writes them back
+# into config.env, so the next deploy reads them from there rather than minting new
+# ones — which would sign out every user and end every admin session.
+if [[ -z "${JWT_SECRET}" ]]; then
+  JWT_SECRET=$(openssl rand -hex 32)
+fi
+if [[ -z "${SECRET_KEY}" ]]; then
+  SECRET_KEY=$(openssl rand -hex 32)
+fi
 
 FRONTEND_URL="${FRONTEND_URL:-https://${DOMAIN:-localhost}}"
 BACKEND_URL="${BACKEND_URL:-https://${DOMAIN:-$EC2_HOST}}"
