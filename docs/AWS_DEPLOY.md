@@ -40,7 +40,8 @@ least-privilege and cannot create servers.
    - `AmazonRDSFullAccess`
    - `AmazonElastiCacheFullAccess`
    - `IAMReadOnlyAccess`
-   - `AmazonRoute53FullAccess` — only if your DNS is in Route 53
+   - `AmazonRoute53FullAccess` — **only if your DNS is in Route 53.** studio-3.co is at
+     Squarespace, so skip this one and skip `setup-domain.sh` with it.
 4. Create the user, open it, → **Security credentials** → **Create access key**
 5. Use case: **Command Line Interface (CLI)**, acknowledge the warning, create
 6. Copy both values. **The secret is shown once.**
@@ -94,16 +95,27 @@ and set `EC2_KEY_NAME` to match in step 4.
 
 Optional at this stage. You can deploy against the raw IP address and add the domain later.
 
-Check whether your DNS is already in Route 53:
+**studio-3.co is registered at Squarespace**, so `setup-domain.sh` does not apply — it only
+writes a Route 53 record. Add the record by hand instead, once `create-infra.sh` has printed
+the Elastic IP:
+
+> Squarespace → Settings → Domains → studio-3.co → DNS Settings → Add record
+>
+> | Type | Host | Data | TTL |
+> |---|---|---|---|
+> | `A` | `api` | the Elastic IP | 1 hour |
+
+`setup-ssl.sh` works regardless of who hosts the zone: certbot proves ownership over port 80
+(an HTTP-01 challenge served from `/var/www/certbot`), not through DNS.
+
+To confirm it has propagated:
 
 ```bash
-aws route53 list-hosted-zones --query 'HostedZones[].Name' --output text
+dig +short api.studio-3.co     # should print the Elastic IP
 ```
 
-- **`studio-3.co.` appears** → `setup-domain.sh` will work. Note the zone name for step 4.
-- **Nothing, or a different registrar** → skip `setup-domain.sh`. After the instance exists,
-  add an `A` record at your current DNS provider pointing `api.studio-3.co` at the Elastic IP
-  that `create-infra.sh` prints. `setup-ssl.sh` works either way once the name resolves.
+You can also skip DNS entirely for now and deploy against the raw Elastic IP over HTTP, with
+`BACKEND_URL=http://<elastic-ip>`. Add the name and the certificate once the app is proven.
 
 ---
 
@@ -241,12 +253,12 @@ process ever sees a half-migrated schema.
 ## 9. Domain and HTTPS
 
 ```bash
-./deploy/setup-domain.sh    # Route 53 only; skip if your DNS is elsewhere
+# ./deploy/setup-domain.sh  — Route 53 only. Not applicable: the domain is at Squarespace.
 ./deploy/setup-ssl.sh       # Let's Encrypt via certbot
 ```
 
-`setup-ssl.sh` needs the domain to already resolve to the Elastic IP. If you added the record
-manually, wait for it to propagate first:
+`setup-ssl.sh` needs the domain to already resolve to the Elastic IP, so add the Squarespace
+record from step 3 first and check it:
 
 ```bash
 dig +short api.studio-3.co
