@@ -1,0 +1,28 @@
+[Unit]
+Description=Studiothree — check that beat is still ticking
+# Not a health check for beat's process: systemd already restarts it when it dies.
+# This catches the failure that does not announce itself — a beat that is running
+# and no longer scheduling anything. Nothing else would notice, and the symptom is
+# auctions quietly running past their end with money still held.
+
+[Service]
+Type=oneshot
+# Root, because the whole point is being able to restart studio3-beat. The unit
+# runs one bash command against one log file and nothing else.
+User=root
+WorkingDirectory=/opt/studio3
+# Beat logs every dispatch, so a log file that has not been written to in this long
+# means it is wedged. Ten minutes is comfortably longer than the slowest schedule
+# (five) and short enough that an auction closes late rather than never.
+ExecStart=/usr/bin/env bash -c '\
+  log=/opt/studio3/logs/celery-beat.log; \
+  if [[ ! -f "$log" ]]; then \
+    echo "beat log missing — beat has never started"; \
+    systemctl restart studio3-beat; exit 1; \
+  fi; \
+  age=$(( $(date +%%s) - $(stat -c %%Y "$log") )); \
+  if (( age > 600 )); then \
+    echo "beat silent for ${age}s — restarting"; \
+    systemctl restart studio3-beat; exit 1; \
+  fi; \
+  echo "beat ticking (${age}s since last dispatch)"'

@@ -198,6 +198,13 @@ if [[ "$DB_STATUS" == "missing" ]]; then
     --backup-retention-period 7
     --no-publicly-accessible
     --storage-encrypted
+    # This instance holds the orders and the ledger — the records of who paid whom.
+    # Deletion protection makes destroying it a deliberate two-step rather than one
+    # mistyped command, and has to be turned off explicitly before any teardown.
+    --deletion-protection
+    # Without this the backups are never exercised, and an untested restore is a
+    # hope rather than a plan.
+    --copy-tags-to-snapshot
     --tags "Key=Project,Value=${PROJECT}"
   )
   if [[ -n "${RDS_ENGINE_VERSION:-}" ]]; then

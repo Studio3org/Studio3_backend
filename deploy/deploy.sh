@@ -32,7 +32,11 @@ source "$CONFIG"
 # Everything src/shared/config/settings.py marks required in production. Checked here so a
 # missing value costs a one-line error instead of a synced deploy that crash-loops on boot.
 MISSING=()
+# PLATFORM_COMMISSION_BPS is in this list rather than carrying a default: the two
+# plausible values differ by half the artist's earnings, and a silent 20% because
+# somebody left it blank is not a mistake that announces itself.
 for var in FRONTEND_URL STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET \
+           PLATFORM_COMMISSION_BPS \
            AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY S3_BUCKET S3_PUBLIC_BASE_URL; do
   [[ -z "${!var:-}" ]] && MISSING+=("$var")
 done
@@ -69,13 +73,30 @@ echo "==> Syncing code -> ${EC2_USER}@${EC2_HOST}:${APP_DIR}"
 "${RSYNC[@]}" -e "ssh -i ${SSH_KEY} -o StrictHostKeyChecking=accept-new" \
   "${ROOT}/" "${EC2_USER}@${EC2_HOST}:${APP_DIR}/"
 
-# Generate secrets if not set
-if [[ -z "${JWT_SECRET}" ]]; then
-  JWT_SECRET=$(openssl rand -hex 32)
-fi
-if [[ -z "${SECRET_KEY}" ]]; then
-  SECRET_KEY=$(openssl rand -hex 32)
-fi
+# Generated once and written back to config.env, never re-rolled.
+#
+# These used to be minted fresh whenever they were empty, which worked the first
+# time and quietly signed everyone out on every deploy after it: a new JWT_SECRET
+# invalidates every access token, and a new SECRET_KEY kills every admin cookie
+# session. Persisting them makes the second deploy a no-op instead of a logout.
+persist_secret() {
+  local name="$1" value="${2:-}"
+  if [[ -z "$value" ]]; then
+    value=$(openssl rand -hex 32)
+    if grep -q "^${name}=" "$CONFIG"; then
+      # BSD and GNU sed disagree about -i, so rewrite via a temp file instead.
+      local tmp
+      tmp=$(mktemp)
+      sed "s|^${name}=.*|${name}=${value}|" "$CONFIG" > "$tmp" && mv "$tmp" "$CONFIG"
+    else
+      printf '%s=%s\n' "$name" "$value" >> "$CONFIG"
+    fi
+    echo "==> Generated ${name} and saved it to deploy/config.env (keep this file safe)"
+  fi
+  printf '%s' "$value"
+}
+JWT_SECRET=$(persist_secret JWT_SECRET "${JWT_SECRET}")
+SECRET_KEY=$(persist_secret SECRET_KEY "${SECRET_KEY}")
 
 FRONTEND_URL="${FRONTEND_URL:-https://${DOMAIN:-localhost}}"
 BACKEND_URL="${BACKEND_URL:-https://${DOMAIN:-$EC2_HOST}}"
@@ -104,7 +125,7 @@ BACKEND_URL=${BACKEND_URL}
 STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
 STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
 PLATFORM_CURRENCY=${PLATFORM_CURRENCY:-usd}
-PLATFORM_COMMISSION_BPS=${PLATFORM_COMMISSION_BPS:-2000}
+PLATFORM_COMMISSION_BPS=${PLATFORM_COMMISSION_BPS}
 PLATFORM_TICKET_COMMISSION_BPS=${PLATFORM_TICKET_COMMISSION_BPS:-800}
 CONNECT_ACCOUNT_COUNTRY=${CONNECT_ACCOUNT_COUNTRY:-US}
 CONNECT_ONBOARDING_BASE_URL=${CONNECT_ONBOARDING_BASE_URL:-https://studio-3.co/connect}
@@ -117,7 +138,10 @@ S3_PUBLIC_BASE_URL=${S3_PUBLIC_BASE_URL:-}
 LOCAL_MEDIA_DIR=${LOCAL_MEDIA_DIR:-}
 
 SES_FROM_EMAIL=${SES_FROM_EMAIL:-}
-FIREBASE_SERVICE_ACCOUNT_JSON=${FIREBASE_SERVICE_ACCOUNT_JSON:-}
+# Single-quoted: this JSON contains spaces ("-----BEGIN PRIVATE KEY-----"), and an
+# unquoted value in a systemd EnvironmentFile can truncate at the first one — which
+# would break push notifications with nothing in the logs to say why.
+FIREBASE_SERVICE_ACCOUNT_JSON='${FIREBASE_SERVICE_ACCOUNT_JSON:-}'
 
 CELERY_BROKER_URL=${CELERY_BROKER_URL:-}
 CELERY_REDIS_DB=${CELERY_REDIS_DB:-1}
@@ -178,6 +202,13 @@ sudo systemctl enable --now studio3-worker
 sudo systemctl restart studio3-worker
 sudo systemctl enable --now studio3-beat
 sudo systemctl restart studio3-beat
+
+# Watchdog for the failure systemd cannot see: beat running but no longer
+# scheduling. It is a timer, not a service, so it is enabled separately.
+sudo cp deploy/systemd/studio3-beat-watchdog.service /etc/systemd/system/
+sudo cp deploy/systemd/studio3-beat-watchdog.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now studio3-beat-watchdog.timer
 
 sleep 3
 for unit in studio3-api studio3-worker studio3-beat; do

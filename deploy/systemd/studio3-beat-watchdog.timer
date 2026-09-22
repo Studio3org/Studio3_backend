@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the beat watchdog every five minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+Unit=studio3-beat-watchdog.service
+
+[Install]
+WantedBy=timers.target
