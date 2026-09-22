@@ -20,6 +20,17 @@ if [[ ! -f "$CONFIG" ]]; then
   exit 1
 fi
 # shellcheck disable=SC1090
+# A value containing shell syntax — the Firebase service-account JSON is the one
+# that bites — fails here as "command not found" naming a fragment of the value.
+# Say what it actually means, since the message alone points nowhere useful.
+if ! source "$CONFIG" 2>/dev/null; then
+  echo "Could not read $CONFIG." >&2
+  echo "This file is sourced by bash, so any value containing braces, quotes or" >&2
+  echo "spaces must be wrapped in single quotes — FIREBASE_SERVICE_ACCOUNT_JSON" >&2
+  echo "especially. Re-run for the line number:" >&2
+  echo "  bash -n $CONFIG" >&2
+  exit 1
+fi
 source "$CONFIG"
 
 : "${EC2_HOST:?Run create-infra.sh first (EC2_HOST empty)}"
