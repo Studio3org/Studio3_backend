@@ -222,8 +222,19 @@ if [[ "$DB_STATUS" == "missing" ]]; then
     --copy-tags-to-snapshot
     --tags "Key=Project,Value=${PROJECT}"
   )
-  if [[ -n "${RDS_ENGINE_VERSION:-}" ]]; then
-    RDS_ARGS+=(--engine-version "$RDS_ENGINE_VERSION")
+  # AWS retires Postgres minor versions, so a version pinned in config months ago
+  # eventually stops existing and CreateDBInstance fails on a combination error that
+  # does not say why. Unset means "newest 16.x available today", which is the major
+  # the schema and the test suite are built against.
+  RDS_VERSION="${RDS_ENGINE_VERSION:-}"
+  if [[ -z "$RDS_VERSION" ]]; then
+    RDS_VERSION=$(aws rds describe-db-engine-versions --engine postgres \
+      --query 'DBEngineVersions[?starts_with(EngineVersion,`16.`)].EngineVersion' \
+      --output text | tr '\t' '\n' | sort -V | tail -1)
+    echo "==> Postgres version not pinned; using newest 16.x: ${RDS_VERSION}"
+  fi
+  if [[ -n "$RDS_VERSION" ]]; then
+    RDS_ARGS+=(--engine-version "$RDS_VERSION")
   fi
   aws rds create-db-instance "${RDS_ARGS[@]}" >/dev/null
 fi
