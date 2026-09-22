@@ -113,6 +113,11 @@ def user_to_dict(
             {
                 "email": user.email,
                 "phone": user.phone,
+                # Private on purpose: only ever sent to the account itself, so the admin
+                # console is not discoverable by looking at somebody else's profile. It
+                # decides whether to *show* the console — every admin route re-checks the
+                # flag server-side, so a client that lies about it gains nothing.
+                "isAdmin": bool(user.is_admin),
                 "emailVerified": user.email_verified,
                 "lastUsernameChangeAt": user.last_username_change_at.isoformat() if user.last_username_change_at else None,
                 "canChangeUsername": can_change_username(user),
