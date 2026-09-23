@@ -6,6 +6,7 @@ account, because publishing an event puts real work on sale.
 from datetime import datetime, timedelta, timezone
 
 from src.shared.models.event import Event
+from src.shared.models.piece import Piece
 from tests.factories import make_event, make_piece, make_user
 
 
@@ -160,7 +161,10 @@ def test_deleting_a_draft_just_removes_it(db, client, auth_headers):
 
     assert response.status_code == 200
     assert response.get_json()["data"]["deleted"] is True
-    db.expire_all()
+    # expunge_all, not expire_all: the row is truly gone, and get() on an expired-but-still
+    # identity-mapped instance raises ObjectDeletedError instead of returning None. Clearing
+    # the identity map makes get() issue a fresh SELECT, which correctly returns None.
+    db.expunge_all()
     assert db.get(Event, event.id) is None
 
 
@@ -179,11 +183,12 @@ def test_deleting_a_published_event_winds_it_down_first(db, client, auth_headers
 
     assert response.status_code == 200
     assert response.get_json()["data"]["deleted"] is True
-    db.expire_all()
+    # expunge_all, not expire_all — see the comment in test_deleting_a_draft_just_removes_it.
+    db.expunge_all()
     # The row is gone, same as a draft — but the piece it was auctioning came down with it
     # rather than being left listed under an event that no longer exists.
     assert db.get(Event, event.id) is None
-    db.refresh(piece)
+    piece = db.get(Piece, piece.id)
     assert piece.status == "delisted"
 
 
