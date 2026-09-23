@@ -92,6 +92,7 @@ def create_app(config_overrides: dict | None = None):
     from src.modules.share.share_routes import share_bp
     from src.modules.share.well_known_routes import well_known_bp
     from src.modules.events.events_routes import events_bp
+    from src.modules.legal.legal_routes import legal_bp
 
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
     app.register_blueprint(user_bp, url_prefix="/api/user")
@@ -123,6 +124,9 @@ def create_app(config_overrides: dict | None = None):
     # No prefix: Apple and Google fetch these from a fixed path at the site root, and a
     # prefixed copy is one nothing ever requests.
     app.register_blueprint(well_known_bp)
+    # Public legal/support pages (account deletion) — no auth, no prefix: the URL a store
+    # listing points at should be short and stable.
+    app.register_blueprint(legal_bp)
 
     # CSRF applies only to the cookie-authenticated admin forms. The JSON API authenticates
     # with a bearer token that a cross-site form post cannot supply, so blanket checking is

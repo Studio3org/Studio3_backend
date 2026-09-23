@@ -399,23 +399,53 @@ def change_password():
         db.close()
 
 
+# Fixed set, same pattern as REPORT_REASONS — a dropdown, not a free-for-all, so the answers
+# an operator sees are actually comparable to each other. "other" is the escape hatch, backed
+# by the free-text `feedback` field.
+DELETION_REASONS = (
+    "not_using",
+    "found_alternative",
+    "fees_too_high",
+    "privacy_concerns",
+    "too_many_notifications",
+    "technical_issues",
+    "poor_support",
+    "other",
+)
+
+
 def delete_account():
     """Anonymize and deactivate the caller's account.
 
     Not a hard DELETE — see the deleted_at column comment on the User model. Blocks on the
     same in-flight-obligation checks as seller_disable (active listings, in-progress sales),
     since an account can't be allowed to vanish out from under an active auction or order.
+
+    Asks why, and that answer is the one thing about this account worth keeping: it is
+    recorded as an audit event with this user's *real* name/username still in the label,
+    before anything below gets anonymized — see AUDIT_ACCOUNT_DELETED's own comment for why
+    that ordering matters. An operator reading the admin audit log is the "it will appear on
+    the admin account" this exists for.
     """
     from src.modules.orders import orders_dao
     from src.modules.pieces.pieces_dao import list_user_pieces
     from src.modules.bids.auction_cancellation import REASON_SELLER_DEACTIVATED
     from src.modules.pieces import listing_service
     from src.shared.models.user import User
+    from src.shared.models import audit
+    from src.shared.models.audit import ACTOR_USER
+    from src.modules.admin import audit_service
 
     body = request.get_json() or {}
     password = body.get("password")
     if not password:
         raise AppError("Password is required to delete your account.", 400)
+    reason = (body.get("reason") or "").strip().lower()
+    if reason not in DELETION_REASONS:
+        raise AppError("Choose a reason for deleting your account.", 400)
+    feedback = (body.get("feedback") or "").strip() or None
+    if feedback and len(feedback) > 1000:
+        feedback = feedback[:1000]
 
     user_id = uuid.UUID(g.user["id"])
     db = SessionLocal()
@@ -446,6 +476,20 @@ def delete_account():
         # caught by the for-sale check above, and can't be left to expire unattended
         # once nobody is behind the account to receive its payout.
         listing_service.delist_all_for_seller(db, user.id, reason=REASON_SELLER_DEACTIVATED)
+
+        # Recorded here, before a single field below is overwritten: audit_service reads
+        # user.name/user.username *now* to build actor_label, and there is no later point at
+        # which those still say who this really was. commit=False folds it into the same
+        # transaction as the anonymization that follows, so the two can never disagree about
+        # whether this account was actually deleted.
+        audit_service.record(
+            db, audit.AUDIT_ACCOUNT_DELETED,
+            actor=user, actor_type=ACTOR_USER,
+            subject_type="user", subject_id=user.id,
+            detail={"reason": reason, "feedback": feedback},
+            note=f"{reason.replace('_', ' ')}" + (f": {feedback}" if feedback else ""),
+            commit=False,
+        )
 
         anon = f"deleted_{user.id.hex[:12]}"
         user.username = anon
