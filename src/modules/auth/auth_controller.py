@@ -441,8 +441,9 @@ def delete_account():
     if not password:
         raise AppError("Password is required to delete your account.", 400)
     reason = (body.get("reason") or "").strip().lower()
-    if reason not in DELETION_REASONS:
+    if reason and reason not in DELETION_REASONS:
         raise AppError("Choose a reason for deleting your account.", 400)
+    reason = reason or None
     feedback = (body.get("feedback") or "").strip() or None
     if feedback and len(feedback) > 1000:
         feedback = feedback[:1000]
@@ -487,7 +488,7 @@ def delete_account():
             actor=user, actor_type=ACTOR_USER,
             subject_type="user", subject_id=user.id,
             detail={"reason": reason, "feedback": feedback},
-            note=f"{reason.replace('_', ' ')}" + (f": {feedback}" if feedback else ""),
+            note=(reason.replace('_', ' ') if reason else "not given") + (f": {feedback}" if feedback else ""),
             commit=False,
         )
 

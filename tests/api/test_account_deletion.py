@@ -16,15 +16,15 @@ def _user_with_password(db, **overrides):
     return make_user(db, password=_hash_password(PASSWORD), **overrides)
 
 
-def test_a_reason_is_required(db, client, auth_headers):
+def test_a_reason_is_optional(db, client, auth_headers):
     user = _user_with_password(db)
 
     response = client.delete("/api/users/me", json={"password": PASSWORD},
                              headers=auth_headers(user))
 
-    assert response.status_code == 400
+    assert response.status_code == 200
     db.refresh(user)
-    assert user.deleted_at is None
+    assert user.deleted_at is not None
 
 
 def test_an_unrecognized_reason_is_rejected(db, client, auth_headers):
