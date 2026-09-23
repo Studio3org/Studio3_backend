@@ -360,7 +360,7 @@ def test_hosting_scope_lists_only_the_viewers_own_events_drafts_included(db, cli
 def test_going_scope_lists_events_the_viewer_rsvpd_to(db, client, auth_headers):
     host, collector = make_user(db, seller=True), make_user(db)
     going = make_event(db, host, title="RSVP'd show", status="published")
-    skipped = make_event(db, host, title="Not going", status="published")
+    _skipped = make_event(db, host, title="Not going", status="published")
     client.post(f"/api/events/{going.id}/rsvp", json={"going": True},
                 headers=auth_headers(collector))
 
