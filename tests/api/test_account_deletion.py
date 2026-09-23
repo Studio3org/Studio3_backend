@@ -19,7 +19,7 @@ def _user_with_password(db, **overrides):
 def test_a_reason_is_optional(db, client, auth_headers):
     user = _user_with_password(db)
 
-    response = client.delete("/api/users/me", json={"password": PASSWORD},
+    response = client.delete("/api/user/me", json={"password": PASSWORD},
                              headers=auth_headers(user))
 
     assert response.status_code == 200
@@ -31,7 +31,7 @@ def test_an_unrecognized_reason_is_rejected(db, client, auth_headers):
     user = _user_with_password(db)
 
     response = client.delete(
-        "/api/users/me",
+        "/api/user/me",
         json={"password": PASSWORD, "reason": "just because"},
         headers=auth_headers(user),
     )
@@ -43,7 +43,7 @@ def test_the_wrong_password_is_still_rejected_even_with_a_reason(db, client, aut
     user = _user_with_password(db)
 
     response = client.delete(
-        "/api/users/me",
+        "/api/user/me",
         json={"password": "not it", "reason": "not_using"},
         headers=auth_headers(user),
     )
@@ -58,7 +58,7 @@ def test_every_defined_reason_is_accepted(db, client, auth_headers):
         user = _user_with_password(db)
 
         response = client.delete(
-            "/api/users/me",
+            "/api/user/me",
             json={"password": PASSWORD, "reason": reason},
             headers=auth_headers(user),
         )
@@ -72,7 +72,7 @@ def test_deleting_anonymizes_the_account_and_records_why(db, client, auth_header
     user_id = user.id
 
     response = client.delete(
-        "/api/users/me",
+        "/api/user/me",
         json={
             "password": PASSWORD,
             "reason": "fees_too_high",
@@ -106,7 +106,7 @@ def test_feedback_is_optional(db, client, auth_headers):
     user = _user_with_password(db)
 
     response = client.delete(
-        "/api/users/me",
+        "/api/user/me",
         json={"password": PASSWORD, "reason": "not_using"},
         headers=auth_headers(user),
     )
@@ -122,7 +122,7 @@ def test_the_reason_is_visible_in_the_admin_audit_log(db, client, auth_headers):
     leaving = _user_with_password(db, name="Sam Okafor", username="samokafor")
 
     client.delete(
-        "/api/users/me",
+        "/api/user/me",
         json={"password": PASSWORD, "reason": "privacy_concerns"},
         headers=auth_headers(leaving),
     )
