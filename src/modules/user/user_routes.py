@@ -59,6 +59,14 @@ def patch_password():
     return resp, status
 
 
+@user_bp.delete("/me")
+@auth_required
+@async_handler
+def delete_account():
+    data, status = auth_controller.delete_account()
+    return _ok("Account deleted.", data, status)
+
+
 @user_bp.post("/me/email/request-change")
 @auth_required
 @async_handler

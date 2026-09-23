@@ -247,7 +247,7 @@ def login():
                 raise AppError(INVALID_CREDENTIALS, 401)
             user, _ = find_user_by_username_or_history(db, norm.normalized)
 
-        if not user or not user.password:
+        if not user or not user.password or user.deleted_at:
             raise AppError(INVALID_CREDENTIALS, 401)
         if not _verify_password(password, user.password):
             raise AppError(INVALID_CREDENTIALS, 401)
@@ -397,6 +397,83 @@ def change_password():
         return _issue_session_and_tokens(user, request)
     finally:
         db.close()
+
+
+def delete_account():
+    """Anonymize and deactivate the caller's account.
+
+    Not a hard DELETE — see the deleted_at column comment on the User model. Blocks on the
+    same in-flight-obligation checks as seller_disable (active listings, in-progress sales),
+    since an account can't be allowed to vanish out from under an active auction or order.
+    """
+    from src.modules.orders import orders_dao
+    from src.modules.pieces.pieces_dao import list_user_pieces
+    from src.modules.bids.auction_cancellation import REASON_SELLER_DEACTIVATED
+    from src.modules.pieces import listing_service
+    from src.shared.models.user import User
+
+    body = request.get_json() or {}
+    password = body.get("password")
+    if not password:
+        raise AppError("Password is required to delete your account.", 400)
+
+    user_id = uuid.UUID(g.user["id"])
+    db = SessionLocal()
+    try:
+        user = db.get(User, user_id)
+        if not user or not user.password or not _verify_password(password, user.password):
+            raise AppError("Password is incorrect.", 401)
+
+        active_listings = list_user_pieces(db, user.id, for_sale_only=True)
+        if active_listings:
+            raise AppError(
+                "Remove your active listings before deleting your account.", 400
+            )
+        in_progress = orders_dao.count_seller_in_progress(db, user.id)
+        if in_progress:
+            raise AppError(
+                "You have in-progress sales — complete or cancel them before deleting your account.",
+                400,
+            )
+        buyer_in_progress = orders_dao.count_buyer_in_progress(db, user.id)
+        if buyer_in_progress:
+            raise AppError(
+                "You have in-progress purchases — complete or cancel them before deleting your account.",
+                400,
+            )
+
+        # Belt-and-suspenders, same as seller_disable: a live auction with bids isn't
+        # caught by the for-sale check above, and can't be left to expire unattended
+        # once nobody is behind the account to receive its payout.
+        listing_service.delist_all_for_seller(db, user.id, reason=REASON_SELLER_DEACTIVATED)
+
+        anon = f"deleted_{user.id.hex[:12]}"
+        user.username = anon
+        user.email = f"{anon}@deleted.studio-3.co"
+        user.name = "Deleted user"
+        user.password = None
+        user.image = None
+        user.cover_photo_url = None
+        user.bio = None
+        user.location = None
+        user.phone = None
+        user.latitude = None
+        user.longitude = None
+        user.seller_enabled = False
+        user.website = None
+        user.instagram = None
+        user.twitter = None
+        user.tags = None
+        user.taste_preferences = None
+        user.deleted_at = datetime.now(timezone.utc)
+        db.commit()
+
+        revoke_all_for_user(db, user_id)
+    finally:
+        db.close()
+
+    delete_all_sessions_for_user(str(user_id))
+    return {"deleted": True}, 200
 
 
 def _email_change_otp_key(new_email: str) -> str:

@@ -70,6 +70,9 @@ class User(Base):
     updated_at = Column(
         DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
     )
+    # Account deletion anonymizes the row rather than removing it — orders.buyer_id/seller_id
+    # cascade-delete on a hard delete, which would erase the other party's order history too.
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
 
     accounts = relationship("Account", back_populates="user", cascade="all, delete-orphan")
     sessions = relationship("Session", back_populates="user", cascade="all, delete-orphan")
