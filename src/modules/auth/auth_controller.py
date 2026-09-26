@@ -399,38 +399,28 @@ def change_password():
         db.close()
 
 
-# Fixed set, same pattern as REPORT_REASONS — a dropdown, not a free-for-all, so the answers
-# an operator sees are actually comparable to each other. "other" is the escape hatch, backed
-# by the free-text `feedback` field.
-DELETION_REASONS = (
-    "not_using",
-    "found_alternative",
-    "fees_too_high",
-    "privacy_concerns",
-    "too_many_notifications",
-    "technical_issues",
-    "poor_support",
-    "other",
-)
-
-
 def delete_account():
-    """Anonymize and deactivate the caller's account.
+    """Delete the caller's account and everything it owns.
 
-    Not a hard DELETE — see the deleted_at column comment on the User model. Blocks on the
-    same in-flight-obligation checks as seller_disable (active listings, in-progress sales),
-    since an account can't be allowed to vanish out from under an active auction or order.
+    The User row itself is anonymized rather than hard-deleted — see the deleted_at column
+    comment on the User model: orders.buyer_id/seller_id would cascade-delete on a real DELETE,
+    erasing the *other* party's order history along with it. But anything that belongs to this
+    user alone — their pieces, scenes, and hosted events — is actually removed, not just left
+    behind under an anonymized name, the same as the ⋯ menu's own delete action on each of
+    those. A piece already sold/reserved is left untouched: it's the buyer's order history now,
+    not just this seller's listing, so it stays exactly as delist_all_for_seller already leaves
+    it below.
 
-    Asks why, and that answer is the one thing about this account worth keeping: it is
-    recorded as an audit event with this user's *real* name/username still in the label,
-    before anything below gets anonymized — see AUDIT_ACCOUNT_DELETED's own comment for why
-    that ordering matters. An operator reading the admin audit log is the "it will appear on
-    the admin account" this exists for.
+    Blocks on the same in-flight-obligation checks as seller_disable (active listings,
+    in-progress sales), since an account can't be allowed to vanish out from under an active
+    auction or order.
     """
     from src.modules.orders import orders_dao
-    from src.modules.pieces.pieces_dao import list_user_pieces
+    from src.modules.pieces import pieces_dao, piece_state, listing_service
+    from src.modules.posts import posts_dao
+    from src.modules.events import events_dao, event_state, lineup_service, rsvp_service
     from src.modules.bids.auction_cancellation import REASON_SELLER_DEACTIVATED
-    from src.modules.pieces import listing_service
+    from src.shared.models.event import EVENT_PUBLISHED, EVENT_CANCELLED
     from src.shared.models.user import User
     from src.shared.models import audit
     from src.shared.models.audit import ACTOR_USER
@@ -440,13 +430,6 @@ def delete_account():
     password = body.get("password")
     if not password:
         raise AppError("Password is required to delete your account.", 400)
-    reason = (body.get("reason") or "").strip().lower()
-    if reason and reason not in DELETION_REASONS:
-        raise AppError("Choose a reason for deleting your account.", 400)
-    reason = reason or None
-    feedback = (body.get("feedback") or "").strip() or None
-    if feedback and len(feedback) > 1000:
-        feedback = feedback[:1000]
 
     user_id = uuid.UUID(g.user["id"])
     db = SessionLocal()
@@ -455,7 +438,7 @@ def delete_account():
         if not user or not user.password or not _verify_password(password, user.password):
             raise AppError("Password is incorrect.", 401)
 
-        active_listings = list_user_pieces(db, user.id, for_sale_only=True)
+        active_listings = pieces_dao.list_user_pieces(db, user.id, for_sale_only=True)
         if active_listings:
             raise AppError(
                 "Remove your active listings before deleting your account.", 400
@@ -478,6 +461,33 @@ def delete_account():
         # once nobody is behind the account to receive its payout.
         listing_service.delist_all_for_seller(db, user.id, reason=REASON_SELLER_DEACTIVATED)
 
+        # Everything left with this user's name on it that isn't tangled up in someone
+        # else's order history comes down for real, not just re-labeled.
+        for piece in pieces_dao.list_user_pieces(db, user.id, include_drafts=True):
+            if piece.status in (piece_state.DRAFT, piece_state.LIVE, piece_state.DELISTED):
+                pieces_dao.delete_piece(db, piece)
+
+        for post in posts_dao.list_user_posts(db, user.id, include_drafts=True):
+            posts_dao.delete_post(db, post)
+
+        for event in events_dao.list_for_host(db, user.id, viewer_id=user.id):
+            event_title = event.title
+            was_published = event.status == EVENT_PUBLISHED
+            if was_published:
+                event_state.transition_event(
+                    db, event, EVENT_CANCELLED, reason="host_deleted", commit=False
+                )
+                event.cancellation_reason = "Host deleted their account"
+                lineup_service.cancel_lineup(db, event, "event_deleted", commit=False)
+                db.commit()
+                rsvp_service.notify_attendees(
+                    db, event,
+                    type="event_cancelled",
+                    title="Event cancelled",
+                    body=f'"{event_title}" has been removed because its host deleted their account.',
+                )
+            events_dao.delete_event(db, event)
+
         # Recorded here, before a single field below is overwritten: audit_service reads
         # user.name/user.username *now* to build actor_label, and there is no later point at
         # which those still say who this really was. commit=False folds it into the same
@@ -487,8 +497,6 @@ def delete_account():
             db, audit.AUDIT_ACCOUNT_DELETED,
             actor=user, actor_type=ACTOR_USER,
             subject_type="user", subject_id=user.id,
-            detail={"reason": reason, "feedback": feedback},
-            note=(reason.replace('_', ' ') if reason else "not given") + (f": {feedback}" if feedback else ""),
             commit=False,
         )
 

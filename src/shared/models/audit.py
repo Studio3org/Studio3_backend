@@ -45,7 +45,7 @@ AUDIT_EVENT_CANCELLED = "event_cancelled"
 AUDIT_EVENT_DELETED = "event_deleted"
 # Written with the real name/username still in the actor_label — captured before the
 # anonymization that account deletion does to the row itself, so this is the one place an
-# operator can still see who this was. The reason/feedback the user gave live in `detail`.
+# operator can still see who this was.
 AUDIT_ACCOUNT_DELETED = "account_deleted"
 AUDIT_ADMIN_LOGIN = "admin_login"
 # Written by the nightly reconciliation when the ledger and Stripe disagree. Recorded rather
