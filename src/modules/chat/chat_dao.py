@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import select, or_, tuple_
+from sqlalchemy import select, or_, and_, tuple_
 from sqlalchemy.orm import Session
 
 from src.shared.models.block import Block
@@ -73,14 +73,43 @@ def other_participant_id(conversation: Conversation, viewer_id: uuid.UUID) -> uu
     )
 
 
+def _first_sender_id():
+    """Correlated subquery: who sent a conversation's first message — i.e. who started it.
+
+    A thread has no stored initiator; its opening message is the request, so its sender is
+    the one waiting on a pending thread and the other participant is the one who decides.
+    """
+    return (
+        select(ChatMessage.sender_id)
+        .where(ChatMessage.conversation_id == Conversation.id)
+        .order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc())
+        .limit(1)
+        .correlate(Conversation)
+        .scalar_subquery()
+    )
+
+
+def initiator_id(db: Session, conversation: Conversation) -> Optional[uuid.UUID]:
+    return db.execute(
+        select(ChatMessage.sender_id)
+        .where(ChatMessage.conversation_id == conversation.id)
+        .order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
 def list_inbox(
     db: Session, user_id: uuid.UUID, limit: int = 20, before: Optional[tuple] = None
 ) -> list[Conversation]:
-    """Open threads for this user (the recipient side of a pending thread only sees it in
-    list_requests() instead — matches the Instagram-style "message requests" split)."""
+    """Open threads for this user, plus pending requests they sent (still waiting on the other
+    side). The recipient of a pending thread sees it in list_requests() instead — matches the
+    Instagram-style "message requests" split."""
     q = select(Conversation).where(
         or_(Conversation.participant_one_id == user_id, Conversation.participant_two_id == user_id),
-        Conversation.status == "open",
+        or_(
+            Conversation.status == "open",
+            and_(Conversation.status == "pending", _first_sender_id() == user_id),
+        ),
     )
     if before:
         before_ts, before_id = before
@@ -99,6 +128,7 @@ def list_requests(
     q = select(Conversation).where(
         or_(Conversation.participant_one_id == user_id, Conversation.participant_two_id == user_id),
         Conversation.status == "pending",
+        _first_sender_id() != user_id,
     )
     if before:
         before_ts, before_id = before

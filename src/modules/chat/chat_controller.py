@@ -309,8 +309,9 @@ def send_message(conversation_id: str):
         _require_participant(conversation, me_id)
         if conversation.status == "closed":
             raise AppError("This conversation is closed.", 400)
-        if conversation.status == "pending":
-            # Replying to a pending request implicitly accepts it (matches Instagram).
+        if conversation.status == "pending" and chat_dao.initiator_id(db, conversation) != me_id:
+            # The recipient replying to a pending request implicitly accepts it (matches
+            # Instagram). The sender following up on their own request must not.
             chat_dao.accept_conversation(db, conversation)
         message = chat_dao.create_message(db, conversation, me_id, text[:2000] if text else None, image_url)
         other_id = chat_dao.other_participant_id(conversation, me_id)
@@ -329,6 +330,8 @@ def accept(conversation_id: str):
         me_id = uuid.UUID(g.user["id"])
         conversation = chat_dao.get_conversation(db, uuid.UUID(conversation_id))
         _require_participant(conversation, me_id)
+        if conversation.status == "pending" and chat_dao.initiator_id(db, conversation) == me_id:
+            raise AppError("Only the person you messaged can accept this request.", 403)
         if conversation.status != "pending":
             raise AppError(f"Cannot accept a conversation in status '{conversation.status}'.", 400)
         chat_dao.accept_conversation(db, conversation)
@@ -343,6 +346,8 @@ def decline(conversation_id: str):
         me_id = uuid.UUID(g.user["id"])
         conversation = chat_dao.get_conversation(db, uuid.UUID(conversation_id))
         _require_participant(conversation, me_id)
+        if conversation.status == "pending" and chat_dao.initiator_id(db, conversation) == me_id:
+            raise AppError("Only the person you messaged can decline this request.", 403)
         if conversation.status != "pending":
             raise AppError(f"Cannot decline a conversation in status '{conversation.status}'.", 400)
         chat_dao.decline_conversation(db, conversation)
