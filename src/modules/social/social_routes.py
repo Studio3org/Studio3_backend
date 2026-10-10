@@ -1,7 +1,7 @@
 """Social routes."""
 from flask import Blueprint, request
 
-from src.middlewares.auth_middleware import onboarding_required, auth_required
+from src.middlewares.auth_middleware import onboarding_required, auth_required, optional_auth
 from src.shared.utils.api_response import success_response
 from src.shared.utils.async_handler import async_handler
 from src.modules.social import social_controller
@@ -159,6 +159,7 @@ def comment_post(post_id):
 
 
 @social_bp.get("/pieces/<piece_id>/comments")
+@optional_auth
 @async_handler
 def list_piece_comments(piece_id):
     cursor = request.args.get("cursor")
@@ -168,6 +169,7 @@ def list_piece_comments(piece_id):
 
 
 @social_bp.get("/posts/<post_id>/comments")
+@optional_auth
 @async_handler
 def list_post_comments(post_id):
     cursor = request.args.get("cursor")

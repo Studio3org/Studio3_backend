@@ -19,26 +19,28 @@ def _ordered_pair(user_a: uuid.UUID, user_b: uuid.UUID) -> tuple[uuid.UUID, uuid
     return (user_a, user_b) if str(user_a) < str(user_b) else (user_b, user_a)
 
 
-def search_users(db: Session, viewer_id: uuid.UUID, query: str, limit: int = 20) -> list[User]:
+def search_users(db: Session, viewer_id: Optional[uuid.UUID], query: str, limit: int = 20) -> list[User]:
     """Users matching `query` (username or name, case-insensitive substring) for the "new
     message" composer — excludes the viewer themself and anyone blocked in either direction.
     Doesn't filter on `message_permission`: that's enforced at send time (start_conversation),
-    same as the rest of the app lets you find/view a private account before following it."""
+    same as the rest of the app lets you find/view a private account before following it.
+
+    Also backs Explore's people search, which signed-out guests can use — with no viewer
+    there's nobody to exclude."""
     like = f"%{query.strip()}%"
-    blocked_subquery = select(Block.blocked_id).where(Block.blocker_id == viewer_id)
-    blocked_by_subquery = select(Block.blocker_id).where(Block.blocked_id == viewer_id)
-    q = (
-        select(User)
-        .where(
-            or_(User.username.ilike(like), User.name.ilike(like)),
+    q = select(User).where(
+        or_(User.username.ilike(like), User.name.ilike(like)),
+        User.deleted_at.is_(None),
+    )
+    if viewer_id:
+        blocked_subquery = select(Block.blocked_id).where(Block.blocker_id == viewer_id)
+        blocked_by_subquery = select(Block.blocker_id).where(Block.blocked_id == viewer_id)
+        q = q.where(
             User.id != viewer_id,
             User.id.not_in(blocked_subquery),
             User.id.not_in(blocked_by_subquery),
         )
-        .order_by(User.username.asc())
-        .limit(limit)
-    )
-    return list(db.execute(q).scalars().all())
+    return list(db.execute(q.order_by(User.username.asc()).limit(limit)).scalars().all())
 
 
 def get_conversation_between(db: Session, user_a: uuid.UUID, user_b: uuid.UUID) -> Optional[Conversation]:

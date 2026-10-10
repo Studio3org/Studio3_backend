@@ -9,6 +9,7 @@ from redis.exceptions import RedisError
 from sqlalchemy.exc import IntegrityError
 
 from src.shared.config.database import SessionLocal
+from src.shared.constants import CURRENT_TERMS_VERSION
 from src.shared.utils.app_error import AppError
 from src.shared.utils.messages import (
     OTP_VERIFICATION_FAILED,
@@ -169,6 +170,17 @@ def otp_verify():
     return {"verified": True}, 200, None
 
 
+def _accepted_terms(body: dict) -> bool:
+    return body.get("acceptedTerms") is True
+
+
+def _record_terms_acceptance(db, user) -> None:
+    user.terms_accepted_at = datetime.now(timezone.utc)
+    user.terms_version = CURRENT_TERMS_VERSION
+    db.commit()
+    db.refresh(user)
+
+
 def register():
     rate_limit_ip("register", RATE_REGISTER_PER_IP, 60)
     body = request.get_json() or {}
@@ -187,6 +199,10 @@ def register():
         raise AppError(EMAIL_REQUIRED, 400)
     if not password or len(password) < MIN_PASSWORD_LEN:
         raise AppError(PASSWORD_REQUIRED if not password else "Password must be at least 8 characters.", 400)
+    # Older app builds don't send the flag at all, so only an explicit refusal is rejected;
+    # every current client blocks the Create button until the terms checkbox is ticked.
+    if body.get("acceptedTerms") is False:
+        raise AppError("You must agree to the Terms of Use to create an account.", 400)
     if not otp:
         raise AppError(OTP_VERIFICATION_FAILED, 400)
     if not verify_otp(email, otp):
@@ -222,6 +238,8 @@ def register():
             db.rollback()
             raise AppError("Username or email was just taken. Try another.", 409)
 
+        if _accepted_terms(body):
+            _record_terms_acceptance(db, user)
         invalidate_username_cache(norm.normalized)
         return _issue_session_and_tokens(user, request)
     finally:
@@ -251,6 +269,8 @@ def login():
             raise AppError(INVALID_CREDENTIALS, 401)
         if not _verify_password(password, user.password):
             raise AppError(INVALID_CREDENTIALS, 401)
+        if _accepted_terms(body):
+            _record_terms_acceptance(db, user)
         return _issue_session_and_tokens(user, request)
     finally:
         db.close()

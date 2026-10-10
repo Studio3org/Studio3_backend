@@ -4,7 +4,7 @@ import uuid
 from flask import request, g
 
 from src.shared.config.database import SessionLocal
-from src.shared.constants import ALLOWED_ROLES
+from src.shared.constants import ALLOWED_ROLES, CURRENT_TERMS_VERSION
 from src.shared.storage.s3_service import validate_user_media_url, migrate_user_prefix
 from src.shared.username.claim import change_username
 from src.shared.username.constants import RATE_USERNAME_CHANGE_PER_USER
@@ -41,6 +41,28 @@ def get_me():
         user = get_user_by_id(db, uuid.UUID(g.user["id"]))
         if not user:
             raise AppError("User not found.", 404)
+        return user_to_dict(db, user, viewer_id=user.id), 200
+    finally:
+        db.close()
+
+
+def accept_terms():
+    """Record that the signed-in account agreed to the current Terms of Use / EULA.
+
+    For accounts that signed up before the terms existed, or whose recorded version is older
+    than CURRENT_TERMS_VERSION — the client shows the terms and calls this on "I agree".
+    """
+    from datetime import datetime, timezone
+
+    db = SessionLocal()
+    try:
+        user = get_user_by_id(db, uuid.UUID(g.user["id"]))
+        if not user:
+            raise AppError("User not found.", 404)
+        user.terms_accepted_at = datetime.now(timezone.utc)
+        user.terms_version = CURRENT_TERMS_VERSION
+        db.commit()
+        db.refresh(user)
         return user_to_dict(db, user, viewer_id=user.id), 200
     finally:
         db.close()

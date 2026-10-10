@@ -33,6 +33,14 @@ def get_me():
     return _ok("OK", data, status)
 
 
+@user_bp.post("/me/accept-terms")
+@auth_required
+@async_handler
+def accept_terms():
+    data, status = user_controller.accept_terms()
+    return _ok("Thanks for agreeing to the Terms of Use.", data, status)
+
+
 @user_bp.patch("/me")
 @auth_required
 @async_handler

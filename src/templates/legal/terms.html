@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Terms of Use (EULA) — Studio3</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f5f2ee; color: #231f1b;
+           font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    .wrap { max-width: 680px; margin: 0 auto; padding: 48px 20px 80px; }
+    .brand { font-weight: 800; font-size: 20px; letter-spacing: -0.02em; margin-bottom: 32px; }
+    h1 { font-size: 32px; font-weight: 700; line-height: 1.15; margin: 0 0 8px; }
+    .lede { color: #6b665e; font-size: 15px; margin: 0 0 32px; }
+    section { margin-bottom: 28px; }
+    h2 { font-size: 18px; font-weight: 600; margin: 0 0 10px; }
+    p, li { color: #3a3530; font-size: 15px; }
+    p { margin: 0 0 10px; }
+    ul { padding-left: 20px; margin: 0 0 12px; }
+    .callout { background: #fff; border: 1px solid #e3ddd5; border-radius: 12px; padding: 16px 18px; }
+    a { color: #231f1b; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand">Studio3</div>
+    <h1>Terms of Use (EULA)</h1>
+    <p class="lede">Effective {{ version }}. By creating an account, logging in, or posting on Studio3
+      you agree to these terms. If you don't agree, don't use the app.</p>
+
+{% include "legal/_terms_body.html" %}
+
+  </div>
+</body>
+</html>

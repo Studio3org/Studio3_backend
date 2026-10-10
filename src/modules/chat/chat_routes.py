@@ -1,7 +1,7 @@
 """Chat routes — general-purpose 1:1 direct messages, mounted at /api/conversations."""
 from flask import Blueprint
 
-from src.middlewares.auth_middleware import auth_required, onboarding_required
+from src.middlewares.auth_middleware import auth_required, onboarding_required, optional_auth
 from src.shared.utils.api_response import success_response
 from src.shared.utils.async_handler import async_handler
 from src.modules.chat import chat_controller
@@ -31,7 +31,7 @@ def list_requests():
 
 
 @chat_bp.get("/search-users")
-@auth_required
+@optional_auth
 @async_handler
 def search_users():
     data, status = chat_controller.search_users()

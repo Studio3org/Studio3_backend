@@ -50,6 +50,22 @@ def is_blocked_either_way(db: Session, user_a: uuid.UUID, user_b: uuid.UUID) -> 
     ).first() is not None
 
 
+def blocked_user_ids(db: Session, viewer_id: uuid.UUID | None) -> set[uuid.UUID]:
+    """Every account hidden from [viewer_id]: ones they blocked and ones that blocked them.
+
+    Used to strip those accounts' pieces, scenes, and comments out of feeds and comment
+    threads, so blocking someone removes their content from the blocker's app immediately.
+    """
+    if not viewer_id:
+        return set()
+    rows = db.execute(
+        select(Block.blocker_id, Block.blocked_id).where(
+            or_(Block.blocker_id == viewer_id, Block.blocked_id == viewer_id)
+        )
+    ).all()
+    return {blocked if blocker == viewer_id else blocker for blocker, blocked in rows}
+
+
 def list_blocked(db: Session, blocker_id: uuid.UUID) -> list[User]:
     return list(
         db.execute(

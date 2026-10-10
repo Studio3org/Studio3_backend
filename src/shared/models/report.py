@@ -1,4 +1,4 @@
-"""Report — a user flagging a piece, post, or another user for moderation review.
+"""Report — a user flagging a piece, post, comment, or another user for moderation review.
 
 Unlike Dispute (order-specific, one per order), a target can be reported by many different
 users, so there's no uniqueness constraint here; the controller instead no-ops a repeat
@@ -32,7 +32,7 @@ class Report(Base):
     reporter_id = Column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    target_type = Column(String(16), nullable=False)  # piece | post | user
+    target_type = Column(String(16), nullable=False)  # piece | post | comment | user
     target_id = Column(UUID(as_uuid=True), nullable=False, index=True)
     reason = Column(String(32), nullable=False)
     details = Column(Text, nullable=True)

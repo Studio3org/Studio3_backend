@@ -15,6 +15,7 @@ from src.modules.admin import audit_service
 from src.shared.models.user import User
 from src.shared.models.piece import Piece
 from src.shared.models.post import Post
+from src.shared.models.social import Comment
 from src.shared.models.report import REPORT_RESOLVED, REPORT_DISMISSED
 from src.shared.utils.app_error import AppError
 from src.shared.utils.logger import get_logger
@@ -25,6 +26,7 @@ from src.modules.orders import orders_dao
 from src.modules.payments import payouts_service
 from src.modules.shipments import shipments_dao
 from src.modules.reports import report_dao
+from src.modules.reports.report_controller import comment_label
 
 logger = get_logger(__name__)
 
@@ -231,6 +233,12 @@ def reports_queue():
         piece_ids = {r.target_id for r in reports if r.target_type == "piece"}
         post_ids = {r.target_id for r in reports if r.target_type == "post"}
         user_ids = {r.target_id for r in reports if r.target_type == "user"}
+        comment_ids = {r.target_id for r in reports if r.target_type == "comment"}
+        comments = (
+            {c.id: c for c in db.execute(select(Comment).where(Comment.id.in_(comment_ids))).scalars()}
+            if comment_ids
+            else {}
+        )
         pieces = (
             {p.id: p.title for p in db.execute(select(Piece).where(Piece.id.in_(piece_ids))).scalars()}
             if piece_ids
@@ -255,6 +263,8 @@ def reports_queue():
                 return pieces.get(r.target_id, "Deleted piece")
             if r.target_type == "post":
                 return posts.get(r.target_id, "Deleted scene")
+            if r.target_type == "comment":
+                return comment_label(comments.get(r.target_id))
             return target_users.get(r.target_id, "Deleted account")
 
         rows = [
@@ -280,15 +290,18 @@ def resolve_report(report_id: str):
         return redirect(url_for("admin.reports_queue"))
     action = (request.form.get("action") or "").strip()
     note = (request.form.get("note") or "").strip()
-    status_map = {"resolve": REPORT_RESOLVED, "dismiss": REPORT_DISMISSED}
+    status_map = {"resolve": REPORT_RESOLVED, "remove": REPORT_RESOLVED, "dismiss": REPORT_DISMISSED}
     if action not in status_map:
-        return redirect(url_for("admin.reports_queue", error="Choose resolve or dismiss."))
+        return redirect(url_for("admin.reports_queue", error="Choose resolve, remove, or dismiss."))
 
     db = SessionLocal()
     try:
         report = report_dao.get_report(db, rid)
         if not report:
             return redirect(url_for("admin.reports_queue", error="Report not found."))
+        if action == "remove":
+            removed = report_dao.remove_reported_target(db, report)
+            note = " — ".join(x for x in ("Content removed" if removed else "Already gone", note) if x)
         report_dao.resolve_report(db, report, g.admin.id, status_map[action], note or None)
     finally:
         db.close()

@@ -209,9 +209,16 @@ def count_likes_for_targets(db: Session, target_type: str, target_ids: list[uuid
 
 
 def list_comments(
-    db: Session, target_type: str, target_id: uuid.UUID, limit: int = 50, before: Optional[datetime] = None
+    db: Session,
+    target_type: str,
+    target_id: uuid.UUID,
+    limit: int = 50,
+    before: Optional[datetime] = None,
+    exclude_user_ids: Optional[set] = None,
 ) -> list[Comment]:
     q = select(Comment).where(Comment.target_type == target_type, Comment.target_id == target_id)
+    if exclude_user_ids:
+        q = q.where(Comment.user_id.notin_(exclude_user_ids))
     if before:
         q = q.where(Comment.created_at < before)
     return list(db.execute(q.order_by(Comment.created_at.desc()).limit(limit)).scalars().all())

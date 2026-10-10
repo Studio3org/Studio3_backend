@@ -63,7 +63,7 @@ def search_users():
     limit = min(int(request.args.get("limit", 20)), 50)
     db = SessionLocal()
     try:
-        me_id = uuid.UUID(g.user["id"])
+        me_id = uuid.UUID(g.user["id"]) if getattr(g, "user", None) else None
         users = chat_dao.search_users(db, me_id, query, limit=limit)
         items = [
             {"username": u.username, "name": u.name, "profilePhotoUrl": u.image}
