@@ -21,6 +21,7 @@ from src.shared.config.database import SessionLocal
 from src.shared.models import audit
 from src.shared.models.piece import Piece
 from src.shared.models.post import Post
+from src.shared.models.social import Comment
 from src.shared.models.report import REPORT_DISMISSED, REPORT_RESOLVED
 from src.shared.models.user import User
 from src.shared.utils.app_error import AppError
@@ -31,6 +32,7 @@ from src.modules.admin.admin_controller import ORDER_STATUSES
 from src.modules.orders import orders_dao
 from src.modules.payments import payouts_service
 from src.modules.reports import report_dao
+from src.modules.reports.report_controller import comment_label
 from src.modules.shipments import shipments_dao
 
 logger = get_logger(__name__)
@@ -331,6 +333,7 @@ def list_reports():
         pieces = _by_id(db, Piece, {r.target_id for r in reports if r.target_type == "piece"})
         posts = _by_id(db, Post, {r.target_id for r in reports if r.target_type == "post"})
         targets = _by_id(db, User, {r.target_id for r in reports if r.target_type == "user"})
+        comments = _by_id(db, Comment, {r.target_id for r in reports if r.target_type == "comment"})
 
         def label(r):
             if r.target_type == "piece":
@@ -339,6 +342,8 @@ def list_reports():
             if r.target_type == "post":
                 post = posts.get(r.target_id)
                 return (post.caption or "Scene")[:60] if post else "Deleted scene"
+            if r.target_type == "comment":
+                return comment_label(comments.get(r.target_id))
             user = targets.get(r.target_id)
             return f"@{user.username}" if user else "Deleted account"
 
@@ -376,9 +381,9 @@ def resolve_report(report_id: str):
     rid = _uuid_or_404(report_id, "Report")
     body = _body()
     action = (body.get("action") or "").strip()
-    outcomes = {"resolve": REPORT_RESOLVED, "dismiss": REPORT_DISMISSED}
+    outcomes = {"resolve": REPORT_RESOLVED, "remove": REPORT_RESOLVED, "dismiss": REPORT_DISMISSED}
     if action not in outcomes:
-        raise AppError("Choose resolve or dismiss.", 400)
+        raise AppError("Choose resolve, remove, or dismiss.", 400)
     note = (body.get("note") or "").strip()
 
     db = SessionLocal()
@@ -386,6 +391,9 @@ def resolve_report(report_id: str):
         report = report_dao.get_report(db, rid)
         if not report:
             raise AppError("Report not found.", 404)
+        if action == "remove":
+            removed = report_dao.remove_reported_target(db, report)
+            note = " — ".join(x for x in ("Content removed" if removed else "Already gone", note) if x)
         report_dao.resolve_report(db, report, _admin_id(), outcomes[action], note or None)
     finally:
         db.close()

@@ -260,3 +260,26 @@ def test_one_running_auction_per_piece(db):
         auction_dao.create_auction(
             db, piece, seller, starting_bid_cents=200_00, duration_days=7
         )
+
+def test_an_authorisation_never_asks_to_save_the_card_again(db, stripe_enabled):
+    """The regression that broke every bid in production.
+
+    `_authorize` set both `off_session=True` and `setup_future_usage`, which Stripe refuses
+    outright — so every bid on every card came back "your card wouldn't authorise that
+    amount", and the suite stayed green because the stub was more permissive than the API.
+
+    The card is already attached to the Customer by the SetupIntent behind the saved-card
+    picker, which is what makes a re-authorisation weeks later possible. Asking again here
+    bought nothing and cost the whole feature.
+    """
+    seller, bidder = make_user(db, seller=True), make_user(db)
+    piece = make_piece(db, seller, price_cents=300_00, status="live", listing_type="auction")
+    auction = make_auction(db, piece, seller, starting_bid_cents=300_00)
+    card = stripe_enabled.add_card(holds_service.ensure_customer(db, bidder))
+    db.commit()
+
+    bid = bid_dao.place_bid(db, auction.id, bidder, 300_00, card["id"])
+
+    hold = holds_service.live_hold_for_bidder(db, auction.id, bidder.id)
+    assert hold is not None and hold.status == HOLD_HELD, "the authorisation must succeed"
+    assert bid.status == BID_ACTIVE

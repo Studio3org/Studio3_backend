@@ -61,6 +61,14 @@ def count_seller_in_progress(db: Session, seller_id: uuid.UUID) -> int:
     ).scalar_one()
 
 
+def count_buyer_in_progress(db: Session, buyer_id: uuid.UUID) -> int:
+    return db.execute(
+        select(func.count(Order.id)).where(
+            Order.buyer_id == buyer_id, Order.status.in_(IN_PROGRESS_STATUSES)
+        )
+    ).scalar_one()
+
+
 def create_order(
     db: Session,
     buyer_id: uuid.UUID,

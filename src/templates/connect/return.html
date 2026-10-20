@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>{{ title }} · Studio 3</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f5f2ee; color: #231f1b;
+           font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    .wrap { max-width: 420px; margin: 0 auto; padding: 72px 24px; text-align: center; }
+    h1 { font-size: 20px; font-weight: 600; margin: 0 0 10px; letter-spacing: -0.01em; }
+    p { color: #6b675f; margin: 0 0 28px; }
+    .btn { display: inline-block; background: #231f1b; color: #f5f2ee; text-decoration: none;
+           padding: 13px 26px; border-radius: 9px; font-size: 15px; font-weight: 500; }
+    /* Hidden until the deep link has had its chance. Offering a store badge to somebody
+       who already has the app installed is noise at the end of a long flow. */
+    #fallback { display: none; margin-top: 36px; }
+    #fallback.show { display: block; }
+    .store-row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    .store-row img { height: 42px; }
+    .hint { font-size: 13px; color: #8c8880; margin-top: 22px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>{{ title }}</h1>
+    <p>{{ description }}</p>
+
+    <a class="btn" href="{{ deep_link }}">Open Studio 3</a>
+
+    <div id="fallback">
+      <p class="hint">Not opening? Get the app:</p>
+      <div class="store-row">
+        {% if app_store_url %}<a href="{{ app_store_url }}"><img alt="Download on the App Store"
+          src="https://developer.apple.com/assets/elements/badges/download-on-the-app-store.svg"></a>{% endif %}
+        {% if play_store_url %}<a href="{{ play_store_url }}"><img alt="Get it on Google Play"
+          src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png"></a>{% endif %}
+      </div>
+    </div>
+
+    <p class="hint">You can close this tab.</p>
+  </div>
+
+  <script>
+    // On a phone, try the app immediately — the artist came from it and wants to be back
+    // in it. The custom scheme is used rather than the https link because it needs no
+    // domain verification, so it works even before Universal Links take effect.
+    var isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    if (isMobile) {
+      window.location.href = {{ deep_link | tojson }};
+      // If we are still here after a moment, the app did not open. Only then is a store
+      // badge useful.
+      setTimeout(function () {
+        document.getElementById('fallback').classList.add('show');
+      }, 1500);
+    } else {
+      // Desktop has no app to return to, so say so instead of spinning on a deep link
+      // that cannot resolve.
+      document.getElementById('fallback').classList.add('show');
+    }
+  </script>
+</body>
+</html>

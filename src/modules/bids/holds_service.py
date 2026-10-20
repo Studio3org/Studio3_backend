@@ -140,8 +140,14 @@ def _authorize(
         capture_method="manual",
         confirm=True,
         off_session=True,
-        # Lets a later re-authorisation run without the bidder present.
-        setup_future_usage="off_session",
+        # setup_future_usage is deliberately absent. Stripe refuses it alongside
+        # off_session — "you cannot confirm with off_session=true when
+        # setup_future_usage is also set" — and the two were set together here, so every
+        # bid failed on every card with "your card wouldn't authorise that amount".
+        #
+        # It was never needed. The card reaches this point already attached to the
+        # Customer by the SetupIntent behind the saved-card picker, which is what makes a
+        # re-authorisation weeks later possible. Asking for it again buys nothing.
         metadata=metadata,
         idempotency_key=idempotency_key,
     )

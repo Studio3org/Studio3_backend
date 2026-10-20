@@ -20,6 +20,27 @@ if [[ ! -f "$CONFIG" ]]; then
   exit 1
 fi
 # shellcheck disable=SC1090
+# A value containing shell syntax — the Firebase service-account JSON is the one
+# that bites — fails here as "command not found" naming a fragment of the value.
+# Say what it actually means, since the message alone points nowhere useful.
+# Checked on stderr rather than the exit status, because the failure that matters here
+# does not fail. An unquoted value containing a space — CORS_ORIGINS with two origins,
+# say — assigns the first word and runs the rest as a command: bash complains, source
+# still returns 0, and the deploy proceeds with a silently truncated value.
+CONFIG_ERR=$(source "$CONFIG" 2>&1 >/dev/null)
+if [[ -n "$CONFIG_ERR" ]]; then
+  echo "$CONFIG could not be read cleanly:" >&2
+  echo >&2
+  echo "$CONFIG_ERR" >&2
+  echo >&2
+  echo "This file is sourced by bash, so any value containing spaces, commas," >&2
+  echo "braces or quotes must be wrapped in single quotes:" >&2
+  echo "  CORS_ORIGINS='https://a.example.com,https://b.example.com'" >&2
+  echo >&2
+  echo "Refusing to deploy — the value would arrive truncated." >&2
+  exit 1
+fi
+# shellcheck disable=SC1090
 source "$CONFIG"
 
 : "${EC2_HOST:?Run create-infra.sh first (EC2_HOST empty)}"
@@ -73,30 +94,15 @@ echo "==> Syncing code -> ${EC2_USER}@${EC2_HOST}:${APP_DIR}"
 "${RSYNC[@]}" -e "ssh -i ${SSH_KEY} -o StrictHostKeyChecking=accept-new" \
   "${ROOT}/" "${EC2_USER}@${EC2_HOST}:${APP_DIR}/"
 
-# Generated once and written back to config.env, never re-rolled.
-#
-# These used to be minted fresh whenever they were empty, which worked the first
-# time and quietly signed everyone out on every deploy after it: a new JWT_SECRET
-# invalidates every access token, and a new SECRET_KEY kills every admin cookie
-# session. Persisting them makes the second deploy a no-op instead of a logout.
-persist_secret() {
-  local name="$1" value="${2:-}"
-  if [[ -z "$value" ]]; then
-    value=$(openssl rand -hex 32)
-    if grep -q "^${name}=" "$CONFIG"; then
-      # BSD and GNU sed disagree about -i, so rewrite via a temp file instead.
-      local tmp
-      tmp=$(mktemp)
-      sed "s|^${name}=.*|${name}=${value}|" "$CONFIG" > "$tmp" && mv "$tmp" "$CONFIG"
-    else
-      printf '%s=%s\n' "$name" "$value" >> "$CONFIG"
-    fi
-    echo "==> Generated ${name} and saved it to deploy/config.env (keep this file safe)"
-  fi
-  printf '%s' "$value"
-}
-JWT_SECRET=$(persist_secret JWT_SECRET "${JWT_SECRET}")
-SECRET_KEY=$(persist_secret SECRET_KEY "${SECRET_KEY}")
+# Generated on the first deploy only. upsert_config further down writes them back
+# into config.env, so the next deploy reads them from there rather than minting new
+# ones — which would sign out every user and end every admin session.
+if [[ -z "${JWT_SECRET}" ]]; then
+  JWT_SECRET=$(openssl rand -hex 32)
+fi
+if [[ -z "${SECRET_KEY}" ]]; then
+  SECRET_KEY=$(openssl rand -hex 32)
+fi
 
 FRONTEND_URL="${FRONTEND_URL:-https://${DOMAIN:-localhost}}"
 BACKEND_URL="${BACKEND_URL:-https://${DOMAIN:-$EC2_HOST}}"
@@ -119,7 +125,7 @@ JWT_ACCESS_EXPIRY_MINUTES=${JWT_ACCESS_EXPIRY_MINUTES:-15}
 SALT_ROUNDS=${SALT_ROUNDS:-10}
 
 FRONTEND_URL=${FRONTEND_URL}
-CORS_ORIGINS=${CORS_ORIGINS:-}
+CORS_ORIGINS='${CORS_ORIGINS:-}'
 BACKEND_URL=${BACKEND_URL}
 
 STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
@@ -229,14 +235,32 @@ for unit in studio3-api studio3-worker studio3-beat; do
 done
 REMOTE
 
+# Report against whatever is actually configured, and check rather than remind. The
+# closing text used to print the raw IP and tell you to point Stripe at the domain on
+# every single run, long after both were done — advice that is always shown is advice
+# nobody reads.
+BASE="${BACKEND_URL:-http://${EC2_HOST}}"
+
 echo
-echo "Deployed. Health check:"
-echo "  curl -sS http://${EC2_HOST}/"
-echo "  curl -sS http://${EC2_HOST}/health     # dependencies, not just liveness"
-if [[ -n "${DOMAIN:-}" ]]; then
-  echo "  After DNS + SSL: https://${DOMAIN}/"
+echo "Deployed. Checking ${BASE} ..."
+live=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "${BASE}/" || echo "000")
+ready=$(curl -sS --max-time 20 "${BASE}/health" 2>/dev/null || echo "")
+
+if [[ "$live" == "200" ]]; then
+  echo "  liveness  200"
+else
+  echo "  liveness  ${live}  <- the service is not answering; journalctl -u studio3-api"
+fi
+
+case "$ready" in
+  *'"status":"ok"'*) echo "  readiness ok — database, redis, s3 and stripe all reachable" ;;
+  "")               echo "  readiness no response from /health" ;;
+  *)                echo "  readiness DEGRADED:"; echo "    $ready" ;;
+esac
+
+# Only worth saying when it is still true.
+if [[ "$BASE" == http://* ]]; then
   echo
-  echo "Stripe: point both the platform and the Connect endpoint at"
-  echo "  https://${DOMAIN}/api/payments/webhook"
-  echo "and put both signing secrets, comma-separated, in STRIPE_WEBHOOK_SECRET."
+  echo "Still on plain HTTP. iOS and the browser both refuse it, and Stripe requires"
+  echo "HTTPS for Connect return URLs — run deploy/setup-ssl.sh on the server."
 fi

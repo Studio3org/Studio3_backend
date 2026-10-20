@@ -31,7 +31,7 @@ def explore():
 
 
 @feeds_bp.get("/for-you")
-@onboarding_required
+@optional_auth
 @async_handler
 def for_you():
     data, status = feeds_controller.for_you_feed()

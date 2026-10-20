@@ -44,6 +44,7 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <select name="action">
               <option value="resolve">Resolve</option>
+              {% if row.report.target_type != 'user' %}<option value="remove">Remove content</option>{% endif %}
               <option value="dismiss">Dismiss</option>
             </select>
             <input type="text" name="note" placeholder="Note (optional)" style="width:140px;">

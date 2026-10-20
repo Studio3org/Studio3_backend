@@ -13,15 +13,25 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # Prefer local config on laptop; on EC2 use /opt/studio3/deploy/config.env if synced
 CONFIG="${ROOT}/deploy/config.env"
-if [[ ! -f "$CONFIG" ]]; then
-  echo "Missing deploy/config.env (DOMAIN and SSL_EMAIL required)."
+# The config file is deliberately absent on the server: deploy.sh excludes it from the
+# rsync because it holds every production secret, and only two non-secret values are
+# needed here. So take them from the environment when the file is not there, which is
+# the normal case for the host this script is meant to run on.
+if [[ -f "$CONFIG" ]]; then
+  # shellcheck disable=SC1090
+  source "$CONFIG"
+fi
+
+if [[ -z "${DOMAIN:-}" || -z "${SSL_EMAIL:-}" ]]; then
+  echo "DOMAIN and SSL_EMAIL are required." >&2
+  echo >&2
+  echo "On the server, pass them in — sudo -E keeps them through sudo:" >&2
+  echo "  DOMAIN=api.example.com SSL_EMAIL=you@example.com \\" >&2
+  echo "    sudo -E bash deploy/setup-ssl.sh" >&2
+  echo >&2
+  echo "On a laptop with deploy/config.env present, they are read from it." >&2
   exit 1
 fi
-# shellcheck disable=SC1090
-source "$CONFIG"
-
-: "${DOMAIN:?Set DOMAIN in deploy/config.env (e.g. api.yourbrand.com)}"
-: "${SSL_EMAIL:?Set SSL_EMAIL in deploy/config.env}"
 
 echo "==> Domain: $DOMAIN"
 

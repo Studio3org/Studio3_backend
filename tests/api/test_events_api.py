@@ -6,6 +6,7 @@ account, because publishing an event puts real work on sale.
 from datetime import datetime, timedelta, timezone
 
 from src.shared.models.event import Event
+from src.shared.models.piece import Piece
 from tests.factories import make_event, make_piece, make_user
 
 
@@ -152,6 +153,56 @@ def test_cancelling_reports_what_it_took_down(db, client, auth_headers):
     assert body["cancellationReason"] == "Venue flooded"
 
 
+def test_deleting_a_draft_just_removes_it(db, client, auth_headers):
+    host = make_user(db, seller=True)
+    event = make_event(db, host)
+
+    response = client.delete(f"/api/events/{event.id}", headers=auth_headers(host))
+
+    assert response.status_code == 200
+    assert response.get_json()["data"]["deleted"] is True
+    # expunge_all, not expire_all: the row is truly gone, and get() on an expired-but-still
+    # identity-mapped instance raises ObjectDeletedError instead of returning None. Clearing
+    # the identity map makes get() issue a fresh SELECT, which correctly returns None.
+    db.expunge_all()
+    assert db.get(Event, event.id) is None
+
+
+def test_deleting_a_published_event_winds_it_down_first(db, client, auth_headers):
+    host = make_user(db, seller=True)
+    piece = make_piece(db, host, price_cents=300_00, status="draft")
+    event = make_event(db, host)
+    client.post(
+        f"/api/events/{event.id}/pieces",
+        json={"pieceId": str(piece.id), "mode": "bid", "priceCents": 400_00},
+        headers=auth_headers(host),
+    )
+    client.post(f"/api/events/{event.id}/publish", headers=auth_headers(host))
+
+    response = client.delete(f"/api/events/{event.id}", headers=auth_headers(host))
+
+    assert response.status_code == 200
+    assert response.get_json()["data"]["deleted"] is True
+    # expunge_all, not expire_all — see the comment in test_deleting_a_draft_just_removes_it.
+    db.expunge_all()
+    # The row is gone, same as a draft — but the piece it was auctioning came down with it
+    # rather than being left listed under an event that no longer exists.
+    assert db.get(Event, event.id) is None
+    piece = db.get(Piece, piece.id)
+    assert piece.status == "delisted"
+
+
+def test_a_stranger_cannot_delete_someone_elses_event(db, client, auth_headers):
+    host, stranger = make_user(db, seller=True), make_user(db, seller=True)
+    event = make_event(db, host)
+
+    response = client.delete(f"/api/events/{event.id}", headers=auth_headers(stranger))
+
+    assert response.status_code == 404
+    db.expire_all()
+    assert db.get(Event, event.id) is not None
+
+
 # --- the bill ---------------------------------------------------------------------------------
 
 def test_the_tagging_preview_says_what_would_be_ended(db, client, auth_headers):
@@ -295,6 +346,37 @@ def test_the_following_feed_includes_events_a_followed_artist_is_billed_on(db, c
 
     assert response.status_code == 200
     assert "Group show" in [e["title"] for e in response.get_json()["data"]["events"]]
+
+
+def test_hosting_scope_lists_only_the_viewers_own_events_drafts_included(db, client, auth_headers):
+    host, someone_else = make_user(db, seller=True), make_user(db, seller=True)
+    draft = make_event(db, host, title="Unpublished preview", status="draft")
+    make_event(db, someone_else, title="Someone else's show", status="published")
+
+    response = client.get("/api/events?scope=hosting", headers=auth_headers(host))
+
+    assert response.status_code == 200
+    titles = [e["title"] for e in response.get_json()["data"]["events"]]
+    assert "Unpublished preview" in titles
+    assert "Someone else's show" not in titles
+    assert response.get_json()["data"]["events"][0]["id"] == str(draft.id)
+
+
+def test_going_scope_lists_events_the_viewer_rsvpd_to(db, client, auth_headers):
+    host, collector = make_user(db, seller=True), make_user(db)
+    going = make_event(db, host, title="RSVP'd show", status="published")
+    _skipped = make_event(db, host, title="Not going", status="published")
+    client.post(f"/api/events/{going.id}/rsvp", json={"going": True},
+                headers=auth_headers(collector))
+
+    response = client.get("/api/events?scope=going", headers=auth_headers(collector))
+
+    assert response.status_code == 200
+    events = response.get_json()["data"]["events"]
+    titles = [e["title"] for e in events]
+    assert "RSVP'd show" in titles
+    assert "Not going" not in titles
+    assert events[0]["rsvpCount"] == 1
 
 
 def test_setting_the_bill_replaces_rather_than_appends(db, client, auth_headers):

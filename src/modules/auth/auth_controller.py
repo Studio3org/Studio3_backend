@@ -9,6 +9,7 @@ from redis.exceptions import RedisError
 from sqlalchemy.exc import IntegrityError
 
 from src.shared.config.database import SessionLocal
+from src.shared.constants import CURRENT_TERMS_VERSION
 from src.shared.utils.app_error import AppError
 from src.shared.utils.messages import (
     OTP_VERIFICATION_FAILED,
@@ -169,6 +170,17 @@ def otp_verify():
     return {"verified": True}, 200, None
 
 
+def _accepted_terms(body: dict) -> bool:
+    return body.get("acceptedTerms") is True
+
+
+def _record_terms_acceptance(db, user) -> None:
+    user.terms_accepted_at = datetime.now(timezone.utc)
+    user.terms_version = CURRENT_TERMS_VERSION
+    db.commit()
+    db.refresh(user)
+
+
 def register():
     rate_limit_ip("register", RATE_REGISTER_PER_IP, 60)
     body = request.get_json() or {}
@@ -187,6 +199,10 @@ def register():
         raise AppError(EMAIL_REQUIRED, 400)
     if not password or len(password) < MIN_PASSWORD_LEN:
         raise AppError(PASSWORD_REQUIRED if not password else "Password must be at least 8 characters.", 400)
+    # Older app builds don't send the flag at all, so only an explicit refusal is rejected;
+    # every current client blocks the Create button until the terms checkbox is ticked.
+    if body.get("acceptedTerms") is False:
+        raise AppError("You must agree to the Terms of Use to create an account.", 400)
     if not otp:
         raise AppError(OTP_VERIFICATION_FAILED, 400)
     if not verify_otp(email, otp):
@@ -222,6 +238,8 @@ def register():
             db.rollback()
             raise AppError("Username or email was just taken. Try another.", 409)
 
+        if _accepted_terms(body):
+            _record_terms_acceptance(db, user)
         invalidate_username_cache(norm.normalized)
         return _issue_session_and_tokens(user, request)
     finally:
@@ -247,10 +265,12 @@ def login():
                 raise AppError(INVALID_CREDENTIALS, 401)
             user, _ = find_user_by_username_or_history(db, norm.normalized)
 
-        if not user or not user.password:
+        if not user or not user.password or user.deleted_at:
             raise AppError(INVALID_CREDENTIALS, 401)
         if not _verify_password(password, user.password):
             raise AppError(INVALID_CREDENTIALS, 401)
+        if _accepted_terms(body):
+            _record_terms_acceptance(db, user)
         return _issue_session_and_tokens(user, request)
     finally:
         db.close()
@@ -397,6 +417,159 @@ def change_password():
         return _issue_session_and_tokens(user, request)
     finally:
         db.close()
+
+
+def delete_account():
+    """Delete the caller's account and everything it owns.
+
+    The User row itself is anonymized rather than hard-deleted — see the deleted_at column
+    comment on the User model: orders.buyer_id/seller_id would cascade-delete on a real DELETE,
+    erasing the *other* party's order history along with it. But anything that belongs to this
+    user alone — their pieces, scenes, and hosted events — is actually removed, not just left
+    behind under an anonymized name, the same as the ⋯ menu's own delete action on each of
+    those. A piece already sold/reserved is left untouched: it's the buyer's order history now,
+    not just this seller's listing, so it stays exactly as delist_all_for_seller already leaves
+    it below.
+
+    Blocks on the same in-flight-obligation checks as seller_disable (active listings,
+    in-progress sales), since an account can't be allowed to vanish out from under an active
+    auction or order.
+    """
+    from src.modules.orders import orders_dao
+    from src.modules.pieces import pieces_dao, piece_state, listing_service
+    from src.modules.posts import posts_dao
+    from src.modules.events import events_dao, event_state, lineup_service, rsvp_service
+    from src.modules.bids.auction_cancellation import REASON_SELLER_DEACTIVATED
+    from src.shared.models.event import EVENT_PUBLISHED, EVENT_CANCELLED
+    from sqlalchemy import delete, or_
+    from src.shared.models.user import User
+    from src.shared.models.social import Comment, Like, Save, Collection, Follow
+    from src.shared.models.block import Block
+    from src.shared.models.device import Device
+    from src.shared.models.notification import Notification
+    from src.shared.models import audit
+    from src.shared.models.audit import ACTOR_USER
+    from src.modules.admin import audit_service
+
+    body = request.get_json() or {}
+    password = body.get("password")
+    if not password:
+        raise AppError("Password is required to delete your account.", 400)
+
+    user_id = uuid.UUID(g.user["id"])
+    db = SessionLocal()
+    try:
+        user = db.get(User, user_id)
+        if not user or not user.password or not _verify_password(password, user.password):
+            raise AppError("Password is incorrect.", 401)
+
+        active_listings = pieces_dao.list_user_pieces(db, user.id, for_sale_only=True)
+        if active_listings:
+            raise AppError(
+                "Remove your active listings before deleting your account.", 400
+            )
+        in_progress = orders_dao.count_seller_in_progress(db, user.id)
+        if in_progress:
+            raise AppError(
+                "You have in-progress sales — complete or cancel them before deleting your account.",
+                400,
+            )
+        buyer_in_progress = orders_dao.count_buyer_in_progress(db, user.id)
+        if buyer_in_progress:
+            raise AppError(
+                "You have in-progress purchases — complete or cancel them before deleting your account.",
+                400,
+            )
+
+        # Belt-and-suspenders, same as seller_disable: a live auction with bids isn't
+        # caught by the for-sale check above, and can't be left to expire unattended
+        # once nobody is behind the account to receive its payout.
+        listing_service.delist_all_for_seller(db, user.id, reason=REASON_SELLER_DEACTIVATED)
+
+        # Everything left with this user's name on it that isn't tangled up in someone
+        # else's order history comes down for real, not just re-labeled.
+        for piece in pieces_dao.list_user_pieces(db, user.id, include_drafts=True):
+            if piece.status in (piece_state.DRAFT, piece_state.LIVE, piece_state.DELISTED):
+                pieces_dao.delete_piece(db, piece)
+
+        for post in posts_dao.list_user_posts(db, user.id, include_drafts=True):
+            posts_dao.delete_post(db, post)
+
+        for event in events_dao.list_for_host(db, user.id, viewer_id=user.id):
+            event_title = event.title
+            was_published = event.status == EVENT_PUBLISHED
+            if was_published:
+                event_state.transition_event(
+                    db, event, EVENT_CANCELLED, reason="host_deleted", commit=False
+                )
+                event.cancellation_reason = "Host deleted their account"
+                lineup_service.cancel_lineup(db, event, "event_deleted", commit=False)
+                db.commit()
+                rsvp_service.notify_attendees(
+                    db, event,
+                    type="event_cancelled",
+                    title="Event cancelled",
+                    body=f'"{event_title}" has been removed because its host deleted their account.',
+                )
+            events_dao.delete_event(db, event)
+
+        # The account's own social footprint goes too (Google Play's account-deletion policy:
+        # deleting an account deletes the data associated with it) — comments, likes, saves,
+        # collections (their items cascade), follows and blocks in either direction, push
+        # devices, and notifications it received or triggered (their payloads carry its name).
+        # Messages stay, anonymized, because they're part of the other person's conversation.
+        db.execute(delete(Comment).where(Comment.user_id == user.id))
+        db.execute(delete(Like).where(Like.user_id == user.id))
+        db.execute(delete(Save).where(Save.user_id == user.id))
+        db.execute(delete(Collection).where(Collection.user_id == user.id))
+        db.execute(delete(Follow).where(or_(Follow.follower_id == user.id, Follow.following_id == user.id)))
+        db.execute(delete(Block).where(or_(Block.blocker_id == user.id, Block.blocked_id == user.id)))
+        db.execute(delete(Device).where(Device.user_id == user.id))
+        db.execute(
+            delete(Notification).where(
+                or_(Notification.user_id == user.id, Notification.actor_id == user.id)
+            )
+        )
+
+        # Recorded here, before a single field below is overwritten: audit_service reads
+        # user.name/user.username *now* to build actor_label, and there is no later point at
+        # which those still say who this really was. commit=False folds it into the same
+        # transaction as the anonymization that follows, so the two can never disagree about
+        # whether this account was actually deleted.
+        audit_service.record(
+            db, audit.AUDIT_ACCOUNT_DELETED,
+            actor=user, actor_type=ACTOR_USER,
+            subject_type="user", subject_id=user.id,
+            commit=False,
+        )
+
+        anon = f"deleted_{user.id.hex[:12]}"
+        user.username = anon
+        user.email = f"{anon}@deleted.studio-3.co"
+        user.name = "Deleted user"
+        user.password = None
+        user.image = None
+        user.cover_photo_url = None
+        user.bio = None
+        user.location = None
+        user.phone = None
+        user.latitude = None
+        user.longitude = None
+        user.seller_enabled = False
+        user.website = None
+        user.instagram = None
+        user.twitter = None
+        user.tags = None
+        user.taste_preferences = None
+        user.deleted_at = datetime.now(timezone.utc)
+        db.commit()
+
+        revoke_all_for_user(db, user_id)
+    finally:
+        db.close()
+
+    delete_all_sessions_for_user(str(user_id))
+    return {"deleted": True}, 200
 
 
 def _email_change_otp_key(new_email: str) -> str:

@@ -5,6 +5,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from src.shared.constants import CURRENT_TERMS_VERSION
 from src.shared.models.user import User
 from src.shared.username.constants import USERNAME_CHANGE_COOLDOWN_DAYS
 
@@ -129,6 +130,9 @@ def user_to_dict(
                 "messagePermission": user.message_permission,
                 "profileVisibility": user.profile_visibility,
                 "notificationPreferences": user.notification_preferences,
+                "termsAcceptedAt": user.terms_accepted_at.isoformat() if user.terms_accepted_at else None,
+                "termsVersion": user.terms_version,
+                "currentTermsVersion": CURRENT_TERMS_VERSION,
             }
         )
         data["saved"] = saved_pieces

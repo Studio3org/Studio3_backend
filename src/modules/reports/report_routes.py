@@ -1,4 +1,4 @@
-"""Report routes — flag a piece, post, or user for moderation review."""
+"""Report routes — flag a piece, post, comment, or user for moderation review."""
 from flask import Blueprint
 
 from src.middlewares.auth_middleware import auth_required
@@ -27,6 +27,14 @@ def report_piece(piece_id):
 @async_handler
 def report_post(post_id):
     data, status = report_controller.report_post(post_id)
+    return _ok("Thanks — we received your report.", data, status)
+
+
+@reports_bp.post("/comments/<comment_id>/report")
+@auth_required
+@async_handler
+def report_comment(comment_id):
+    data, status = report_controller.report_comment(comment_id)
     return _ok("Thanks — we received your report.", data, status)
 
 

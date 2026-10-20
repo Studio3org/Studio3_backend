@@ -53,8 +53,21 @@ def create_and_push(
 ) -> Notification:
     """Writes the Notification row, then attempts a push (unless the recipient has muted this
     type). Push failure never affects the row — send_push always fails open (never raises),
-    so this never rolls back the notification."""
-    notification = create_notification(db, user_id, type, actor_id, target_type, target_id, payload)
+    so this never rolls back the notification.
+
+    `body` is folded into the stored payload as `message` (a caller-supplied
+    `payload['message']` wins if one was already given — inquiries set their own, the buyer's
+    actual text). Without this, `body` only ever reached the phone push: the in-app
+    Notifications list has nothing but `type` and `actor` to go on, and for every type the
+    client doesn't special-case — a bid result, an auction closing, an event being cancelled,
+    anything with no real actor at all, since these are the app telling *you* something
+    happened rather than "someone did X to you" — that rendered as a bare "Someone sent you a
+    notification".
+    """
+    stored_payload = {"message": body, **(payload or {})}
+    notification = create_notification(
+        db, user_id, type, actor_id, target_type, target_id, stored_payload
+    )
     recipient = db.get(User, user_id)
     # Unset notification_preferences (never configured) defaults to all-enabled.
     push_prefs = (recipient.notification_preferences or {}).get("push", {}) if recipient else {}

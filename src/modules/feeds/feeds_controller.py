@@ -16,7 +16,7 @@ from src.shared.models.user import User
 from src.modules.pieces.pieces_dao import piece_to_dict
 from src.modules.posts.posts_dao import post_to_dict
 from src.modules.user.user_dao import get_user_by_id
-from src.modules.social import social_dao
+from src.modules.social import social_dao, block_dao
 
 from src.modules.pieces import piece_state
 
@@ -117,6 +117,12 @@ def _enrich_items(db, pieces, posts, viewer_id: Optional[uuid.UUID]):
 
 
 def _paginated_response(db, piece_query, post_query, viewer_id: Optional[uuid.UUID]):
+    hidden = block_dao.blocked_user_ids(db, viewer_id)
+    if hidden:
+        if piece_query is not None:
+            piece_query = piece_query.where(Piece.user_id.notin_(hidden))
+        if post_query is not None:
+            post_query = post_query.where(Post.user_id.notin_(hidden))
     limit = min(int(request.args.get("limit", DEFAULT_LIMIT)), MAX_LIMIT)
     cursor = request.args.get("cursor")
     cursor_tuple = _decode_cursor(cursor) if cursor else None
@@ -176,6 +182,8 @@ def explore_feed():
 
 
 def for_you_feed():
+    # Open to signed-out guests too (App Store guideline 5.1.1(v): browsing isn't an
+    # account feature) — explore_feed already treats a missing viewer as anonymous.
     explore, status = explore_feed()
     explore["stub"] = True
     return explore, status

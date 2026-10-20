@@ -12,6 +12,7 @@ from src.shared.models.auction import (
     AUCTION_AWAITING_WINNER,
     AUCTION_CANCELLED,
     AUCTION_LIVE,
+    AUCTION_CLOSED_NO_BIDS,
     AUCTION_NEEDS_SELLER_ACTION,
     HOLD_CAPTURED,
     HOLD_RELEASED,
@@ -163,6 +164,81 @@ def test_relisting_starts_a_new_auction_and_keeps_the_old_one_as_history(
     assert fresh.starting_bid_cents == 250_00
     assert fresh.closes_at > datetime.now(timezone.utc)
     assert db.get(Piece, piece.id).status == "live"
+
+
+def test_an_auction_nobody_bid_on_can_be_relisted(db, client, auth_headers):
+    """The commonest way an auction fails, and the one relisting refused.
+
+    It only accepted needs_seller_action — the reserve-not-met case. An auction that simply
+    got no bids left the work delisted with nothing in the product offering to try again,
+    which for a marketplace is the wrong place to stop: work that does not sell the first
+    time is usually priced wrong, not unsellable.
+    """
+    seller = make_user(db, seller=True)
+    piece = make_piece(db, seller, price_cents=300_00, status="live", listing_type="auction")
+    now = datetime.now(timezone.utc)
+    first = make_auction(
+        db, piece, seller, starting_bid_cents=300_00,
+        opens_at=now - timedelta(days=7), closes_at=now - timedelta(minutes=1),
+    )
+    auction_closer.close_expired_auctions()
+    db.expire_all()
+    assert db.get(Auction, first.id).status == AUCTION_CLOSED_NO_BIDS
+    assert db.get(Piece, piece.id).status == "delisted", "an unsold auction delists the work"
+
+    response = client.post(
+        f"/api/pieces/{piece.id}/auction/relist",
+        json={"durationDays": 5, "startingBidCents": 150_00},
+        headers=auth_headers(seller),
+    )
+
+    assert response.status_code == 201, response.get_json()
+    db.expire_all()
+    assert db.get(Piece, piece.id).status == "live", "the work is back on the market"
+    fresh = next(a for a in db.query(Auction).filter_by(piece_id=piece.id).all()
+                 if a.id != first.id)
+    assert fresh.status == AUCTION_LIVE
+    assert fresh.starting_bid_cents == 150_00
+    # The failed attempt stays exactly as it ended.
+    assert db.get(Auction, first.id).status == AUCTION_CLOSED_NO_BIDS
+
+
+def test_a_sold_auction_cannot_be_relisted(db, client, auth_headers):
+    """It has an order and a buyer behind it. Relisting would offer work that has already
+    changed hands."""
+    seller = make_user(db, seller=True)
+    piece = make_piece(db, seller, price_cents=300_00, status="sold", listing_type="auction")
+    now = datetime.now(timezone.utc)
+    auction = make_auction(db, piece, seller, starting_bid_cents=300_00,
+                           opens_at=now - timedelta(days=2), closes_at=now - timedelta(days=1))
+    auction.status = "closed_sold"
+    db.commit()
+
+    response = client.post(
+        f"/api/pieces/{piece.id}/auction/relist",
+        json={"durationDays": 5}, headers=auth_headers(seller),
+    )
+
+    assert response.status_code == 409
+
+
+def test_a_cancelled_auction_cannot_be_relisted(db, client, auth_headers):
+    """Cancelling was somebody deciding to stop. Relisting from here would quietly undo a
+    withdrawal that bidders were told about."""
+    seller = make_user(db, seller=True)
+    piece = make_piece(db, seller, price_cents=300_00, status="delisted", listing_type="auction")
+    now = datetime.now(timezone.utc)
+    auction = make_auction(db, piece, seller, starting_bid_cents=300_00,
+                           opens_at=now - timedelta(days=2), closes_at=now - timedelta(days=1))
+    auction.status = "cancelled"
+    db.commit()
+
+    response = client.post(
+        f"/api/pieces/{piece.id}/auction/relist",
+        json={"durationDays": 5}, headers=auth_headers(seller),
+    )
+
+    assert response.status_code == 409
 
 
 def test_a_piece_with_a_running_auction_cannot_be_relisted(db, client, auth_headers):

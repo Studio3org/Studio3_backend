@@ -85,3 +85,32 @@ def resolve_report(
     db.commit()
     db.refresh(report)
     return report
+
+
+def remove_reported_target(db: Session, report: Report) -> bool:
+    """Take down the content a report points at. Returns False if there's nothing to remove.
+
+    Pieces and scenes are soft-deleted (deleted_at), the same as an owner deleting them, so
+    order history that references a piece survives. Comments have no soft-delete and nothing
+    references them, so they're removed outright. Accounts aren't removable from here.
+    """
+    from src.shared.models.piece import Piece
+    from src.shared.models.post import Post
+    from src.shared.models.social import Comment
+
+    if report.target_type in ("piece", "post"):
+        model = Piece if report.target_type == "piece" else Post
+        row = db.get(model, report.target_id)
+        if not row or row.deleted_at is not None:
+            return False
+        row.deleted_at = datetime.now(timezone.utc)
+        db.commit()
+        return True
+    if report.target_type == "comment":
+        row = db.get(Comment, report.target_id)
+        if not row:
+            return False
+        db.delete(row)
+        db.commit()
+        return True
+    return False

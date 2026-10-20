@@ -46,12 +46,14 @@ def make_user(
         payouts_enabled = seller
     if stripe_account_id is None and seller:
         stripe_account_id = _unique("acct_")
+    username = overrides.pop("username", None) or _unique("user_")
+    name = overrides.pop("name", None) or "Test User"
 
     user = User(
         id=uuid.uuid4(),
-        username=_unique("user_"),
+        username=username,
         email=f"{_unique('u')}@example.test",
-        name="Test User",
+        name=name,
         email_verified=email_verified,
         onboarding_complete=onboarding_complete,
         seller_enabled=seller,

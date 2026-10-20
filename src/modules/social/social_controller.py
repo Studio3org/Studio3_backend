@@ -380,7 +380,11 @@ def get_comments(target_type: str, target_id: str, cursor: str | None, limit: in
     try:
         tid = uuid.UUID(target_id)
         before = datetime.fromisoformat(cursor) if cursor else None
-        comments = social_dao.list_comments(db, target_type, tid, limit=limit + 1, before=before)
+        viewer_id = uuid.UUID(g.user["id"]) if getattr(g, "user", None) else None
+        comments = social_dao.list_comments(
+            db, target_type, tid, limit=limit + 1, before=before,
+            exclude_user_ids=block_dao.blocked_user_ids(db, viewer_id),
+        )
         has_more = len(comments) > limit
         comments = comments[:limit]
         user_ids = {c.user_id for c in comments}
@@ -404,6 +408,19 @@ def block_user(username: str):
         if target.id == me.id:
             raise AppError("Cannot block yourself.", 400)
         block_dao.block_user(db, me.id, target.id)
+        # Blocking is also a moderation signal (App Store guideline 1.2), so admins hear
+        # about it the same way they hear about a report.
+        from src.modules.reports.report_controller import notify_admins
+
+        notify_admins(
+            db,
+            me.id,
+            "user",
+            target.id,
+            payload={"event": "blocked"},
+            title="User blocked",
+            body=f"@{me.username} blocked @{target.username}",
+        )
         return {"blocked": True}, 200
     finally:
         db.close()

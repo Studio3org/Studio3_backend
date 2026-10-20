@@ -70,6 +70,13 @@ class User(Base):
     updated_at = Column(
         DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
     )
+    # Account deletion anonymizes the row rather than removing it — orders.buyer_id/seller_id
+    # cascade-delete on a hard delete, which would erase the other party's order history too.
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
+    # Terms of Use / EULA acceptance (App Store guideline 1.2). Null for accounts that
+    # predate the terms — the client prompts those to accept before they can keep posting.
+    terms_accepted_at = Column(DateTime(timezone=True), nullable=True)
+    terms_version = Column(String(16), nullable=True)
 
     accounts = relationship("Account", back_populates="user", cascade="all, delete-orphan")
     sessions = relationship("Session", back_populates="user", cascade="all, delete-orphan")

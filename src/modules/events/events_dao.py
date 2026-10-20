@@ -16,9 +16,11 @@ from src.shared.models.event import (
     EVENT_PUBLISHED,
     ROLE_ARTIST,
     ROLE_COHOST,
+    RSVP_GOING,
     Event,
     EventParticipant,
     EventPiece,
+    EventRsvp,
     EventSave,
 )
 from src.shared.models.social import Follow
@@ -330,6 +332,26 @@ def list_for_host(
     return list(db.execute(stmt.order_by(Event.starts_at.desc())).scalars())
 
 
+def list_going(db: Session, viewer_id: uuid.UUID, *, limit: int = DEFAULT_LIMIT) -> list[Event]:
+    """Events this viewer has RSVP'd `going` to — past and upcoming both.
+
+    Unlike the browse scopes, this deliberately isn't windowed to what's still ahead: a
+    "Registered" list that drops an event the moment it starts would be useless to someone
+    checking it from the door.
+    """
+    going = select(EventRsvp.event_id).where(
+        EventRsvp.user_id == viewer_id, EventRsvp.status == RSVP_GOING
+    )
+    return list(
+        db.execute(
+            select(Event)
+            .where(Event.status == EVENT_PUBLISHED, Event.id.in_(going))
+            .order_by(Event.starts_at.desc())
+            .limit(_clamp(limit))
+        ).scalars()
+    )
+
+
 def category_summaries(db: Session) -> list[dict]:
     """Upcoming count and a cover image per category, for the browse tiles.
 
@@ -361,6 +383,19 @@ def count_lineup(db: Session, event_id: uuid.UUID) -> int:
     return db.execute(
         select(func.count(EventPiece.id)).where(EventPiece.event_id == event_id)
     ).scalar_one()
+
+
+def delete_event(db: Session, event: Event) -> None:
+    """Remove the event row itself, once whatever it listed has already been taken down.
+
+    Every child row — the lineup, RSVPs, saves, cohost/artist entries — has
+    `ondelete="CASCADE"` on its `event_id`, so this one delete is enough; there is nothing
+    left over for a caller to clean up by hand. Deleting a piece's own listing is a different,
+    narrower operation (`pieces_dao.delete_piece`, a soft delete) and is never touched here —
+    an event coming down never takes the artist's piece down with it.
+    """
+    db.delete(event)
+    db.commit()
 
 
 def _clamp(limit: int) -> int:

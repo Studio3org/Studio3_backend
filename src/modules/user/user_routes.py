@@ -33,6 +33,14 @@ def get_me():
     return _ok("OK", data, status)
 
 
+@user_bp.post("/me/accept-terms")
+@auth_required
+@async_handler
+def accept_terms():
+    data, status = user_controller.accept_terms()
+    return _ok("Thanks for agreeing to the Terms of Use.", data, status)
+
+
 @user_bp.patch("/me")
 @auth_required
 @async_handler
@@ -57,6 +65,14 @@ def patch_password():
     resp, _ = success_response("Password changed.", data, status)
     apply_cookie_ops(resp, cookie_ops)
     return resp, status
+
+
+@user_bp.delete("/me")
+@auth_required
+@async_handler
+def delete_account():
+    data, status = auth_controller.delete_account()
+    return _ok("Account deleted.", data, status)
 
 
 @user_bp.post("/me/email/request-change")

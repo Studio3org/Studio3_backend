@@ -84,6 +84,7 @@ def create_app(config_overrides: dict | None = None):
     from src.modules.orders.orders_routes import orders_bp
     from src.modules.chat.chat_routes import chat_bp
     from src.modules.collections.collections_routes import collections_bp
+    from src.modules.connect.connect_return_routes import connect_return_bp
     from src.modules.admin.admin_api_routes import admin_api_bp
     from src.modules.admin.admin_routes import admin_bp
     from src.modules.payments.payments_routes import payments_bp
@@ -91,6 +92,7 @@ def create_app(config_overrides: dict | None = None):
     from src.modules.share.share_routes import share_bp
     from src.modules.share.well_known_routes import well_known_bp
     from src.modules.events.events_routes import events_bp
+    from src.modules.legal.legal_routes import legal_bp
 
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
     app.register_blueprint(user_bp, url_prefix="/api/user")
@@ -114,11 +116,17 @@ def create_app(config_overrides: dict | None = None):
     app.register_blueprint(admin_bp, url_prefix="/admin")
     # The same operations as the HTML console above, as JSON for the web app.
     app.register_blueprint(admin_api_bp, url_prefix="/api/admin")
+    # No url_prefix, deliberately: Stripe redirects to /connect/return at the site root,
+    # and the app claims that exact path as a Universal Link.
+    app.register_blueprint(connect_return_bp)
     # Public share/OG-preview pages: HTML, no auth, deliberately outside the /api prefix.
     app.register_blueprint(share_bp, url_prefix="/share")
     # No prefix: Apple and Google fetch these from a fixed path at the site root, and a
     # prefixed copy is one nothing ever requests.
     app.register_blueprint(well_known_bp)
+    # Public legal/support pages (account deletion) — no auth, no prefix: the URL a store
+    # listing points at should be short and stable.
+    app.register_blueprint(legal_bp)
 
     # CSRF applies only to the cookie-authenticated admin forms. The JSON API authenticates
     # with a bearer token that a cross-site form post cannot supply, so blanket checking is
