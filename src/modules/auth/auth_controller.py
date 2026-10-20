@@ -441,7 +441,12 @@ def delete_account():
     from src.modules.events import events_dao, event_state, lineup_service, rsvp_service
     from src.modules.bids.auction_cancellation import REASON_SELLER_DEACTIVATED
     from src.shared.models.event import EVENT_PUBLISHED, EVENT_CANCELLED
+    from sqlalchemy import delete, or_
     from src.shared.models.user import User
+    from src.shared.models.social import Comment, Like, Save, Collection, Follow
+    from src.shared.models.block import Block
+    from src.shared.models.device import Device
+    from src.shared.models.notification import Notification
     from src.shared.models import audit
     from src.shared.models.audit import ACTOR_USER
     from src.modules.admin import audit_service
@@ -507,6 +512,24 @@ def delete_account():
                     body=f'"{event_title}" has been removed because its host deleted their account.',
                 )
             events_dao.delete_event(db, event)
+
+        # The account's own social footprint goes too (Google Play's account-deletion policy:
+        # deleting an account deletes the data associated with it) — comments, likes, saves,
+        # collections (their items cascade), follows and blocks in either direction, push
+        # devices, and notifications it received or triggered (their payloads carry its name).
+        # Messages stay, anonymized, because they're part of the other person's conversation.
+        db.execute(delete(Comment).where(Comment.user_id == user.id))
+        db.execute(delete(Like).where(Like.user_id == user.id))
+        db.execute(delete(Save).where(Save.user_id == user.id))
+        db.execute(delete(Collection).where(Collection.user_id == user.id))
+        db.execute(delete(Follow).where(or_(Follow.follower_id == user.id, Follow.following_id == user.id)))
+        db.execute(delete(Block).where(or_(Block.blocker_id == user.id, Block.blocked_id == user.id)))
+        db.execute(delete(Device).where(Device.user_id == user.id))
+        db.execute(
+            delete(Notification).where(
+                or_(Notification.user_id == user.id, Notification.actor_id == user.id)
+            )
+        )
 
         # Recorded here, before a single field below is overwritten: audit_service reads
         # user.name/user.username *now* to build actor_label, and there is no later point at
