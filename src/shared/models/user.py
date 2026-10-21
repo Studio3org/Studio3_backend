@@ -77,6 +77,9 @@ class User(Base):
     # predate the terms — the client prompts those to accept before they can keep posting.
     terms_accepted_at = Column(DateTime(timezone=True), nullable=True)
     terms_version = Column(String(16), nullable=True)
+    # Appearance. Null means light (the default for accounts that never chose).
+    # Only "light" and "dark" are stored; the client treats null as light.
+    theme_preference = Column(String(8), nullable=True)
 
     accounts = relationship("Account", back_populates="user", cascade="all, delete-orphan")
     sessions = relationship("Session", back_populates="user", cascade="all, delete-orphan")

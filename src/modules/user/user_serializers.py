@@ -133,6 +133,8 @@ def user_to_dict(
                 "termsAcceptedAt": user.terms_accepted_at.isoformat() if user.terms_accepted_at else None,
                 "termsVersion": user.terms_version,
                 "currentTermsVersion": CURRENT_TERMS_VERSION,
+                # Null until the user picks one. Clients treat null as light.
+                "themePreference": user.theme_preference,
             }
         )
         data["saved"] = saved_pieces

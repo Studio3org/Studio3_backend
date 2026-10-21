@@ -166,6 +166,11 @@ def patch_me():
             if visibility not in ("public", "private"):
                 raise AppError("profileVisibility must be 'public' or 'private'.", 400)
             fields["profile_visibility"] = visibility
+        if "themePreference" in body:
+            theme = body.get("themePreference")
+            if theme not in ("light", "dark"):
+                raise AppError("themePreference must be 'light' or 'dark'.", 400)
+            fields["theme_preference"] = theme
         user = update_user_fields(db, user, **fields)
         return user_to_dict(db, user, viewer_id=user.id), 200
     finally:
