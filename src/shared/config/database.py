@@ -9,18 +9,25 @@ from sqlalchemy.orm import DeclarativeBase, sessionmaker, Session
 
 
 def _sanitize_database_url(url: str) -> str:
-    """Normalize URL for psycopg2 (postgres:// → postgresql://, strip pgbouncer param)."""
-    if url.startswith("postgres://"):
-        url = "postgresql://" + url[len("postgres://"):]
+    """Normalize URL for the installed driver (psycopg2-binary).
+
+    SQLAlchemy 2.1 treats bare `postgresql://` as psycopg v3 (`import psycopg`).
+    This project ships `psycopg2-binary` only, so a Render `alembic upgrade head`
+    against a default-style URL raises ModuleNotFoundError: No module named 'psycopg'.
+    Always pin `+psycopg2`. Also accept Heroku-style `postgres://` and strip the
+    `pgbouncer` query flag, which psycopg2 does not understand.
+    """
     parsed = urlparse(url)
+    scheme = parsed.scheme or ""
+    if scheme in ("postgres", "postgresql", "postgresql+psycopg"):
+        parsed = parsed._replace(scheme="postgresql+psycopg2")
     if not parsed.query:
-        return url
+        return urlunparse(parsed)
     params = parse_qs(parsed.query, keep_blank_values=True)
     params.pop("pgbouncer", None)
     if not params:
         return urlunparse(parsed._replace(query=""))
-    new_query = urlencode(params, doseq=True)
-    return urlunparse(parsed._replace(query=new_query))
+    return urlunparse(parsed._replace(query=urlencode(params, doseq=True)))
 
 
 def get_database_url() -> str:
