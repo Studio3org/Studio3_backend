@@ -186,6 +186,9 @@ def piece_to_dict(piece: Piece, media: Optional[list[PieceMedia]] = None) -> dic
         "framingMounting": piece.framing_mounting,
         "provenance": piece.provenance,
         "handlingNotes": piece.handling_notes,
+        "edition": piece.edition,
+        "signed": piece.signed,
+        "mediums": piece.mediums or ([piece.medium] if piece.medium else []),
         "status": piece.status,
         "createdAt": piece.created_at.isoformat(),
     }

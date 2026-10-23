@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from src.shared.models.post import Post
@@ -43,7 +43,10 @@ def list_user_posts(
 def list_related_posts(db: Session, piece_id: uuid.UUID) -> list[Post]:
     return list(
         db.execute(
-            select(Post).where(Post.linked_piece_id == piece_id, Post.deleted_at.is_(None))
+            select(Post).where(
+                or_(Post.linked_piece_id == piece_id, Post.linked_piece_ids.any(piece_id)),
+                Post.deleted_at.is_(None),
+            )
         ).scalars().all()
     )
 
@@ -82,6 +85,8 @@ def post_to_dict(post: Post) -> dict:
         "thumbnailUrl": post.thumbnail_url,
         "isProcess": post.is_process,
         "linkedPieceId": str(post.linked_piece_id) if post.linked_piece_id else None,
+        "linkedPieceIds": [str(i) for i in (post.linked_piece_ids or [])]
+        or ([str(post.linked_piece_id)] if post.linked_piece_id else []),
         "status": post.status,
         "createdAt": post.created_at.isoformat(),
     }

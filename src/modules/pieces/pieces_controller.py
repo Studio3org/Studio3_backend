@@ -152,8 +152,44 @@ def _extract_images(body: dict) -> list[dict]:
     return []
 
 
+def _apply_details(body: dict) -> dict:
+    """Normalises the Additional details and the medium list from the posting flow.
+
+    `mediums` is the ordered list from the Medium sheet; `medium` is always its first entry
+    when the list is given, so a client sending only the list still sets the filterable
+    medium. Returns the keys to merge into the body.
+    """
+    out = {}
+    if "mediums" in body:
+        mediums = body.get("mediums")
+        if mediums is not None:
+            if not isinstance(mediums, list) or not all(
+                isinstance(m, str) and m.strip() for m in mediums
+            ):
+                raise AppError("mediums must be a list of names.", 400)
+            mediums = [m.strip()[:100] for m in mediums]
+        out["mediums"] = mediums or None
+        if mediums:
+            out["medium"] = mediums[0]
+    if "edition" in body:
+        edition = body.get("edition")
+        if edition is not None and not isinstance(edition, str):
+            raise AppError("edition must be text.", 400)
+        edition = (edition or "").strip()
+        if len(edition) > 32:
+            raise AppError("edition must be 32 characters or fewer.", 400)
+        out["edition"] = edition or None
+    if "signed" in body:
+        signed = body.get("signed")
+        if signed is not None and not isinstance(signed, bool):
+            raise AppError("signed must be true, false or null.", 400)
+        out["signed"] = signed
+    return out
+
+
 def create():
     body = request.get_json() or {}
+    body = {**body, **_apply_details(body)}
     db = SessionLocal()
     try:
         user = get_user_by_id(db, uuid.UUID(g.user["id"]))
@@ -194,6 +230,9 @@ def create():
             framing_mounting=body.get("framingMounting"),
             provenance=body.get("provenance"),
             handling_notes=body.get("handlingNotes"),
+            edition=body.get("edition"),
+            signed=body.get("signed"),
+            mediums=body.get("mediums"),
             status="draft" if body.get("status") == "draft" else "live",
         )
         if listing["listing_type"] == "auction":
@@ -263,6 +302,7 @@ def get_detail(piece_id: str, viewer_id: Optional[uuid.UUID] = None):
 
 def patch(piece_id: str):
     body = request.get_json() or {}
+    body = {**body, **_apply_details(body)}
     db = SessionLocal()
     try:
         user = get_user_by_id(db, uuid.UUID(g.user["id"]))
@@ -302,6 +342,7 @@ def patch(piece_id: str):
             ("weight_kg", "weightKg"), ("package_length_cm", "packageLengthCm"),
             ("package_width_cm", "packageWidthCm"), ("package_height_cm", "packageHeightCm"),
             ("declared_value_cents", "declaredValueCents"),
+            ("edition", "edition"), ("signed", "signed"), ("mediums", "mediums"),
         ]:
             if key in body:
                 setattr(piece, attr, body[key])

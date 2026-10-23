@@ -402,6 +402,9 @@ def commission_quote():
             # What the seller actually receives. Commission comes out of the price, never on
             # top of it, so this is always less than priceCents.
             "netCents": price_cents - commission,
+            # True when this seller's own rate is below the standard one (the founding-artist
+            # tier), so the listing form can name it without knowing the standard rate.
+            "reducedRate": bps < commission_policy.default_bps(sale_kind),
             # False means this sale is too small for the commission to cover processing.
             # Surfaced so a host pricing a cheap ticket finds out now, not at reconciliation.
             "coversProcessingFee": commission_policy.covers_stripe_fee(price_cents, bps),

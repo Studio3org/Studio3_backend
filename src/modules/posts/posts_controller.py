@@ -38,13 +38,7 @@ def create():
         media_type = (body.get("mediaType") or "image").strip().lower()
         if media_type not in ("image", "video"):
             raise AppError("mediaType must be image or video.", 400)
-        linked = body.get("linkedPieceId")
-        linked_uuid = None
-        if linked:
-            piece = get_piece(db, uuid.UUID(linked))
-            if not piece or piece.user_id != user.id:
-                raise AppError("Linked piece not found.", 404)
-            linked_uuid = piece.id
+        linked_ids = _resolve_linked_pieces(db, user, body)
         is_process = body["isProcess"] if "isProcess" in body else False
         post = create_post(
             db,
@@ -56,12 +50,35 @@ def create():
             media_aspect_ratio=body.get("mediaAspectRatio"),
             thumbnail_url=body.get("thumbnailUrl"),
             is_process=bool(is_process),
-            linked_piece_id=linked_uuid,
+            linked_piece_id=linked_ids[0] if linked_ids else None,
+            linked_piece_ids=linked_ids or None,
             status="draft" if body.get("status") == "draft" else "live",
         )
         return post_to_dict(post), 201
     finally:
         db.close()
+
+
+def _resolve_linked_pieces(db, user, body) -> list[uuid.UUID]:
+    """The pieces a Scene links to, from `linkedPieceIds` (ordered list) or the older
+    single `linkedPieceId`. Each must be one of the poster's own pieces."""
+    if "linkedPieceIds" in body:
+        raw = body.get("linkedPieceIds") or []
+        if not isinstance(raw, list):
+            raise AppError("linkedPieceIds must be a list.", 400)
+    else:
+        raw = [body["linkedPieceId"]] if body.get("linkedPieceId") else []
+    ids: list[uuid.UUID] = []
+    for value in raw:
+        try:
+            piece = get_piece(db, uuid.UUID(str(value)))
+        except ValueError:
+            raise AppError("Linked piece not found.", 404) from None
+        if not piece or piece.user_id != user.id:
+            raise AppError("Linked piece not found.", 404)
+        if piece.id not in ids:
+            ids.append(piece.id)
+    return ids
 
 
 def enrich_post_dict(db, post, viewer_id: Optional[uuid.UUID]) -> dict:
@@ -110,14 +127,10 @@ def patch(post_id: str):
             post.location = body["location"]
         if "status" in body:
             post.status = body["status"]
-        if "linkedPieceId" in body:
-            if body["linkedPieceId"]:
-                piece = get_piece(db, uuid.UUID(body["linkedPieceId"]))
-                if not piece or piece.user_id != user.id:
-                    raise AppError("Linked piece not found.", 404)
-                post.linked_piece_id = piece.id
-            else:
-                post.linked_piece_id = None
+        if "linkedPieceId" in body or "linkedPieceIds" in body:
+            linked_ids = _resolve_linked_pieces(db, user, body)
+            post.linked_piece_id = linked_ids[0] if linked_ids else None
+            post.linked_piece_ids = linked_ids or None
         db.commit()
         db.refresh(post)
         return post_to_dict(post), 200

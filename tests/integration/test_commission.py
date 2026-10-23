@@ -174,6 +174,7 @@ def test_quote_uses_the_sellers_own_rate(db, client, auth_headers):
 
     assert (a["commissionBps"], a["netCents"]) == (2000, 80_00)
     assert (b["commissionBps"], b["netCents"]) == (1500, 85_00)
+    assert (a["reducedRate"], b["reducedRate"]) == (False, True)
 
 
 def test_quote_warns_when_the_sale_is_too_small_to_cover_processing(db, client, auth_headers):

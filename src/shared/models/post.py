@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import Column, DateTime, String, Boolean, Text, ForeignKey
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 
 from src.shared.config.database import Base
 
@@ -25,6 +25,9 @@ class Post(Base):
     thumbnail_url = Column(String(1024), nullable=True)
     is_process = Column(Boolean, default=True, nullable=False)
     linked_piece_id = Column(UUID(as_uuid=True), ForeignKey("pieces.id", ondelete="SET NULL"), nullable=True, index=True)
+    # Every piece the Scene shows on, in order; `linked_piece_id` stays the first so its
+    # readers are unchanged. No foreign key on an array: a deleted piece is skipped on read.
+    linked_piece_ids = Column(ARRAY(UUID(as_uuid=True)), nullable=True)
     status = Column(String(32), default="live", nullable=False)
     deleted_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)

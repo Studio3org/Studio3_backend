@@ -76,6 +76,13 @@ class Piece(Base):
     framing_mounting = Column(Text, nullable=True)
     provenance = Column(Text, nullable=True)
     handling_notes = Column(Text, nullable=True)
+    # "1 of 1" by default in the app; feeds the Provenance card. Null when not given.
+    edition = Column(String(32), nullable=True)
+    # Signed by the artist: True / False, or null when not said.
+    signed = Column(Boolean, nullable=True)
+    # Every medium picked, in order. `medium` stays the first one, which is what the piece
+    # shows and what Explore filters on.
+    mediums = Column(ARRAY(String), nullable=True)
     # draft|live|reserved|sold|auction_won|delisted|deleted. The full set and the legal
     # moves between them live in src/modules/pieces/piece_state.py, which is the only thing
     # that may write this column.
