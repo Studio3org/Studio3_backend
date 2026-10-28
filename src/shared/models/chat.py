@@ -30,6 +30,9 @@ class Conversation(Base):
     # still arrive, but no push and no count in the unread badge (migration 043).
     participant_one_muted_at = Column(DateTime(timezone=True), nullable=True)
     participant_two_muted_at = Column(DateTime(timezone=True), nullable=True)
+    # The piece the chat was started from (`Conversation` "About this piece" card, the piece's
+    # thumbnail in `NotifMessages`); null for a chat started anywhere else (migration 044).
+    piece_id = Column(UUID(as_uuid=True), ForeignKey("pieces.id", ondelete="SET NULL"), nullable=True)
     last_message_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
 

@@ -98,7 +98,8 @@ def find_with_user(username: str):
         last_sender = last_msg[0].sender_id if last_msg else None
         return {
             "conversation": chat_dao.conversation_to_inbox_dict(
-                existing, me_id, other, preview, last_sender_id=last_sender
+                existing, me_id, other, preview, last_sender_id=last_sender,
+                piece=chat_dao.piece_summary(db, existing),
             )
         }, 200
     finally:
@@ -127,7 +128,8 @@ def list_inbox():
             last_sender = last_msg[0].sender_id if last_msg else None
             items.append(
                 chat_dao.conversation_to_inbox_dict(
-                    conversation, me_id, other_user, preview, last_sender_id=last_sender
+                    conversation, me_id, other_user, preview, last_sender_id=last_sender,
+                    piece=chat_dao.piece_summary(db, conversation),
                 )
             )
         next_cursor = (
@@ -162,7 +164,8 @@ def list_requests():
             last_sender = last_msg[0].sender_id if last_msg else None
             items.append(
                 chat_dao.conversation_to_inbox_dict(
-                    conversation, me_id, other_user, preview, last_sender_id=last_sender
+                    conversation, me_id, other_user, preview, last_sender_id=last_sender,
+                    piece=chat_dao.piece_summary(db, conversation),
                 )
             )
         next_cursor = (
@@ -217,6 +220,7 @@ def get_thread(conversation_id: str):
             "otherPartyReadAt": other_read.isoformat() if other_read else None,
             "status": conversation.status,
             "muted": chat_dao.is_muted_for(conversation, me_id),
+            "piece": chat_dao.piece_summary(db, conversation),
             "messages": {"items": items, "nextCursor": next_cursor},
         }, 200
     finally:
@@ -258,6 +262,13 @@ def start_conversation():
     image_url = (body.get("imageUrl") or "").strip() or None
     if not other_username or (not message_text and not image_url):
         raise AppError("username and message (or imageUrl) are required.", 400)
+    # Started from a piece page (B9): the chat remembers the piece.
+    piece_id = None
+    if body.get("pieceId"):
+        try:
+            piece_id = uuid.UUID(str(body["pieceId"]))
+        except ValueError:
+            raise AppError("pieceId is not valid.", 400) from None
     db = SessionLocal()
     try:
         me = get_user_by_id(db, uuid.UUID(g.user["id"]))
@@ -293,6 +304,11 @@ def start_conversation():
             conversation = existing
         else:
             conversation = chat_dao.create_conversation(db, me.id, other.id, status=initial_status)
+        # Only a chat being started (or a closed one started again) takes the piece; a chat
+        # already under way keeps what it began with.
+        piece = chat_dao.piece_for_new_chat(db, piece_id, me.id, other.id)
+        if piece is not None and conversation.piece_id is None:
+            conversation.piece_id = piece.id
         message = chat_dao.create_message(db, conversation, me.id, message_text[:2000] if message_text else None, image_url)
         _notify_new_message(db, conversation.id, other.id, me, message_text, is_new_thread=(initial_status == "pending"))
         _broadcast_new_message(conversation.id, other.id, chat_dao.message_to_dict(message, me))

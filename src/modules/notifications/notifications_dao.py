@@ -20,9 +20,9 @@ from src.shared.notification.push_service import send_push
 _ACTIVITY_FEED_EXCLUDED_TYPES = ("message",)
 
 
-def _piece_cover_url(db: Session, piece: Piece) -> Optional[str]:
+def piece_cover_url(db: Session, piece: Piece) -> Optional[str]:
     """A picture of the piece: its cover, or for a video cover its first photo (none if it
-    has no photo — a video URL would not draw as a picture)."""
+    has no photo — a video URL would not draw as a picture). Also used by chat (B9)."""
     if (piece.media_type or "image") != "video":
         return piece.media_url
     photo = (
@@ -39,7 +39,7 @@ def _piece_fields(db: Session, piece_id: Optional[uuid.UUID]) -> dict:
     if piece is None:
         return {}
     fields = {"pieceId": str(piece.id), "pieceTitle": piece.title}
-    cover = _piece_cover_url(db, piece)
+    cover = piece_cover_url(db, piece)
     if cover:
         fields["pieceImageUrl"] = cover
     return fields

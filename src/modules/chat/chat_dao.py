@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from src.shared.models.block import Block
 from src.shared.models.chat import Conversation, ChatMessage
+from src.shared.models.piece import Piece
 from src.shared.models.user import User
 
 
@@ -190,6 +191,38 @@ def mark_read(db: Session, conversation: Conversation, reader_id: uuid.UUID) -> 
     return now
 
 
+def piece_for_new_chat(
+    db: Session, piece_id: Optional[uuid.UUID], user_a: uuid.UUID, user_b: uuid.UUID
+) -> Optional[Piece]:
+    """The piece a chat is being started from (B9), if it exists, is not deleted, and belongs
+    to one of the two people. Anything else is ignored: the message still goes."""
+    piece = db.get(Piece, piece_id) if piece_id else None
+    if piece is None or piece.deleted_at is not None or piece.user_id not in (user_a, user_b):
+        return None
+    return piece
+
+
+def piece_summary(db: Session, conversation: Conversation) -> Optional[dict]:
+    """The piece the chat started from, for the Messages thumbnail and the "About this piece"
+    card: id, title, picture, price when for sale, and its artist's username (the card sits
+    on the side of whoever asked). None when there is none or it was deleted."""
+    if not getattr(conversation, "piece_id", None):
+        return None
+    piece = db.get(Piece, conversation.piece_id)
+    if piece is None or piece.deleted_at is not None:
+        return None
+    from src.modules.notifications.notifications_dao import piece_cover_url
+
+    artist = db.get(User, piece.user_id)
+    return {
+        "id": str(piece.id),
+        "title": piece.title,
+        "imageUrl": piece_cover_url(db, piece),
+        "priceCents": piece.price_cents if piece.is_for_sale else None,
+        "artistUsername": artist.username if artist else None,
+    }
+
+
 def is_muted_for(conversation: Conversation, user_id: uuid.UUID) -> bool:
     """Whether this person muted the conversation (B8): no push, no unread badge count."""
     if conversation.participant_one_id == user_id:
@@ -262,7 +295,9 @@ def conversation_to_inbox_dict(
     other_user: Optional[User],
     preview: Optional[str],
     last_sender_id: Optional[uuid.UUID] = None,
+    piece: Optional[dict] = None,
 ) -> dict:
+    """`piece` is `piece_summary(...)` for a chat started from a piece (B9), else None."""
     other_read = other_party_read_at(conversation, viewer_id)
     return {
         "id": str(conversation.id),
@@ -280,6 +315,7 @@ def conversation_to_inbox_dict(
         "updatedAt": conversation.last_message_at.isoformat(),
         "unread": is_unread_for(conversation, viewer_id, last_sender_id),
         "muted": is_muted_for(conversation, viewer_id),
+        "piece": piece,
         "status": conversation.status,
         "otherPartyReadAt": other_read.isoformat() if other_read else None,
     }
