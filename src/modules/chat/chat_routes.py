@@ -95,6 +95,14 @@ def decline(conversation_id):
     return _ok("Request declined.", data, status)
 
 
+@chat_bp.patch("/<conversation_id>/mute")
+@auth_required
+@async_handler
+def set_mute(conversation_id):
+    data, status = chat_controller.set_mute(conversation_id)
+    return _ok("Muted." if data.get("muted") else "Unmuted.", data, status)
+
+
 @chat_bp.patch("/<conversation_id>/read")
 @auth_required
 @async_handler

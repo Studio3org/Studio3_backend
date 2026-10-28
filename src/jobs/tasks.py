@@ -67,6 +67,14 @@ def expire_abandoned_orders() -> None:
     _run("abandoned-orders", run)
 
 
+@celery_app.task(name="notifications.daily_summary")
+def send_daily_summaries() -> None:
+    """One push a day with the saves and follows of people on "Daily summary" (the default)."""
+    from src.modules.notifications.daily_summary import send_daily_summaries as run
+
+    _run("daily-summary", run)
+
+
 @celery_app.task(name="events.expire_waitlist_offers")
 def expire_waitlist_offers() -> None:
     """Pass an unclaimed waitlist spot to the next person. Placeholder until Phase 7."""

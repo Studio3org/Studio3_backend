@@ -190,6 +190,26 @@ def mark_read(db: Session, conversation: Conversation, reader_id: uuid.UUID) -> 
     return now
 
 
+def is_muted_for(conversation: Conversation, user_id: uuid.UUID) -> bool:
+    """Whether this person muted the conversation (B8): no push, no unread badge count."""
+    if conversation.participant_one_id == user_id:
+        return conversation.participant_one_muted_at is not None
+    if conversation.participant_two_id == user_id:
+        return conversation.participant_two_muted_at is not None
+    return False
+
+
+def set_muted(db: Session, conversation: Conversation, user_id: uuid.UUID, muted: bool) -> bool:
+    """Mutes or unmutes the conversation for this person only; returns the new state."""
+    value = utc_now() if muted else None
+    if conversation.participant_one_id == user_id:
+        conversation.participant_one_muted_at = value
+    elif conversation.participant_two_id == user_id:
+        conversation.participant_two_muted_at = value
+    db.commit()
+    return is_muted_for(conversation, user_id)
+
+
 def other_party_read_at(conversation: Conversation, viewer_id: uuid.UUID) -> Optional[datetime]:
     if conversation.participant_one_id == viewer_id:
         return conversation.participant_two_read_at
@@ -215,7 +235,8 @@ def is_unread_for(
 
 
 def count_unread_inbox(db: Session, user_id: uuid.UUID) -> int:
-    """Count open conversations with unread messages from the other party."""
+    """Count open conversations with unread messages from the other party. Muted ones are left
+    out (they still show unread in the list)."""
     conversations = list(
         db.execute(
             select(Conversation).where(
@@ -226,6 +247,8 @@ def count_unread_inbox(db: Session, user_id: uuid.UUID) -> int:
     )
     total = 0
     for conversation in conversations:
+        if is_muted_for(conversation, user_id):
+            continue
         last = list_messages(db, conversation.id, limit=1)
         last_sender = last[0].sender_id if last else None
         if is_unread_for(conversation, user_id, last_sender):
@@ -256,6 +279,7 @@ def conversation_to_inbox_dict(
         "preview": preview,
         "updatedAt": conversation.last_message_at.isoformat(),
         "unread": is_unread_for(conversation, viewer_id, last_sender_id),
+        "muted": is_muted_for(conversation, viewer_id),
         "status": conversation.status,
         "otherPartyReadAt": other_read.isoformat() if other_read else None,
     }

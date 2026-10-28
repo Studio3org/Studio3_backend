@@ -518,6 +518,9 @@ def unregister_device():
 DEFAULT_NOTIFICATION_PREFERENCES = {
     "push": {"follow": True, "like": True, "save": True, "comment": True, "inquiry": True, "message": True, "purchase": True},
     "dailyDigest": {"enabled": False, "time": "09:00"},
+    # Saves and follows: one push a day ("daily", the default) or one each ("instant").
+    # Kept beside `push`, not in it: clients read every `push` value as a boolean.
+    "savesAndFollowsMode": "daily",
 }
 
 
@@ -543,6 +546,10 @@ def update_notification_preferences():
             if not isinstance(body["dailyDigest"], dict):
                 raise AppError("dailyDigest must be an object.", 400)
             merged["dailyDigest"] = {**merged.get("dailyDigest", {}), **body["dailyDigest"]}
+        if "savesAndFollowsMode" in body:
+            if body["savesAndFollowsMode"] not in ("daily", "instant"):
+                raise AppError('savesAndFollowsMode must be "daily" or "instant".', 400)
+            merged["savesAndFollowsMode"] = body["savesAndFollowsMode"]
 
         user = update_user_fields(db, user, notification_preferences=merged)
         return {"notificationPreferences": user.notification_preferences}, 200

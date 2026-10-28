@@ -147,17 +147,19 @@ def on_message_send(data):
         other_id = chat_dao.other_participant_id(conversation, uuid.UUID(user_id))
 
         from src.modules.notifications import notifications_dao
-        notifications_dao.push_only(
-            db,
-            user_id=other_id,
-            type="message",
-            title="New message",
-            body=f"{sender.name}: {(body or 'Sent a photo')[:100]}",
-            push_data={
-                "type": "message",
-                "conversationId": str(conversation.id),
-            },
-        )
+        # Muted by the recipient (B8): the message arrives, no alert.
+        if not chat_dao.is_muted_for(conversation, other_id):
+            notifications_dao.push_only(
+                db,
+                user_id=other_id,
+                type="message",
+                title="New message",
+                body=f"{sender.name}: {(body or 'Sent a photo')[:100]}",
+                push_data={
+                    "type": "message",
+                    "conversationId": str(conversation.id),
+                },
+            )
     finally:
         db.close()
 

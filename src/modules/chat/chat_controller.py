@@ -216,6 +216,7 @@ def get_thread(conversation_id: str):
             "otherParty": other_party,
             "otherPartyReadAt": other_read.isoformat() if other_read else None,
             "status": conversation.status,
+            "muted": chat_dao.is_muted_for(conversation, me_id),
             "messages": {"items": items, "nextCursor": next_cursor},
         }, 200
     finally:
@@ -233,6 +234,10 @@ def unread_count():
 
 def _notify_new_message(db, conversation_id, recipient_id, sender, text, is_new_thread):
     # Instagram-style: phone push + Chats unread badge only — no in-app Notifications row.
+    # Muted by the recipient (B8): the message arrives, no alert.
+    conversation = chat_dao.get_conversation(db, conversation_id)
+    if conversation is not None and chat_dao.is_muted_for(conversation, recipient_id):
+        return
     notifications_dao.push_only(
         db,
         user_id=recipient_id,
@@ -352,6 +357,22 @@ def decline(conversation_id: str):
             raise AppError(f"Cannot decline a conversation in status '{conversation.status}'.", 400)
         chat_dao.decline_conversation(db, conversation)
         return {"status": "closed"}, 200
+    finally:
+        db.close()
+
+
+def set_mute(conversation_id: str):
+    """`PATCH /api/conversations/<id>/mute` `{"muted": bool}` — for the caller only (B8)."""
+    body = request.get_json() or {}
+    muted = body.get("muted")
+    if not isinstance(muted, bool):
+        raise AppError("muted must be true or false.", 400)
+    db = SessionLocal()
+    try:
+        me_id = uuid.UUID(g.user["id"])
+        conversation = chat_dao.get_conversation(db, uuid.UUID(conversation_id))
+        _require_participant(conversation, me_id)
+        return {"muted": chat_dao.set_muted(db, conversation, me_id, muted)}, 200
     finally:
         db.close()
 

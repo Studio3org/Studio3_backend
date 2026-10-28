@@ -26,6 +26,10 @@ class Conversation(Base):
     # strictly-2-participant thread; group chat would need a separate read-receipts table.
     participant_one_read_at = Column(DateTime(timezone=True), nullable=True)
     participant_two_read_at = Column(DateTime(timezone=True), nullable=True)
+    # Muted for that person (null = not muted; `ConvMenu` "Mute notifications"): messages
+    # still arrive, but no push and no count in the unread badge (migration 043).
+    participant_one_muted_at = Column(DateTime(timezone=True), nullable=True)
+    participant_two_muted_at = Column(DateTime(timezone=True), nullable=True)
     last_message_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
 

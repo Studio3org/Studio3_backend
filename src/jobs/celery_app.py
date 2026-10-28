@@ -100,6 +100,12 @@ celery_app.conf.update(
             "task": "ledger.reconcile",
             "schedule": crontab(hour=4, minute=0),
         },
+        "saves-and-follows-summary": {
+            "task": "notifications.daily_summary",
+            # Once a day. Accounts have no time zone yet, so one fixed time for everyone:
+            # 17:00 UTC is midday in US Central time.
+            "schedule": crontab(hour=17, minute=0),
+        },
     },
 )
 
