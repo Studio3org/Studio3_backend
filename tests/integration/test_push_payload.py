@@ -70,9 +70,12 @@ def test_every_value_is_a_string(db, sent):
 
 def test_a_user_target_carries_the_actors_username(db, sent):
     """A `user` target's id is a UUID, but the profile screen is addressed by username — so
-    without this the tap has nothing routable and does nothing."""
+    without this the tap has nothing routable and does nothing.
+
+    Follows wait for the daily summary by default (BACKEND_CHANGES B7), so the followed person
+    here has chosen "As they happen" to get the push at all."""
     follower = make_user(db)
-    followed = make_user(db)
+    followed = make_user(db, notification_preferences={"savesAndFollowsMode": "instant"})
 
     notifications_dao.create_and_push(
         db,
@@ -125,7 +128,8 @@ def test_a_muted_type_is_not_pushed(db, sent):
     """Regression guard: the target payload is built inside the preference check, so adding
     it must not start pushing types the recipient has turned off."""
     user = make_user(db)
-    user.notification_preferences = {"push": {"follow": False}}
+    # "As they happen", so it is the muted type and not the daily summary that holds it back.
+    user.notification_preferences = {"push": {"follow": False}, "savesAndFollowsMode": "instant"}
     db.commit()
     other = make_user(db)
 
