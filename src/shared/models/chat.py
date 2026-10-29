@@ -49,8 +49,14 @@ class ChatMessage(Base):
     sender_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     body = Column(Text, nullable=True)
     image_url = Column(String(1024), nullable=True)
+    # A video message (B11): the video and its poster frame (optional).
+    video_url = Column(String(1024), nullable=True)
+    thumbnail_url = Column(String(1024), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
 
     __table_args__ = (
-        CheckConstraint("body IS NOT NULL OR image_url IS NOT NULL", name="ck_chat_messages_body_or_image"),
+        CheckConstraint(
+            "body IS NOT NULL OR image_url IS NOT NULL OR video_url IS NOT NULL",
+            name="ck_chat_messages_has_content",
+        ),
     )

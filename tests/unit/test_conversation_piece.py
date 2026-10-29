@@ -119,7 +119,7 @@ def start(monkeypatch):
         monkeypatch.setattr(chat_controller.social_dao, "user_follows", lambda *_a: True)
         monkeypatch.setattr(chat_dao, "get_conversation_between", lambda *_a: existing)
         monkeypatch.setattr(chat_dao, "create_conversation", create_conversation)
-        monkeypatch.setattr(chat_dao, "create_message", lambda *_a: SimpleNamespace())
+        monkeypatch.setattr(chat_dao, "create_message", lambda *_a, **_k: SimpleNamespace())
         monkeypatch.setattr(chat_dao, "message_to_dict", lambda *_a: {})
         monkeypatch.setattr(chat_controller, "_notify_new_message", lambda *_a, **_k: None)
         monkeypatch.setattr(chat_controller, "_broadcast_new_message", lambda *_a: None)

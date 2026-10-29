@@ -28,6 +28,23 @@ def _validate_content_type(content_type: str, purpose: str) -> None:
     raise AppError(f"Unsupported content type: {content_type}", 400)
 
 
+def check_upload_size(purpose: str, content_type: str, content_length: int | None) -> None:
+    """The size limits the app already enforces (20 MB a photo, 100 MB a video), held on the
+    server when the upload says its size. A chat video must say it (B11)."""
+    ct = content_type.split(";")[0].strip().lower()
+    is_video = ct in ALLOWED_VIDEO
+    if content_length is None:
+        if purpose == "chat" and is_video:
+            raise AppError("contentLength is required for a video message.", 400)
+        return
+    if content_length <= 0:
+        raise AppError("contentLength must be a positive number of bytes.", 400)
+    limit = VIDEO_MAX_BYTES if is_video else IMAGE_MAX_BYTES
+    if content_length > limit:
+        kind = "Video" if is_video else "Image"
+        raise AppError(f"{kind} must be {limit // (1024 * 1024)}MB or smaller.", 413)
+
+
 def _effective_base_url() -> str:
     """Public base URL for media links; falls back to this server's own
     local-disk media endpoint when S3 isn't configured (dev)."""
@@ -37,8 +54,17 @@ def _effective_base_url() -> str:
     return f"{request.host_url.rstrip('/')}/api/media/local"
 
 
-def presign_put(username: str, purpose: str, content_type: str, content_id: str | None = None) -> dict:
+def presign_put(
+    username: str,
+    purpose: str,
+    content_type: str,
+    content_id: str | None = None,
+    content_length: int | None = None,
+) -> dict:
+    """With `content_length`, the size is checked against the limits and signed into the URL,
+    so S3 takes exactly that many bytes."""
     _validate_content_type(content_type, purpose)
+    check_upload_size(purpose, content_type, content_length)
     key = build_media_key(username, purpose, content_type, content_id)
     url = public_url(_effective_base_url(), key)
 
@@ -59,17 +85,17 @@ def presign_put(username: str, purpose: str, content_type: str, content_id: str 
             "devMode": True,
         }
 
+    params = {
+        "Bucket": get_bucket(),
+        "Key": key,
+        "ContentType": content_type.split(";")[0].strip(),
+    }
+    if content_length is not None:
+        params["ContentLength"] = content_length
     try:
-        client = get_s3_client()
-        presigned = client.generate_presigned_url(
-            "put_object",
-            Params={
-                "Bucket": get_bucket(),
-                "Key": key,
-                "ContentType": content_type.split(";")[0].strip(),
-            },
-            ExpiresIn=3600,
-        )
+        # SigV4 only where a size is signed; other uploads keep the signing they had.
+        client = get_s3_client("s3v4" if content_length is not None else None)
+        presigned = client.generate_presigned_url("put_object", Params=params, ExpiresIn=3600)
     except Exception as exc:
         raise AppError(
             f"Could not create upload URL: {exc}",

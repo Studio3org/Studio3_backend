@@ -11,8 +11,12 @@ def _env(name: str, *aliases: str) -> str:
     return ""
 
 
-def get_s3_client():
+def get_s3_client(signature_version: str | None = None):
+    """`signature_version="s3v4"` signs the headers a presigned URL is given (Content-Length
+    included), so S3 refuses an upload of any other size. It needs AWS_REGION to be the
+    bucket's region."""
     import boto3
+    from botocore.config import Config
 
     access_key = _env("AWS_ACCESS_KEY_ID")
     secret_key = _env("AWS_SECRET_ACCESS_KEY")
@@ -27,6 +31,7 @@ def get_s3_client():
         region_name=_env("AWS_REGION") or "us-east-1",
         aws_access_key_id=access_key,
         aws_secret_access_key=secret_key,
+        config=Config(signature_version=signature_version) if signature_version else None,
     )
 
 
