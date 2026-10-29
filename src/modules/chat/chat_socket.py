@@ -12,6 +12,7 @@ from flask_socketio import join_room, leave_room, emit
 from src.shared.config.database import SessionLocal
 from src.shared.config.redis_client import get_redis_client
 from src.shared.realtime.socketio_instance import socketio
+from src.shared.utils.app_error import AppError
 from src.shared.utils.jwt_utils import verify_access_token
 from src.modules.chat import chat_dao
 from src.modules.user.user_dao import get_user_by_id
@@ -119,12 +120,16 @@ def on_message_send(data):
     user_id = _authenticate()
     conversation_id = (data or {}).get("conversationId")
     body = (data or {}).get("body")
-    image_url = (data or {}).get("imageUrl")
     if not user_id or not conversation_id:
         emit("message:error", {"error": "Not authenticated or missing conversationId."})
         return
-    if not body and not image_url:
-        emit("message:error", {"error": "body or imageUrl is required."})
+    try:
+        media = chat_dao.message_media(data)
+    except AppError as exc:
+        emit("message:error", {"error": exc.message})
+        return
+    if not body and not media["image_url"] and not media["video_url"]:
+        emit("message:error", {"error": "body, imageUrl or videoUrl is required."})
         return
 
     db = SessionLocal()
@@ -140,8 +145,13 @@ def on_message_send(data):
             return
         if conversation.status == "pending":
             chat_dao.accept_conversation(db, conversation)
-        message = chat_dao.create_message(db, conversation, uuid.UUID(user_id), body, image_url)
         sender = get_user_by_id(db, uuid.UUID(user_id))
+        try:
+            chat_dao.check_video_is_theirs(sender.username, media)
+        except AppError as exc:
+            emit("message:error", {"error": exc.message})
+            return
+        message = chat_dao.create_message(db, conversation, uuid.UUID(user_id), body, **media)
         payload = chat_dao.message_to_dict(message, sender)
         payload["conversationId"] = str(conversation.id)
         other_id = chat_dao.other_participant_id(conversation, uuid.UUID(user_id))
@@ -154,7 +164,7 @@ def on_message_send(data):
                 user_id=other_id,
                 type="message",
                 title="New message",
-                body=f"{sender.name}: {(body or 'Sent a photo')[:100]}",
+                body=f"{sender.name}: {chat_dao.push_text(body, media)}",
                 push_data={
                     "type": "message",
                     "conversationId": str(conversation.id),

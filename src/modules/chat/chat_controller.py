@@ -91,10 +91,7 @@ def find_with_user(username: str):
         if not existing or existing.status == "closed":
             return {"conversation": None}, 200
         last_msg = chat_dao.list_messages(db, existing.id, limit=1)
-        preview = (
-            last_msg[0].body[:140] if last_msg and last_msg[0].body
-            else ("Photo" if last_msg and last_msg[0].image_url else None)
-        )
+        preview = chat_dao.message_preview(last_msg[0] if last_msg else None)
         last_sender = last_msg[0].sender_id if last_msg else None
         return {
             "conversation": chat_dao.conversation_to_inbox_dict(
@@ -111,10 +108,7 @@ def _inbox_item(db, conversation, me_id) -> dict:
     other_id = chat_dao.other_participant_id(conversation, me_id)
     other_user = get_user_by_id(db, other_id)
     last_msg = chat_dao.list_messages(db, conversation.id, limit=1)
-    preview = (
-        last_msg[0].body[:140] if last_msg and last_msg[0].body
-        else ("Photo" if last_msg and last_msg[0].image_url else None)
-    )
+    preview = chat_dao.message_preview(last_msg[0] if last_msg else None)
     last_sender = last_msg[0].sender_id if last_msg else None
     return chat_dao.conversation_to_inbox_dict(
         conversation, me_id, other_user, preview, last_sender_id=last_sender,
@@ -260,7 +254,7 @@ def unread_count():
         db.close()
 
 
-def _notify_new_message(db, conversation_id, recipient_id, sender, text, is_new_thread):
+def _notify_new_message(db, conversation_id, recipient_id, sender, text, is_new_thread, media=None):
     # Instagram-style: phone push + Chats unread badge only — no in-app Notifications row.
     # Muted by the recipient (B8): the message arrives, no alert.
     conversation = chat_dao.get_conversation(db, conversation_id)
@@ -271,7 +265,7 @@ def _notify_new_message(db, conversation_id, recipient_id, sender, text, is_new_
         user_id=recipient_id,
         type="message",
         title="New message request" if is_new_thread else "New message",
-        body=f"{sender.name}: {(text or 'Sent a photo')[:100]}",
+        body=f"{sender.name}: {chat_dao.push_text(text, media)}",
         push_data={
             "type": "message",
             "conversationId": str(conversation_id),
@@ -283,9 +277,9 @@ def start_conversation():
     body = request.get_json() or {}
     other_username = (body.get("username") or "").strip()
     message_text = (body.get("message") or "").strip()
-    image_url = (body.get("imageUrl") or "").strip() or None
-    if not other_username or (not message_text and not image_url):
-        raise AppError("username and message (or imageUrl) are required.", 400)
+    media = chat_dao.message_media(body)
+    if not other_username or (not message_text and not media["image_url"] and not media["video_url"]):
+        raise AppError("username and message (or imageUrl or videoUrl) are required.", 400)
     # Started from a piece page (B9): the chat remembers the piece.
     piece_id = None
     if body.get("pieceId"):
@@ -303,6 +297,7 @@ def start_conversation():
             raise AppError("Cannot message yourself.", 400)
         if block_dao.is_blocked_either_way(db, me.id, other.id):
             raise AppError("User not found.", 404)
+        chat_dao.check_video_is_theirs(me.username, media)
 
         other_follows_me = social_dao.user_follows(db, other.id, me.id)
 
@@ -313,8 +308,8 @@ def start_conversation():
 
         existing = chat_dao.get_conversation_between(db, me.id, other.id)
         if existing and existing.status != "closed":
-            message = chat_dao.create_message(db, existing, me.id, message_text or None, image_url)
-            _notify_new_message(db, existing.id, other.id, me, message_text, is_new_thread=False)
+            message = chat_dao.create_message(db, existing, me.id, message_text or None, **media)
+            _notify_new_message(db, existing.id, other.id, me, message_text, is_new_thread=False, media=media)
             _broadcast_new_message(existing.id, other.id, chat_dao.message_to_dict(message, me))
             return {"id": str(existing.id), "reused": True}, 200
 
@@ -333,8 +328,13 @@ def start_conversation():
         piece = chat_dao.piece_for_new_chat(db, piece_id, me.id, other.id)
         if piece is not None and conversation.piece_id is None:
             conversation.piece_id = piece.id
-        message = chat_dao.create_message(db, conversation, me.id, message_text[:2000] if message_text else None, image_url)
-        _notify_new_message(db, conversation.id, other.id, me, message_text, is_new_thread=(initial_status == "pending"))
+        message = chat_dao.create_message(
+            db, conversation, me.id, message_text[:2000] if message_text else None, **media
+        )
+        _notify_new_message(
+            db, conversation.id, other.id, me, message_text,
+            is_new_thread=(initial_status == "pending"), media=media,
+        )
         _broadcast_new_message(conversation.id, other.id, chat_dao.message_to_dict(message, me))
         return {"id": str(conversation.id), "reused": False, "status": conversation.status}, 201
     finally:
@@ -344,9 +344,9 @@ def start_conversation():
 def send_message(conversation_id: str):
     body = request.get_json() or {}
     text = (body.get("body") or "").strip() or None
-    image_url = (body.get("imageUrl") or "").strip() or None
-    if not text and not image_url:
-        raise AppError("body or imageUrl is required.", 400)
+    media = chat_dao.message_media(body)
+    if not text and not media["image_url"] and not media["video_url"]:
+        raise AppError("body, imageUrl or videoUrl is required.", 400)
     db = SessionLocal()
     try:
         me_id = uuid.UUID(g.user["id"])
@@ -358,10 +358,11 @@ def send_message(conversation_id: str):
             # The recipient replying to a pending request implicitly accepts it (matches
             # Instagram). The sender following up on their own request must not.
             chat_dao.accept_conversation(db, conversation)
-        message = chat_dao.create_message(db, conversation, me_id, text[:2000] if text else None, image_url)
-        other_id = chat_dao.other_participant_id(conversation, me_id)
         sender = get_user_by_id(db, me_id)
-        _notify_new_message(db, conversation.id, other_id, sender, text, is_new_thread=False)
+        chat_dao.check_video_is_theirs(sender.username, media)
+        message = chat_dao.create_message(db, conversation, me_id, text[:2000] if text else None, **media)
+        other_id = chat_dao.other_participant_id(conversation, me_id)
+        _notify_new_message(db, conversation.id, other_id, sender, text, is_new_thread=False, media=media)
         message_dict = chat_dao.message_to_dict(message, sender)
         _broadcast_new_message(conversation.id, other_id, message_dict)
         return message_dict, 201

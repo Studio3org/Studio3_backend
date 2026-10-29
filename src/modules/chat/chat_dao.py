@@ -10,6 +10,8 @@ from src.shared.models.block import Block
 from src.shared.models.chat import Conversation, ChatMessage
 from src.shared.models.piece import Piece
 from src.shared.models.user import User
+from src.shared.storage.s3_service import validate_user_media_url
+from src.shared.utils.app_error import AppError
 
 
 def utc_now():
@@ -241,9 +243,12 @@ def create_message(
     sender_id: uuid.UUID,
     body: Optional[str] = None,
     image_url: Optional[str] = None,
+    video_url: Optional[str] = None,
+    thumbnail_url: Optional[str] = None,
 ) -> ChatMessage:
     message = ChatMessage(
-        id=uuid.uuid4(), conversation_id=conversation.id, sender_id=sender_id, body=body, image_url=image_url
+        id=uuid.uuid4(), conversation_id=conversation.id, sender_id=sender_id, body=body,
+        image_url=image_url, video_url=video_url, thumbnail_url=thumbnail_url,
     )
     db.add(message)
     db.flush()  # assign created_at before aligning last_message_at
@@ -405,11 +410,59 @@ def conversation_to_inbox_dict(
     }
 
 
+def message_media(raw: Optional[dict]) -> dict:
+    """What a message attaches, from a request body or a socket payload: a photo (`imageUrl`)
+    or a video (`videoUrl`, with an optional poster frame `thumbnailUrl`), not both (B11).
+    Returns `create_message`'s keyword arguments."""
+    raw = raw or {}
+
+    def url(key):
+        value = raw.get(key)
+        return value.strip() or None if isinstance(value, str) else None
+
+    image_url, video_url, thumbnail_url = url("imageUrl"), url("videoUrl"), url("thumbnailUrl")
+    if image_url and video_url:
+        raise AppError("A message carries a photo or a video, not both.", 400)
+    if thumbnail_url and not video_url:
+        raise AppError("thumbnailUrl goes with a videoUrl.", 400)
+    return {"image_url": image_url, "video_url": video_url, "thumbnail_url": thumbnail_url}
+
+
+def check_video_is_theirs(username: str, media: dict) -> None:
+    """A video and its poster must be ones the sender uploaded (`/api/media/presign`, `chat`):
+    a message can't point at someone else's file or anywhere off the media store."""
+    for key in ("video_url", "thumbnail_url"):
+        if media.get(key):
+            validate_user_media_url(username, media[key])
+
+
+def message_preview(message: Optional[ChatMessage]) -> Optional[str]:
+    """The Messages row's second line: the text, else "Photo" or "Video"."""
+    if message is None:
+        return None
+    if message.body:
+        return message.body[:140]
+    if message.image_url:
+        return "Photo"
+    if getattr(message, "video_url", None):
+        return "Video"
+    return None
+
+
+def push_text(text: Optional[str], media: Optional[dict] = None) -> str:
+    """A message push's text: the message, else what it sent."""
+    if text:
+        return text[:100]
+    return "Sent a video" if (media or {}).get("video_url") else "Sent a photo"
+
+
 def message_to_dict(message: ChatMessage, sender: Optional[User]) -> dict:
     return {
         "id": str(message.id),
         "body": message.body,
         "imageUrl": message.image_url,
+        "videoUrl": message.video_url,
+        "thumbnailUrl": message.thumbnail_url,
         "sender": (
             {"username": sender.username, "name": sender.name, "profilePhotoUrl": sender.image}
             if sender

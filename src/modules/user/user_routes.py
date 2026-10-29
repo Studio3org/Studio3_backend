@@ -5,6 +5,7 @@ from flask import Blueprint, Response, abort, g, request
 
 from src.middlewares.auth_middleware import auth_required, optional_auth
 from src.shared.storage.local_storage import guess_content_type, read_local_file, save_local_file
+from src.shared.storage.s3_service import VIDEO_MAX_BYTES
 from src.shared.utils.api_response import success_response, apply_cookie_ops
 from src.shared.utils.async_handler import async_handler
 from src.modules.user import user_controller
@@ -286,6 +287,8 @@ def presign():
 @media_bp.put("/local/<path:key>")
 def upload_local_media(key):
     """Dev-only stand-in for an S3 presigned PUT when no bucket is configured."""
+    if (request.content_length or 0) > VIDEO_MAX_BYTES:
+        abort(413)
     save_local_file(key, request.get_data())
     return "", 204
 

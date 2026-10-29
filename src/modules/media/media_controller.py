@@ -22,13 +22,17 @@ def presign():
         raise AppError("Invalid purpose.", 400)
     if not content_type:
         raise AppError("contentType is required.", 400)
+    # The upload's size in bytes: checked against the limits and signed into the URL (B11).
+    content_length = body.get("contentLength")
+    if content_length is not None and (isinstance(content_length, bool) or not isinstance(content_length, int)):
+        raise AppError("contentLength must be a number of bytes.", 400)
 
     db = SessionLocal()
     try:
         user = get_user_by_id(db, uuid.UUID(g.user["id"]))
         if not user:
             raise AppError("User not found.", 404)
-        result = presign_put(user.username, purpose, content_type, content_id)
+        result = presign_put(user.username, purpose, content_type, content_id, content_length)
         return result, 200
     finally:
         db.close()
