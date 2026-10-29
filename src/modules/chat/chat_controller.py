@@ -106,6 +106,22 @@ def find_with_user(username: str):
         db.close()
 
 
+def _inbox_item(db, conversation, me_id) -> dict:
+    """One Messages row: the other person, the last message, unread / muted, the piece."""
+    other_id = chat_dao.other_participant_id(conversation, me_id)
+    other_user = get_user_by_id(db, other_id)
+    last_msg = chat_dao.list_messages(db, conversation.id, limit=1)
+    preview = (
+        last_msg[0].body[:140] if last_msg and last_msg[0].body
+        else ("Photo" if last_msg and last_msg[0].image_url else None)
+    )
+    last_sender = last_msg[0].sender_id if last_msg else None
+    return chat_dao.conversation_to_inbox_dict(
+        conversation, me_id, other_user, preview, last_sender_id=last_sender,
+        piece=chat_dao.piece_summary(db, conversation),
+    )
+
+
 def list_inbox():
     cursor = request.args.get("cursor")
     limit = min(int(request.args.get("limit", 20)), 50)
@@ -116,22 +132,45 @@ def list_inbox():
         conversations = chat_dao.list_inbox(db, me_id, limit=limit + 1, before=before)
         has_more = len(conversations) > limit
         conversations = conversations[:limit]
+        items = [_inbox_item(db, conversation, me_id) for conversation in conversations]
+        next_cursor = (
+            _encode_cursor(conversations[-1].last_message_at, conversations[-1].id)
+            if has_more and conversations
+            else None
+        )
+        return {"items": items, "nextCursor": next_cursor}, 200
+    finally:
+        db.close()
+
+
+SEARCH_MAX_LENGTH = 100
+
+
+def search_inbox():
+    """"Search messages" (`NotifMessages`, B10): the inbox's conversations whose other person's
+    name or handle, or any message, contains `q`. Rows are the inbox's plus `matchPreview`: the
+    newest matching message, cut so the match shows (null when only the name matched). Newest
+    first, paged like the inbox."""
+    query = (request.args.get("q") or "").strip()
+    if len(query) > SEARCH_MAX_LENGTH:
+        raise AppError(f"Search is limited to {SEARCH_MAX_LENGTH} characters.", 400)
+    if not query:
+        return {"items": [], "nextCursor": None}, 200
+    cursor = request.args.get("cursor")
+    limit = min(int(request.args.get("limit", 20)), 50)
+    db = SessionLocal()
+    try:
+        me_id = uuid.UUID(g.user["id"])
+        before = _decode_cursor(cursor) if cursor else None
+        conversations = chat_dao.search_inbox(db, me_id, query, limit=limit + 1, before=before)
+        has_more = len(conversations) > limit
+        conversations = conversations[:limit]
         items = []
         for conversation in conversations:
-            other_id = chat_dao.other_participant_id(conversation, me_id)
-            other_user = get_user_by_id(db, other_id)
-            last_msg = chat_dao.list_messages(db, conversation.id, limit=1)
-            preview = (
-                last_msg[0].body[:140] if last_msg and last_msg[0].body
-                else ("Photo" if last_msg and last_msg[0].image_url else None)
-            )
-            last_sender = last_msg[0].sender_id if last_msg else None
-            items.append(
-                chat_dao.conversation_to_inbox_dict(
-                    conversation, me_id, other_user, preview, last_sender_id=last_sender,
-                    piece=chat_dao.piece_summary(db, conversation),
-                )
-            )
+            item = _inbox_item(db, conversation, me_id)
+            match = chat_dao.newest_match(db, conversation.id, query)
+            item["matchPreview"] = chat_dao.match_preview(match.body, query) if match else None
+            items.append(item)
         next_cursor = (
             _encode_cursor(conversations[-1].last_message_at, conversations[-1].id)
             if has_more and conversations
@@ -152,22 +191,7 @@ def list_requests():
         conversations = chat_dao.list_requests(db, me_id, limit=limit + 1, before=before)
         has_more = len(conversations) > limit
         conversations = conversations[:limit]
-        items = []
-        for conversation in conversations:
-            other_id = chat_dao.other_participant_id(conversation, me_id)
-            other_user = get_user_by_id(db, other_id)
-            last_msg = chat_dao.list_messages(db, conversation.id, limit=1)
-            preview = (
-                last_msg[0].body[:140] if last_msg and last_msg[0].body
-                else ("Photo" if last_msg and last_msg[0].image_url else None)
-            )
-            last_sender = last_msg[0].sender_id if last_msg else None
-            items.append(
-                chat_dao.conversation_to_inbox_dict(
-                    conversation, me_id, other_user, preview, last_sender_id=last_sender,
-                    piece=chat_dao.piece_summary(db, conversation),
-                )
-            )
+        items = [_inbox_item(db, conversation, me_id) for conversation in conversations]
         next_cursor = (
             _encode_cursor(conversations[-1].last_message_at, conversations[-1].id)
             if has_more and conversations

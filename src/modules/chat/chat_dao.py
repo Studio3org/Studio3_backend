@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import select, or_, and_, tuple_
+from sqlalchemy import select, or_, and_, tuple_, case
 from sqlalchemy.orm import Session
 
 from src.shared.models.block import Block
@@ -99,19 +99,20 @@ def initiator_id(db: Session, conversation: Conversation) -> Optional[uuid.UUID]
     ).scalar_one_or_none()
 
 
-def list_inbox(
-    db: Session, user_id: uuid.UUID, limit: int = 20, before: Optional[tuple] = None
-) -> list[Conversation]:
+def _inbox_query(user_id: uuid.UUID):
     """Open threads for this user, plus pending requests they sent (still waiting on the other
     side). The recipient of a pending thread sees it in list_requests() instead — matches the
     Instagram-style "message requests" split."""
-    q = select(Conversation).where(
+    return select(Conversation).where(
         or_(Conversation.participant_one_id == user_id, Conversation.participant_two_id == user_id),
         or_(
             Conversation.status == "open",
             and_(Conversation.status == "pending", _first_sender_id() == user_id),
         ),
     )
+
+
+def _newest_first(db: Session, q, limit: int, before: Optional[tuple]) -> list[Conversation]:
     if before:
         before_ts, before_id = before
         q = q.where(tuple_(Conversation.last_message_at, Conversation.id) < tuple_(before_ts, before_id))
@@ -120,6 +121,89 @@ def list_inbox(
             q.order_by(Conversation.last_message_at.desc(), Conversation.id.desc()).limit(limit)
         ).scalars().all()
     )
+
+
+def list_inbox(
+    db: Session, user_id: uuid.UUID, limit: int = 20, before: Optional[tuple] = None
+) -> list[Conversation]:
+    """The Messages tab: see `_inbox_query`."""
+    return _newest_first(db, _inbox_query(user_id), limit, before)
+
+
+# Postgres's default LIKE escape character, so the patterns need no ESCAPE clause.
+_LIKE_ESCAPE = "\\"
+
+
+def contains_pattern(query: str) -> str:
+    """An ILIKE pattern for `query` anywhere, with its own `%`, `_` and backslash taken literally."""
+    escaped = (
+        query.replace(_LIKE_ESCAPE, _LIKE_ESCAPE * 2)
+        .replace("%", _LIKE_ESCAPE + "%")
+        .replace("_", _LIKE_ESCAPE + "_")
+    )
+    return f"%{escaped}%"
+
+
+def search_inbox_query(user_id: uuid.UUID, query: str):
+    """The inbox's conversations whose other person's name or handle, or any message,
+    contains `query`, case-insensitive ("Search messages" on `NotifMessages`, B10)."""
+    like = contains_pattern(query)
+    other_id = case(
+        (Conversation.participant_one_id == user_id, Conversation.participant_two_id),
+        else_=Conversation.participant_one_id,
+    )
+    by_person = (
+        select(User.id)
+        .where(
+            User.id == other_id,
+            or_(User.name.ilike(like), User.username.ilike(like)),
+        )
+        .exists()
+    )
+    by_message = (
+        select(ChatMessage.id)
+        .where(
+            ChatMessage.conversation_id == Conversation.id,
+            ChatMessage.body.ilike(like),
+        )
+        .exists()
+    )
+    return _inbox_query(user_id).where(or_(by_person, by_message))
+
+
+def search_inbox(
+    db: Session, user_id: uuid.UUID, query: str, limit: int = 20, before: Optional[tuple] = None
+) -> list[Conversation]:
+    """`search_inbox_query`, newest first and paged like the inbox."""
+    return _newest_first(db, search_inbox_query(user_id, query), limit, before)
+
+
+def newest_match(db: Session, conversation_id: uuid.UUID, query: str) -> Optional[ChatMessage]:
+    """The newest message in the conversation whose text contains `query`, if any."""
+    return db.execute(
+        select(ChatMessage)
+        .where(
+            ChatMessage.conversation_id == conversation_id,
+            ChatMessage.body.ilike(contains_pattern(query)),
+        )
+        .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def match_preview(body: str, query: str, width: int = 140) -> str:
+    """`body` cut to `width` so its first match of `query` shows on the row's one line: from
+    the start when the match is near it, otherwise from a word or two before it, after "…"."""
+    text = " ".join(body.split())
+    at = text.lower().find(query.lower())
+    lead = 24
+    if at <= lead:
+        return text[:width]
+    start = at - lead
+    space = text.find(" ", start, at)
+    if space != -1:
+        start = space + 1
+    return "…" + text[start:start + width - 1]
 
 
 def list_requests(

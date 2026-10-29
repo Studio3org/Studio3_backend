@@ -30,6 +30,15 @@ def list_requests():
     return _ok("OK", data, status)
 
 
+@chat_bp.get("/search")
+@auth_required
+@async_handler
+def search_inbox():
+    """Search messages: names, handles and message text (BACKEND_CHANGES B10)."""
+    data, status = chat_controller.search_inbox()
+    return _ok("OK", data, status)
+
+
 @chat_bp.get("/search-users")
 @optional_auth
 @async_handler
