@@ -213,11 +213,20 @@ def publish(event_id: str):
             reason="host_published", commit=False,
         )
         event.published_at = datetime.now(timezone.utc)
-        listed = lineup_service.publish_lineup(db, event, commit=False)
+        changes: list = []
+        listed = lineup_service.publish_lineup(db, event, commit=False, changes=changes)
         db.commit()
 
         result = event_to_dict(db, event, viewer_id=viewer_id)
         result.update(listed)
+        # The pieces' savers hear they are on sale or going to auction (B12).
+        from src.modules.notifications import watchers
+
+        for piece, before, auction in changes:
+            if auction is None:
+                watchers.after_listing_change(db, piece, before)
+            else:
+                watchers.auction_opened(db, piece, auction)
         return result, 200
     finally:
         db.close()

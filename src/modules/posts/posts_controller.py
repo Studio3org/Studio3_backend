@@ -54,7 +54,13 @@ def create():
             linked_piece_ids=linked_ids or None,
             status="draft" if body.get("status") == "draft" else "live",
         )
-        return post_to_dict(post), 201
+        result = post_to_dict(post)
+        # Posted straight away: followers hear about the Scene (B12). A draft waits.
+        if post.status == "live":
+            from src.modules.notifications import watchers
+
+            watchers.artist_posted(db, user.id, "scene", post.id)
+        return result, 201
     finally:
         db.close()
 
@@ -121,6 +127,7 @@ def patch(post_id: str):
         post = get_post(db, uuid.UUID(post_id))
         if not post or post.user_id != user.id:
             raise AppError("Post not found.", 404)
+        was_draft = post.status == "draft"
         if "caption" in body:
             post.caption = body["caption"]
         if "location" in body:
@@ -133,7 +140,12 @@ def patch(post_id: str):
             post.linked_piece_ids = linked_ids or None
         db.commit()
         db.refresh(post)
-        return post_to_dict(post), 200
+        result = post_to_dict(post)
+        if was_draft and post.status == "live":
+            from src.modules.notifications import watchers
+
+            watchers.artist_posted(db, user.id, "scene", post.id)
+        return result, 200
     finally:
         db.close()
 

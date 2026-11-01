@@ -5,39 +5,131 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Delete your account — Studio3</title>
   <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#FAFAF8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#111111" media="(prefers-color-scheme: dark)">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
+    /* The app's new UI tokens (lib/theme/studio_colors.dart): Gallery White and Ink, Line,
+       Graphite and Tertiary text; Geist, with Geist Mono for labels. */
+    :root {
+      --bg: #FAFAF8; --card: #FFFFFF; --surface: #F0F0EE; --line: #E3E3E0;
+      --ink: #111111; --text2: #6B6B6B; --text3: #6D6D6D; --button: #111111; --button-text: #FAFAF8;
+      color-scheme: light;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #111111; --card: #1C1C1C; --surface: #1C1C1C; --line: #2A2A2A;
+        --ink: #FAFAF8; --text2: #A8A8A8; --text3: #8E8E8E; --button: #FAFAF8; --button-text: #111111;
+        color-scheme: dark;
+      }
+    }
     * { box-sizing: border-box; }
-    body { margin: 0; background: #f5f2ee; color: #231f1b;
-           font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    .wrap { max-width: 640px; margin: 0 auto; padding: 48px 20px 80px; }
-    .brand { font-weight: 800; font-size: 20px; letter-spacing: -0.02em; margin-bottom: 32px; }
-    h1 { font-size: 32px; font-weight: 700; line-height: 1.15; margin: 0 0 12px; }
-    .lede { color: #6b665e; font-size: 16px; margin: 0 0 40px; }
-    section { margin-bottom: 32px; }
-    h2 { font-size: 18px; font-weight: 600; margin: 0 0 10px; }
-    p { color: #3a3530; font-size: 15px; margin: 0 0 10px; }
-    ol { color: #3a3530; font-size: 15px; padding-left: 20px; margin: 0 0 12px; }
-    a { color: #231f1b; font-weight: 600; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      margin: 0; background: var(--bg); color: var(--ink);
+      font: 400 15px/1.55 "Geist", "Helvetica Neue", Helvetica, Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px;
+        text-decoration-color: var(--line); text-decoration-thickness: 1px; }
+    a:hover { text-decoration-color: var(--ink); }
+    strong { font-weight: 500; }
+
+    header { border-bottom: 1px solid var(--line); }
+    .bar { max-width: 600px; margin: 0 auto; padding: 16px 20px; display: flex; align-items: center; }
+    .wordmark { height: 22px; width: auto; color: var(--ink); display: block; }
+
+    main { max-width: 600px; margin: 0 auto; padding: 40px 20px 64px; }
+    .label {
+      font: 500 11px/1.4 "Geist Mono", ui-monospace, Menlo, monospace;
+      letter-spacing: 0.08em; text-transform: uppercase; color: var(--text3); margin: 0 0 10px;
+    }
+    h1 { font-size: 32px; font-weight: 500; line-height: 1.1; letter-spacing: -0.6px; margin: 0 0 14px; }
+    .lede { font-size: 16px; color: var(--text2); margin: 0 0 32px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 48px; }
+    .button {
+      display: inline-flex; align-items: center; justify-content: center; min-height: 44px;
+      padding: 0 20px; border-radius: 999px; font-size: 15px; font-weight: 500; text-decoration: none;
+      background: var(--button); color: var(--button-text); border: 1px solid var(--button);
+    }
+    .button.secondary { background: transparent; color: var(--ink); border-color: var(--line); }
+    .button:hover { opacity: 0.88; }
+
+    section { padding: 28px 0; border-top: 1px solid var(--line); }
+    h2 { font-size: 18px; font-weight: 500; line-height: 1.3; letter-spacing: -0.2px; margin: 0 0 12px; }
+    p { color: var(--text2); margin: 0 0 12px; }
+    p:last-child { margin-bottom: 0; }
+
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 6px 18px; margin: 0 0 16px; }
+    ol.steps { list-style: none; margin: 0; padding: 0; counter-reset: step; }
+    ol.steps li {
+      counter-increment: step; display: flex; gap: 14px; align-items: flex-start;
+      padding: 14px 0; color: var(--ink); border-bottom: 1px solid var(--line);
+    }
+    ol.steps li:last-child { border-bottom: 0; }
+    ol.steps li::before {
+      content: counter(step); flex: 0 0 26px; height: 26px; border-radius: 50%;
+      border: 1px solid var(--line); display: flex; align-items: center; justify-content: center;
+      font: 500 12px/1 "Geist Mono", ui-monospace, Menlo, monospace; color: var(--text2); margin-top: -1px;
+    }
+
+    .note { background: var(--surface); border-radius: 12px; padding: 14px 16px; color: var(--text2); font-size: 14px; }
+    .note + p, p + .note { margin-top: 12px; }
+
+    ul.gone { list-style: none; margin: 0 0 16px; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+    ul.gone li {
+      font-size: 13px; color: var(--ink); border: 1px solid var(--line); border-radius: 999px;
+      padding: 5px 12px; background: var(--card);
+    }
+
+    footer { border-top: 1px solid var(--line); }
+    .foot {
+      max-width: 600px; margin: 0 auto; padding: 20px 20px 40px;
+      font: 400 12px/1.5 "Geist Mono", ui-monospace, Menlo, monospace; color: var(--text3);
+      display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+    }
+    .foot a { color: var(--text3); }
+
+    @media (max-width: 420px) {
+      main { padding: 32px 16px 48px; }
+      .bar, .foot { padding-left: 16px; padding-right: 16px; }
+      h1 { font-size: 28px; }
+      .button { flex: 1 1 100%; }
+    }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="brand">Studio3</div>
+  <header>
+    <div class="bar">
+      <svg class="wordmark" role="img" aria-label="Studio3" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 3458.5 1000"><path fill="currentColor" d="M230.5 882.5Q187.5 882.5 146.0 871.25Q104.5 860.0 69.25 839.75Q34.0 819.5 9.0 792.0L95.5 704.0Q120.0 730.5 153.0 744.75Q186.0 759.0 225.0 759.0Q252.0 759.0 266.25 751.25Q280.5 743.5 280.5 729.0Q280.5 711.0 263.25 701.5Q246.0 692.0 219.0 684.75Q192.0 677.5 162.0 668.25Q132.0 659.0 104.75 643.0Q77.5 627.0 60.5 598.75Q43.5 570.5 43.5 526.0Q43.5 479.5 67.5 444.75Q91.5 410.0 135.5 390.25Q179.5 370.5 239.0 370.5Q300.5 370.5 353.25 391.75Q406.0 413.0 439.0 455.5L352.0 543.5Q329.0 516.5 300.5 505.25Q272.0 494.0 244.5 494.0Q218.5 494.0 205.75 501.75Q193.0 509.5 193.0 523.0Q193.0 538.5 210.0 547.5Q227.0 556.5 254.0 563.5Q281.0 570.5 310.75 580.25Q340.5 590.0 367.5 607.25Q394.5 624.5 411.5 653.0Q428.5 681.5 428.5 727.0Q428.5 798.5 375.0 840.5Q321.5 882.5 230.5 882.5ZM566.1851851851852 870.0V183.0H719.1851851851852V870.0ZM456.18518518518516 514.0V384.0H829.1851851851852V514.0ZM1096.8703703703704 881.0Q1030.568212096989 881.0 978.9692912336798 853.5Q927.3703703703703 826.0 898.1203703703703 777.326968973747Q868.8703703703703 728.653937947494 868.8703703703703 665.6074858839281V384.0H1021.8703703703703V664.0Q1021.8703703703703 689.0771428571429 1030.8078703703704 707.1957142857143Q1039.7453703703704 725.3142857142857 1056.798254985755 735.1571428571428Q1073.8511396011395 745.0 1097.0341634738186 745.0Q1131.3703703703704 745.0 1151.3703703703704 723.47Q1171.3703703703704 701.94 1171.3703703703704 664.0V384.0H1324.3703703703704V665.5Q1324.3703703703704 729.5 1295.3703703703704 778.0Q1266.3703703703704 826.5 1215.1545430322408 853.75Q1163.9387156941114 881.0 1096.8703703703704 881.0ZM1612.5555555555557 880.0Q1543.5555555555557 880.0 1490.0816291751876 847.0131578947369Q1436.6077027948195 814.0263157894736 1406.0816291751876 757.0131578947369Q1375.5555555555557 700.0 1375.5555555555557 627.3943089430894Q1375.5555555555557 554.2723577235772 1406.0555555555557 497.1361788617886Q1436.5555555555557 440.0 1489.9594017094018 407.0Q1543.363247863248 374.0 1612.5555555555557 374.0Q1662.0555555555557 374.0 1702.8055555555557 393.0Q1743.5555555555557 412.0 1769.8055555555557 445.5Q1796.0555555555557 479.0 1799.5555555555557 522.0V727.0Q1796.0555555555557 770.0 1770.0555555555557 804.75Q1744.0555555555557 839.5 1703.0555555555557 859.75Q1662.0555555555557 880.0 1612.5555555555557 880.0ZM1639.5555555555557 742.0Q1672.5555555555557 742.0 1696.748570261438 727.4177852348994Q1720.9415849673203 712.8355704697987 1734.748570261438 686.9177852348994Q1748.5555555555557 661.0 1748.5555555555557 627.0Q1748.5555555555557 592.8066037735849 1734.9504830917876 567.2004716981132Q1721.3454106280194 541.5943396226415 1696.9504830917876 526.7971698113208Q1672.5555555555557 512.0 1640.3055555555557 512.0Q1608.0555555555557 512.0 1583.5942879499219 526.8412322274881Q1559.133020344288 541.6824644549763 1544.8442879499219 567.6161137440758Q1530.5555555555557 593.5497630331754 1530.5555555555557 627.0Q1530.5555555555557 660.5 1544.514915161467 686.48Q1558.4742747673783 712.46 1583.3831417624524 727.23Q1608.2920087575262 742.0 1639.5555555555557 742.0ZM1892.5555555555557 870.0H1742.0555555555557V739.5L1765.0555555555557 621.0L1739.5555555555557 503.5V144.0H1892.5555555555557ZM1985.7407407407409 870.0V384.0H2138.740740740741V870.0ZM2062.240740740741 317.0Q2026.7407407407409 317.0 2003.2407407407409 292.75Q1979.7407407407409 268.5 1979.7407407407409 233.0Q1979.7407407407409 197.5 2003.2407407407409 173.25Q2026.7407407407409 149.0 2062.240740740741 149.0Q2098.740740740741 149.0 2121.740740740741 173.25Q2144.740740740741 197.5 2144.740740740741 233.0Q2144.740740740741 268.5 2121.740740740741 292.75Q2098.740740740741 317.0 2062.240740740741 317.0ZM2465.925925925926 881.0Q2390.425925925926 881.0 2330.175925925926 847.5Q2269.925925925926 814.0 2234.925925925926 756.0Q2199.925925925926 698.0 2199.925925925926 626.0Q2199.925925925926 554.0 2234.675925925926 497.0Q2269.425925925926 440.0 2329.675925925926 406.5Q2389.925925925926 373.0 2465.425925925926 373.0Q2541.425925925926 373.0 2601.425925925926 406.25Q2661.425925925926 439.5 2696.425925925926 496.75Q2731.425925925926 554.0 2731.425925925926 626.0Q2731.425925925926 698.0 2696.675925925926 756.0Q2661.925925925926 814.0 2601.925925925926 847.5Q2541.925925925926 881.0 2465.925925925926 881.0ZM2465.425925925926 742.0Q2498.425925925926 742.0 2523.425925925926 727.5Q2548.425925925926 713.0 2562.175925925926 686.75Q2575.925925925926 660.5 2575.925925925926 626.5Q2575.925925925926 592.5 2561.675925925926 566.75Q2547.425925925926 541.0 2522.925925925926 526.5Q2498.425925925926 512.0 2465.425925925926 512.0Q2433.425925925926 512.0 2408.425925925926 526.75Q2383.425925925926 541.5 2369.425925925926 567.25Q2355.425925925926 593.0 2355.425925925926 627.0Q2355.425925925926 660.5 2369.425925925926 686.75Q2383.425925925926 713.0 2408.425925925926 727.5Q2433.425925925926 742.0 2465.425925925926 742.0ZM3166.7962962962965 881.0Q3093.7962962962965 881.0 3032.7962962962965 855.5Q2971.7962962962965 830.0 2929.7962962962965 782.0L3031.2962962962965 681.5Q3050.2962962962965 709.5 3086.7962962962965 726.75Q3123.2962962962965 744.0 3164.2962962962965 744.0Q3200.7962962962965 744.0 3228.0462962962965 731.0Q3255.2962962962965 718.0 3270.7962962962965 694.0Q3286.2962962962965 670.0 3286.2962962962965 637.5Q3286.2962962962965 604.0 3270.5462962962965 580.5Q3254.7962962962965 557.0 3225.5462962962965 544.25Q3196.2962962962965 531.5 3155.2962962962965 531.5Q3136.2962962962965 531.5 3115.5462962962965 534.0Q3094.7962962962965 536.5 3081.2962962962965 541.5L3150.2962962962965 454.5Q3178.2962962962965 446.5 3203.7962962962965 441.0Q3229.2962962962965 435.5 3250.7962962962965 435.5Q3304.7962962962965 435.5 3348.0462962962965 461.0Q3391.2962962962965 486.5 3416.5462962962965 533.0Q3441.7962962962965 579.5 3441.7962962962965 643.0Q3441.7962962962965 713.5 3407.5462962962965 767.25Q3373.2962962962965 821.0 3311.5462962962965 851.0Q3249.7962962962965 881.0 3166.7962962962965 881.0ZM3081.2962962962965 541.5V454.0L3253.2962962962965 252.5L3428.7962962962965 251.5L3250.2962962962965 455.0ZM2973.7962962962965 297.5V164.0H3428.7962962962965V251.5L3305.7962962962965 297.5Z"/></svg>
+    </div>
+  </header>
 
+  <main>
+    <p class="label">Account</p>
     <h1>Delete your account</h1>
     <p class="lede">
       You can delete your Studio3 account and the personal data tied to it at any time
       — whether or not you still have the app installed.
     </p>
+    <div class="actions">
+      <a class="button" href="#in-the-app">Delete it in the app</a>
+      <a class="button secondary" href="mailto:support@studio-3.co?subject=Delete%20my%20account">Email support</a>
+    </div>
 
-    <section>
+    <section id="in-the-app">
+      <p class="label">In the app</p>
       <h2>If you can sign in: do it in the app</h2>
-      <ol>
-        <li>Open Studio3 and go to your <strong>Profile</strong>.</li>
-        <li>Tap the settings icon, then scroll to <strong>Delete account</strong>.</li>
-        <li>Enter your password and confirm.</li>
-      </ol>
-      <p>
+      <div class="card">
+        <ol class="steps">
+          <li><span>Open Studio3 and go to your <strong>Profile</strong>.</span></li>
+          <li><span>Tap the settings icon, then scroll to <strong>Delete account</strong>.</span></li>
+          <li><span>Enter your password and confirm.</span></li>
+        </ol>
+      </div>
+      <p class="note">
         This takes effect immediately — your session ends and your login stops working
         right away. If you have an active listing for sale or an order/sale still in
         progress, you'll be asked to resolve those first, since an auction or a
@@ -46,6 +138,7 @@
     </section>
 
     <section>
+      <p class="label">Without the app</p>
       <h2>If you can't sign in</h2>
       <p>
         Email <a href="mailto:support@studio-3.co">support@studio-3.co</a> from the
@@ -55,6 +148,7 @@
     </section>
 
     <section>
+      <p class="label">Part of your data</p>
       <h2>Delete some of your data without deleting your account</h2>
       <p>
         You don't have to delete your whole account to remove something specific. Open
@@ -71,7 +165,15 @@
     </section>
 
     <section>
+      <p class="label">What's removed</p>
       <h2>What actually gets deleted</h2>
+      <ul class="gone" aria-label="Removed when you delete your account">
+        <li>Name</li><li>Email</li><li>Phone</li><li>Bio</li><li>Location</li>
+        <li>Profile and cover photos</li><li>Linked social accounts</li><li>Password</li>
+        <li>Pieces</li><li>Scenes</li><li>Hosted events</li><li>Comments</li><li>Likes</li>
+        <li>Saves and collections</li><li>Follows</li><li>Blocks</li><li>Notifications</li>
+        <li>Registered devices</li>
+      </ul>
       <p>
         Your name, email address, phone number, bio, location, profile and cover
         photos, and any linked social accounts are permanently removed, and your
@@ -81,18 +183,28 @@
         Your pieces, scenes, and hosted events are deleted along with the rest of
         your data — they don't linger under an anonymized name — and so are your
         comments, likes, saves and collections, follows, blocks, notifications, and
-        the devices registered to receive them. The one exception is
-        a message you sent, or a piece already part of a completed order: those can
-        still be part of someone else's conversation or order history, so rather
-        than deleting them outright, they stay — re-attributed to an anonymized
+        the devices registered to receive them.
+      </p>
+      <p class="note">
+        The one exception is a message you sent, or a piece already part of a completed
+        order: those can still be part of someone else's conversation or order history, so
+        rather than deleting them outright, they stay — re-attributed to an anonymized
         "Deleted user" with none of your personal information attached.
       </p>
     </section>
 
     <section>
+      <p class="label">Contact</p>
       <h2>Questions</h2>
       <p>Reach us any time at <a href="mailto:support@studio-3.co">support@studio-3.co</a>.</p>
     </section>
-  </div>
+  </main>
+
+  <footer>
+    <div class="foot">
+      <span>Studio3</span>
+      <a href="/terms">Terms of Use</a>
+    </div>
+  </footer>
 </body>
 </html>

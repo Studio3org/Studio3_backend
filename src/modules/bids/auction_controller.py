@@ -185,7 +185,12 @@ def relist(piece_id: str):
         auction_dao.open_auction(db, auction, commit=False)
         db.commit()
         db.refresh(auction)
-        return bid_dao.bid_summary(db, auction, viewer_id=seller_id), 201
+        result = bid_dao.bid_summary(db, auction, viewer_id=seller_id)
+        # Everyone who saved it hears it is up for auction again (B12).
+        from src.modules.notifications import watchers
+
+        watchers.auction_opened(db, piece, auction)
+        return result, 201
     finally:
         db.close()
 

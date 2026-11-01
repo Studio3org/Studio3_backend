@@ -27,6 +27,7 @@ from src.modules.social import social_dao
 from src.modules.series import series_dao
 from src.modules.bids import auction_dao, bid_dao
 from src.modules.pieces import listing_rules, piece_state
+from src.modules.notifications import watchers
 
 
 # Packaged size + weight are what couriers actually price on, and the declared value is
@@ -253,7 +254,11 @@ def create():
         db.commit()
         db.refresh(piece)
         replace_piece_media(db, piece.id, images)
-        return piece_to_dict(piece, media=list_piece_media(db, piece.id)), 201
+        result = piece_to_dict(piece, media=list_piece_media(db, piece.id))
+        # Posted straight to the profile: followers hear about it (B12). A draft waits.
+        if piece.status == piece_state.LIVE:
+            watchers.artist_posted(db, user.id, "piece", piece.id)
+        return result, 201
     finally:
         db.close()
 
@@ -313,6 +318,9 @@ def patch(piece_id: str):
         ).scalar_one_or_none()
         if not piece or piece.deleted_at is not None or piece.user_id != user.id:
             raise AppError("Piece not found.", 404)
+        # Compared after the commit: savers hear about a new listing or price, followers about
+        # a draft going up (B12).
+        before = watchers.listing_state(piece)
         if "images" in body or "mediaUrls" in body:
             images = _extract_images(body)
             if not images:
@@ -380,7 +388,11 @@ def patch(piece_id: str):
             piece_state.apply_auction_clock(piece)
         db.commit()
         db.refresh(piece)
-        return piece_to_dict(piece, media=list_piece_media(db, piece.id)), 200
+        result = piece_to_dict(piece, media=list_piece_media(db, piece.id))
+        watchers.after_listing_change(db, piece, before)
+        if before.status == piece_state.DRAFT and piece.status == piece_state.LIVE:
+            watchers.artist_posted(db, user.id, "piece", piece.id)
+        return result, 200
     finally:
         db.close()
 

@@ -199,8 +199,13 @@ def remove_piece(db: Session, event: Event, entry: EventPiece, commit: bool = Tr
         db.commit()
 
 
-def publish_lineup(db: Session, event: Event, commit: bool = True) -> dict:
+def publish_lineup(
+    db: Session, event: Event, commit: bool = True, changes: list | None = None
+) -> dict:
     """Create the listings for every selling piece on the bill. Called once, at publish.
+
+    `changes`, when given, collects `(piece, state before, auction or None)` for each listing
+    made, so the caller can tell the pieces' savers once it has committed (B12).
 
     A fixed-price piece goes live at its event price. An auction piece gets an auction whose
     window is the event's: open at the event's start, closed thirty minutes before it ends,
@@ -229,6 +234,10 @@ def publish_lineup(db: Session, event: Event, commit: bool = True) -> dict:
         if seller is None:
             continue
 
+        if changes is not None:
+            from src.modules.notifications import watchers
+
+            before = watchers.listing_state(piece)
         if entry.mode == PIECE_SALE:
             piece.is_for_sale = True
             piece.listing_type = "fixed"
@@ -238,6 +247,8 @@ def publish_lineup(db: Session, event: Event, commit: bool = True) -> dict:
                     db, piece, piece_state.LIVE, reason="event_published", commit=False
                 )
             listed_fixed += 1
+            if changes is not None:
+                changes.append((piece, before, None))
             continue
 
         # PIECE_BID — an auction on the event's clock.
@@ -266,6 +277,8 @@ def publish_lineup(db: Session, event: Event, commit: bool = True) -> dict:
             commit=False,
         )
         listed_auction += 1
+        if changes is not None:
+            changes.append((piece, before, auction))
 
     if commit:
         db.commit()
