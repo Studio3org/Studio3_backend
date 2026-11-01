@@ -278,3 +278,6 @@ class EventRsvp(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
     cancelled_at = Column(DateTime(timezone=True), nullable=True)
+    # When the day-before reminder went out (BACKEND_CHANGES B14). Set before sending, so a
+    # second run of the job cannot remind anyone twice; kept through a cancel and re-RSVP.
+    reminded_at = Column(DateTime(timezone=True), nullable=True)

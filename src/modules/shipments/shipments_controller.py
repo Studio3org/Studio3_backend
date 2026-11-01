@@ -95,6 +95,12 @@ def _piece_title(db, order):
     return piece.title if piece else None
 
 
+# Their own types (BACKEND_CHANGES B14), so Orders and shipping in Settings can turn them off;
+# `order` stays for cancellations, refunds and disputes, which are not optional.
+ORDER_SHIPPED = "order_shipped"
+ORDER_DELIVERED = "order_delivered"
+
+
 def _notify_shipped(db, order, shipment) -> None:
     title = _piece_title(db, order)
     payload = {
@@ -103,13 +109,15 @@ def _notify_shipped(db, order, shipment) -> None:
         "trackingNumber": shipment.tracking_number,
     }
     try:
-        for user_id, body in (
-            (order.buyer_id, f"Your order is on its way via {shipment.courier}"),
-            (order.seller_id, f"The artwork was collected by {shipment.courier}"),
+        # `side` tells the app which list to open: the buyer's orders or the seller's sales.
+        for user_id, side, body in (
+            (order.buyer_id, "buyer", f"Your order is on its way via {shipment.courier}"),
+            (order.seller_id, "seller", f"The artwork was collected by {shipment.courier}"),
         ):
             notifications_dao.create_and_push(
-                db, user_id=user_id, type="order", actor_id=None, target_type="order",
-                target_id=order.id, payload=payload, title="Order shipped", body=body,
+                db, user_id=user_id, type=ORDER_SHIPPED, actor_id=None, target_type="order",
+                target_id=order.id, payload={**payload, "side": side}, title="Order shipped",
+                body=body,
             )
     except Exception as e:
         logger.warning("Shipment notification failed for order %s: %s", order.id, e)
@@ -119,8 +127,8 @@ def _notify_delivered(db, order) -> None:
     title = _piece_title(db, order)
     try:
         notifications_dao.create_and_push(
-            db, user_id=order.buyer_id, type="order", actor_id=None, target_type="order",
-            target_id=order.id, payload={"pieceTitle": title},
+            db, user_id=order.buyer_id, type=ORDER_DELIVERED, actor_id=None, target_type="order",
+            target_id=order.id, payload={"pieceTitle": title, "side": "buyer"},
             title="Your artwork has arrived",
             # The artist isn't paid until this confirmation, so say so plainly.
             body="Confirm you received it in good condition to release payment to the artist.",

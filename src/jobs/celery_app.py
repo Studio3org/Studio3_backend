@@ -92,6 +92,12 @@ celery_app.conf.update(
             "schedule": 300.0,
             "options": {"expires": 290},
         },
+        "event-reminders": {
+            "task": "events.send_reminders",
+            # Hourly: an event is reminded about once it is under a day away, so everyone going
+            # hears between 23 and 24 hours before (or on the first run after an RSVP made later).
+            "schedule": crontab(minute=5),
+        },
         "archive-past-events": {
             "task": "events.archive_past",
             "schedule": crontab(minute=0),

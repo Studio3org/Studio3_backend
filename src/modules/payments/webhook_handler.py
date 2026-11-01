@@ -34,7 +34,6 @@ from src.shared.utils.logger import get_logger
 from src.modules.orders import orders_dao
 from src.modules.pieces import piece_state
 from src.modules.payments import money
-from src.modules.notifications import notifications_dao
 
 logger = get_logger(__name__)
 
@@ -253,33 +252,10 @@ def _on_payment_succeeded(db: Session, intent) -> None:
 
 
 def _notify_paid(db: Session, order: Order) -> None:
-    buyer = db.get(User, order.buyer_id)
-    items = orders_dao.list_items(db, order.id)
-    piece = db.get(Piece, items[0].piece_id) if items else None
-    title = piece.title if piece else None
+    from src.modules.orders import order_notices
+
     try:
-        notifications_dao.create_and_push(
-            db,
-            user_id=order.seller_id,
-            type="purchase",
-            actor_id=order.buyer_id,
-            target_type="order",
-            target_id=order.id,
-            payload={"pieceTitle": title, "totalCents": order.total_cents},
-            title="You made a sale!",
-            body=f"{buyer.name} purchased '{title}'" if title else f"{buyer.name} completed a purchase",
-        )
-        notifications_dao.create_and_push(
-            db,
-            user_id=order.buyer_id,
-            type="purchase",
-            actor_id=order.seller_id,
-            target_type="order",
-            target_id=order.id,
-            payload={"pieceTitle": title},
-            title="Order confirmed",
-            body=f"Your order for '{title}' is confirmed" if title else "Your order is confirmed",
-        )
+        order_notices.notify_paid(db, order)
     except Exception as e:
         # A failed push must not fail the webhook — the money already moved.
         logger.warning("Notification failed for order %s: %s", order.id, e)

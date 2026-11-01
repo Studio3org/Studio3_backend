@@ -81,6 +81,14 @@ def expire_waitlist_offers() -> None:
     _run("waitlist-expiry", lambda: logger.debug("Waitlist expiry: not yet implemented."))
 
 
+@celery_app.task(name="events.send_reminders")
+def send_event_reminders() -> None:
+    """The day before an event, tell everyone going (BACKEND_CHANGES B14)."""
+    from src.modules.events.reminders import send_event_reminders as run
+
+    _run("event-reminders", run)
+
+
 @celery_app.task(name="events.archive_past")
 def archive_past_events() -> None:
     """Archive events whose date has passed and release their held host payouts.

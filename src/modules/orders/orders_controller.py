@@ -248,33 +248,10 @@ def confirm(order_id: str):
         db.commit()
         db.refresh(order)
 
-        buyer = get_user_by_id(db, order.buyer_id)
-        piece_title = None
-        if items:
-            piece = get_piece(db, items[0].piece_id)
-            piece_title = piece.title if piece else None
-        notifications_dao.create_and_push(
-            db,
-            user_id=order.seller_id,
-            type="purchase",
-            actor_id=order.buyer_id,
-            target_type="order",
-            target_id=order.id,
-            payload={"pieceTitle": piece_title, "totalCents": order.total_cents},
-            title="You made a sale!",
-            body=f"{buyer.name} purchased '{piece_title}'" if piece_title else f"{buyer.name} completed a purchase",
-        )
-        notifications_dao.create_and_push(
-            db,
-            user_id=order.buyer_id,
-            type="purchase",
-            actor_id=order.seller_id,
-            target_type="order",
-            target_id=order.id,
-            payload={"pieceTitle": piece_title},
-            title="Order confirmed",
-            body=f"Your order for '{piece_title}' is confirmed" if piece_title else "Your order is confirmed",
-        )
+        # The seller hears `sale`, the buyer `purchase` (BACKEND_CHANGES B14).
+        from src.modules.orders import order_notices
+
+        order_notices.notify_paid(db, order)
         result = orders_dao.order_to_dict(db, order)
         result["devMode"] = True
         return result, 200
