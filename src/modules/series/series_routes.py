@@ -37,6 +37,14 @@ def patch_series(series_id):
     return _ok("Series updated.", data, status)
 
 
+@series_bp.delete("/<series_id>")
+@onboarding_required
+@async_handler
+def delete_series(series_id):
+    data, status = series_controller.delete(series_id)
+    return _ok("Series deleted.", data, status)
+
+
 @series_bp.post("/<series_id>/pieces")
 @onboarding_required
 @async_handler

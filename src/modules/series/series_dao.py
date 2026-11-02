@@ -59,6 +59,15 @@ def remove_piece_from_series(db: Session, series_id: uuid.UUID, piece_id: uuid.U
     db.commit()
 
 
+def delete_series(db: Session, series: Series) -> None:
+    """Delete a series and its piece links (BACKEND_CHANGES B15). The pieces themselves stay:
+    they are still on the profile, just not grouped. The links are removed here as well as by
+    the foreign key's cascade, so this does not depend on how the table was created."""
+    db.query(SeriesPiece).filter_by(series_id=series.id).delete(synchronize_session=False)
+    db.delete(series)
+    db.commit()
+
+
 def list_series_pieces(db: Session, series_id: uuid.UUID) -> list[Piece]:
     return list(
         db.execute(

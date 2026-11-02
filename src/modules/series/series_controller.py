@@ -111,6 +111,19 @@ def patch(series_id: str):
         db.close()
 
 
+def delete(series_id: str):
+    """`NoteSeriesEdit`: "Delete series asks to confirm; the pieces stay on the profile, just
+    not grouped." Owner only; anyone else's series is a 404, as for every other edit."""
+    db = SessionLocal()
+    try:
+        series = _require_owned_series(db, uuid.UUID(series_id), uuid.UUID(g.user["id"]))
+        deleted_id = str(series.id)
+        series_dao.delete_series(db, series)
+        return {"id": deleted_id, "deleted": True}, 200
+    finally:
+        db.close()
+
+
 def add_piece(series_id: str):
     body = request.get_json() or {}
     piece_id = body.get("pieceId")
