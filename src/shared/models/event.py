@@ -129,6 +129,8 @@ class Event(Base):
     address = Column(String(500), nullable=True)
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
+    # The town for "Near me" (BACKEND_CHANGES B23), read from the address on save.
+    city = Column(String(120), nullable=True, index=True)
 
     # Null means unlimited, which is the default and the common case — entry is free and
     # open. A number caps RSVPs; the waitlist that turns "full" into a queue is deferred.
@@ -138,6 +140,8 @@ class Event(Base):
     published_at = Column(DateTime(timezone=True), nullable=True)
     cancelled_at = Column(DateTime(timezone=True), nullable=True)
     cancellation_reason = Column(String(200), nullable=True)
+    # Set by the team from the admin Events page: the Events tab's Featured pick (B23).
+    featured_at = Column(DateTime(timezone=True), nullable=True, index=True)
 
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)

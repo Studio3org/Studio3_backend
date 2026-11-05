@@ -4,6 +4,7 @@ The listing queries all filter on `published`: a draft is a private working copy
 never surface in a feed, a category or a search. That is enforced here rather than at each
 call site, because a single forgotten filter leaks an unfinished event to everybody.
 """
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -78,6 +79,7 @@ def create_event(
         timezone=tz,
         venue_name=(venue_name or "").strip() or None,
         address=(address or "").strip() or None,
+        city=city_from_address(address),
         latitude=latitude,
         longitude=longitude,
         capacity=_clean_capacity(capacity),
@@ -89,6 +91,17 @@ def create_event(
     else:
         db.flush()
     return event
+
+
+def city_from_address(address: Optional[str]) -> Optional[str]:
+    """The town in an address, for "Near me" (BACKEND_CHANGES B23): the part before the last,
+    unless it has a digit in it (a postcode), as the app read it. "12 Elm St, Dallas, TX" is
+    Dallas; "Dallas" alone or "1 Rue X, 75011 Paris" gives nothing rather than a guess."""
+    parts = [p.strip() for p in (address or "").split(",") if p.strip()]
+    if len(parts) < 2:
+        return None
+    city = parts[-2]
+    return None if re.search(r"\d", city) else city[:120]
 
 
 def validate_title(title: Optional[str]) -> str:
@@ -253,14 +266,64 @@ def _published_upcoming(now: datetime):
     return select(Event).where(Event.status == EVENT_PUBLISHED, Event.ends_at > now)
 
 
+class EventFilter:
+    """What the Events tab narrows by (BACKEND_CHANGES B23): a range, a city and a search.
+
+    The range is an overlap: an event shows if it starts before `end` and ends after `start`,
+    so a run already open when the range begins is in it. Search is over the title, venue,
+    category and the host's name and username, case-insensitive.
+    """
+
+    def __init__(
+        self,
+        *,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+        city: Optional[str] = None,
+        q: Optional[str] = None,
+    ):
+        self.start = start
+        self.end = end
+        self.city = (city or "").strip() or None
+        self.q = (q or "").strip() or None
+
+    def apply(self, stmt):
+        if self.start is not None:
+            stmt = stmt.where(Event.ends_at > self.start)
+        if self.end is not None:
+            stmt = stmt.where(Event.starts_at < self.end)
+        if self.city:
+            stmt = stmt.where(func.lower(Event.city) == self.city.lower())
+        if self.q:
+            from src.modules.chat.chat_dao import contains_pattern
+
+            pattern = contains_pattern(self.q)
+            hosts = select(User.id).where(
+                or_(User.name.ilike(pattern), User.username.ilike(pattern))
+            )
+            stmt = stmt.where(
+                or_(
+                    Event.title.ilike(pattern),
+                    Event.venue_name.ilike(pattern),
+                    Event.category.ilike(pattern),
+                    Event.host_id.in_(hosts),
+                )
+            )
+        return stmt
+
+
+NO_FILTER = EventFilter()
+
+
 def list_upcoming(
     db: Session,
     *,
     category: Optional[str] = None,
     limit: int = DEFAULT_LIMIT,
     offset: int = 0,
+    where: EventFilter = NO_FILTER,
 ) -> list[Event]:
-    stmt = _published_upcoming(datetime.now(timezone.utc))
+    stmt = where.apply(_published_upcoming(datetime.now(timezone.utc)))
     if category:
         stmt = stmt.where(Event.category == validate_category(category))
     return list(
@@ -270,12 +333,14 @@ def list_upcoming(
     )
 
 
-def list_today(db: Session, *, limit: int = DEFAULT_LIMIT) -> list[Event]:
+def list_today(
+    db: Session, *, limit: int = DEFAULT_LIMIT, where: EventFilter = NO_FILTER
+) -> list[Event]:
     """Happening within the next 24 hours, including anything already under way."""
     now = datetime.now(timezone.utc)
     return list(
         db.execute(
-            _published_upcoming(now)
+            where.apply(_published_upcoming(now))
             .where(Event.starts_at <= now + timedelta(hours=24))
             .order_by(Event.starts_at.asc())
             .limit(_clamp(limit))
@@ -284,7 +349,7 @@ def list_today(db: Session, *, limit: int = DEFAULT_LIMIT) -> list[Event]:
 
 
 def list_from_following(
-    db: Session, viewer_id: uuid.UUID, *, limit: int = DEFAULT_LIMIT
+    db: Session, viewer_id: uuid.UUID, *, limit: int = DEFAULT_LIMIT, where: EventFilter = NO_FILTER
 ) -> list[Event]:
     """Events hosted by, or featuring, someone the viewer follows.
 
@@ -302,7 +367,7 @@ def list_from_following(
     )
     return list(
         db.execute(
-            _published_upcoming(now)
+            where.apply(_published_upcoming(now))
             .where(or_(Event.host_id.in_(followed), Event.id.in_(participating)))
             .order_by(Event.starts_at.asc())
             .limit(_clamp(limit))
@@ -352,7 +417,39 @@ def list_going(db: Session, viewer_id: uuid.UUID, *, limit: int = DEFAULT_LIMIT)
     )
 
 
-def category_summaries(db: Session) -> list[dict]:
+def featured(db: Session, *, where: EventFilter = NO_FILTER) -> Optional[Event]:
+    """The team's pick (BACKEND_CHANGES B23): the soonest featured event in the range, place
+    and search asked for, or None."""
+    return db.execute(
+        where.apply(_published_upcoming(datetime.now(timezone.utc)))
+        .where(Event.featured_at.is_not(None))
+        .order_by(Event.starts_at.asc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def city_summaries(db: Session) -> list[dict]:
+    """The cities with something coming up, for the Near me sheet: name and how many, by name.
+    Grouped case-insensitively, under the spelling most events use."""
+    now = datetime.now(timezone.utc)
+    rows = db.execute(
+        select(Event.city, func.count(Event.id))
+        .where(Event.status == EVENT_PUBLISHED, Event.ends_at > now, Event.city.is_not(None))
+        .group_by(Event.city)
+    ).all()
+    grouped: dict[str, dict] = {}
+    for city, count in rows:
+        entry = grouped.setdefault(city.lower(), {"city": city, "upcomingCount": 0, "_top": 0})
+        entry["upcomingCount"] += count
+        if count > entry["_top"]:
+            entry["city"], entry["_top"] = city, count
+    return [
+        {"city": e["city"], "upcomingCount": e["upcomingCount"]}
+        for e in sorted(grouped.values(), key=lambda e: e["city"].lower())
+    ]
+
+
+def category_summaries(db: Session, *, where: EventFilter = NO_FILTER) -> list[dict]:
     """Upcoming count and a cover image per category, for the browse tiles.
 
     The cover is borrowed from the soonest upcoming event in that category rather than being
@@ -362,9 +459,11 @@ def category_summaries(db: Session) -> list[dict]:
     """
     now = datetime.now(timezone.utc)
     rows = db.execute(
-        select(Event.category, Event.cover_media_url, Event.starts_at)
-        .where(Event.status == EVENT_PUBLISHED, Event.ends_at > now, Event.category.is_not(None))
-        .order_by(Event.category.asc(), Event.starts_at.asc())
+        where.apply(
+            select(Event.category, Event.cover_media_url, Event.starts_at).where(
+                Event.status == EVENT_PUBLISHED, Event.ends_at > now, Event.category.is_not(None)
+            )
+        ).order_by(Event.category.asc(), Event.starts_at.asc())
     ).all()
 
     summaries: dict[str, dict] = {}

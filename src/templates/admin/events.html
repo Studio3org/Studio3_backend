@@ -14,7 +14,7 @@
       <thead>
         <tr>
           <th>Event</th><th>Host</th><th>When</th>
-          <th>Status</th><th>Selling</th><th>Going</th>
+          <th>Status</th><th>Selling</th><th>Going</th><th>Featured</th>
         </tr>
       </thead>
       <tbody>
@@ -37,6 +37,18 @@
              carries no money and is not ops' concern. #}
           <td>{{ row.sellingCount }}</td>
           <td>{{ row.goingCount }}</td>
+          {# The Events tab's Featured pick: the soonest featured event in the viewer's
+             range and place. Only a published event can be featured. #}
+          <td>
+            {% if row.event.featured_at or row.event.status == 'published' %}
+            <form method="post" action="{{ url_for('admin.feature_event', event_id=row.event.id) }}"
+                  style="margin:0">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="featured" value="{{ '0' if row.event.featured_at else '1' }}">
+              <button type="submit">{{ 'Unfeature' if row.event.featured_at else 'Feature' }}</button>
+            </form>
+            {% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>

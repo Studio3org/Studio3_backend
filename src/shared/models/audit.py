@@ -43,6 +43,9 @@ AUDIT_AUCTION_SETTLED = "auction_settled"
 AUDIT_WINNER_CASCADED = "winner_cascaded"
 AUDIT_EVENT_CANCELLED = "event_cancelled"
 AUDIT_EVENT_DELETED = "event_deleted"
+# The Events tab's Featured pick (BACKEND_CHANGES B23).
+AUDIT_EVENT_FEATURED = "event_featured"
+AUDIT_EVENT_UNFEATURED = "event_unfeatured"
 # Written with the real name/username still in the actor_label — captured before the
 # anonymization that account deletion does to the row itself, so this is the one place an
 # operator can still see who this was.
@@ -67,6 +70,8 @@ AUDIT_ACTIONS = (
     AUDIT_AUCTION_SETTLED,
     AUDIT_EVENT_CANCELLED,
     AUDIT_EVENT_DELETED,
+    AUDIT_EVENT_FEATURED,
+    AUDIT_EVENT_UNFEATURED,
     AUDIT_ACCOUNT_DELETED,
     AUDIT_REPORT_RESOLVED,
     AUDIT_SHIPMENT_CREATED,

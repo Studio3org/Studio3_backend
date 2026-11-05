@@ -29,6 +29,10 @@ from src.modules.user.user_dao import get_user_by_id
 logger = get_logger(__name__)
 
 
+# Event search (B23), as message search (B10).
+SEARCH_MAX_LENGTH = 100
+
+
 def _viewer_id() -> Optional[uuid.UUID]:
     user = getattr(g, "user", None)
     return uuid.UUID(user["id"]) if user else None
@@ -117,6 +121,7 @@ def patch(event_id: str):
             event.venue_name = (body.get("venueName") or "").strip() or None
         if "address" in body:
             event.address = (body.get("address") or "").strip() or None
+            event.city = events_dao.city_from_address(event.address)
         if "latitude" in body:
             event.latitude = body.get("latitude")
         if "longitude" in body:
@@ -403,22 +408,52 @@ def preview_piece_tagging(event_id: str, piece_id: str):
 
 # --- public: browse and detail ------------------------------------------------------------
 
+def _filter_args() -> events_dao.EventFilter:
+    """`?from=&to=` (ISO times, the viewer's zone in the offset), `?city=` and `?q=`
+    (BACKEND_CHANGES B23). A date alone is midnight UTC."""
+    def when(name):
+        raw = (request.args.get(name) or "").strip()
+        return _parse_time(raw, name) if raw else None
+
+    start, end = when("from"), when("to")
+    if start and end and end <= start:
+        raise AppError("to must be after from.", 400)
+    q = (request.args.get("q") or "").strip()
+    if len(q) > SEARCH_MAX_LENGTH:
+        raise AppError(f"Search is limited to {SEARCH_MAX_LENGTH} characters.", 400)
+    return events_dao.EventFilter(start=start, end=end, city=request.args.get("city"), q=q)
+
+
 def browse():
-    """The events tab: what's on today, from people you follow, and everything upcoming."""
+    """The events tab: the team's Featured pick, what's on today, from people you follow, and
+    everything upcoming, narrowed by `?from=&to=&city=&q=` (B23). `?limit=` sizes upcoming."""
     db = SessionLocal()
     try:
         viewer_id = _viewer_id()
-        today = events_dao.list_today(db)
-        upcoming = events_dao.list_upcoming(db)
+        where = _filter_args()
+        limit = _int_arg("limit", events_dao.DEFAULT_LIMIT)
+        today = events_dao.list_today(db, where=where)
+        upcoming = events_dao.list_upcoming(db, limit=limit, where=where)
         following = (
-            events_dao.list_from_following(db, viewer_id) if viewer_id else []
+            events_dao.list_from_following(db, viewer_id, where=where) if viewer_id else []
         )
+        featured = events_dao.featured(db, where=where)
         return {
+            "featured": event_card(db, featured, viewer_id) if featured else None,
             "today": [event_card(db, e, viewer_id) for e in today],
             "following": [event_card(db, e, viewer_id) for e in following],
             "upcoming": [event_card(db, e, viewer_id) for e in upcoming],
-            "categories": events_dao.category_summaries(db),
+            "categories": events_dao.category_summaries(db, where=where),
         }, 200
+    finally:
+        db.close()
+
+
+def list_cities():
+    """The Near me sheet's places (B23): cities with something coming up, with how many."""
+    db = SessionLocal()
+    try:
+        return {"cities": events_dao.city_summaries(db)}, 200
     finally:
         db.close()
 
@@ -431,6 +466,9 @@ def list_events():
         scope = (request.args.get("scope") or "upcoming").lower()
         limit = _int_arg("limit", events_dao.DEFAULT_LIMIT)
         offset = _int_arg("offset", 0)
+        # Range, place and search narrow the public scopes (B23); a person's own lists
+        # (saved, hosting, going) are theirs whole.
+        where = _filter_args()
 
         if scope == "saved":
             if viewer_id is None:
@@ -439,7 +477,7 @@ def list_events():
         elif scope == "following":
             if viewer_id is None:
                 raise AppError("Sign in to see events from people you follow.", 401)
-            events = events_dao.list_from_following(db, viewer_id, limit=limit)
+            events = events_dao.list_from_following(db, viewer_id, limit=limit, where=where)
         elif scope == "hosting":
             if viewer_id is None:
                 raise AppError("Sign in to see your events.", 401)
@@ -449,10 +487,10 @@ def list_events():
                 raise AppError("Sign in to see events you've registered for.", 401)
             events = events_dao.list_going(db, viewer_id, limit=limit)
         elif scope == "today":
-            events = events_dao.list_today(db, limit=limit)
+            events = events_dao.list_today(db, limit=limit, where=where)
         else:
             events = events_dao.list_upcoming(
-                db, category=category, limit=limit, offset=offset
+                db, category=category, limit=limit, offset=offset, where=where
             )
         return {"events": [event_card(db, e, viewer_id) for e in events]}, 200
     finally:
@@ -621,6 +659,8 @@ def event_card(db, event: Event, viewer_id: Optional[uuid.UUID]) -> dict:
         "endsAt": event.ends_at.isoformat() if event.ends_at else None,
         "timezone": event.timezone,
         "venueName": event.venue_name,
+        "city": event.city,
+        "featured": event.featured_at is not None,
         # Entry is free and open — attending is never gated. Sent as a field rather than
         # left to the client to assume, so paid ticketing can change it in one place.
         "isFree": True,

@@ -194,6 +194,38 @@ def events_queue():
         db.close()
 
 
+def feature_event(event_id: str):
+    """Feature or unfeature an event: the Events tab's Featured pick is the soonest featured
+    event in the viewer's range and place (BACKEND_CHANGES B23)."""
+    from datetime import datetime, timezone
+
+    from src.shared.models.event import EVENT_PUBLISHED, Event
+
+    eid = _parse_uuid(event_id)
+    if not eid:
+        return redirect(url_for("admin.events_queue"))
+    featured = request.form.get("featured") == "1"
+    db = SessionLocal()
+    try:
+        event = db.get(Event, eid)
+        if event is None:
+            return redirect(url_for("admin.events_queue"))
+        if featured and event.status != EVENT_PUBLISHED:
+            return redirect(url_for("admin.events_queue"))
+        event.featured_at = datetime.now(timezone.utc) if featured else None
+        db.commit()
+        title = event.title
+    finally:
+        db.close()
+    _audit(
+        audit.AUDIT_EVENT_FEATURED if featured else audit.AUDIT_EVENT_UNFEATURED,
+        subject_id=eid,
+        subject_type="event",
+        detail={"title": title},
+    )
+    return redirect(url_for("admin.events_queue"))
+
+
 def audit_log():
     """Who did what. Read when something has gone wrong and the question is who changed it."""
     db = SessionLocal()

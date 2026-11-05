@@ -41,6 +41,14 @@ def browse():
     return _ok("OK", data, status)
 
 
+@events_bp.get("/cities")
+@optional_auth
+@async_handler
+def cities():
+    data, status = events_controller.list_cities()
+    return _ok("OK", data, status)
+
+
 @events_bp.get("/<event_id>")
 @optional_auth
 @async_handler

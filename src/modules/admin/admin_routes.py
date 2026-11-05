@@ -94,6 +94,12 @@ def events_queue():
     return admin_controller.events_queue()
 
 
+@admin_bp.post("/events/<event_id>/feature")
+@admin_session_required
+def feature_event(event_id):
+    return admin_controller.feature_event(event_id)
+
+
 @admin_bp.get("/audit")
 @admin_session_required
 def audit_log():
