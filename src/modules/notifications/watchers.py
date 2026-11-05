@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from src.modules.notifications import notifications_dao
@@ -59,25 +59,32 @@ def _not_blocked_with(person_id: uuid.UUID):
     )
 
 
-def savers_of(db: Session, piece: Piece) -> list[uuid.UUID]:
-    """Everyone who saved the piece, quickly or into a collection; not its artist, no deleted
-    accounts, nobody either side has blocked."""
+def _savers_where(piece: Piece) -> tuple:
     quick = select(Save.user_id).where(Save.target_type == "piece", Save.target_id == piece.id)
     in_collection = (
         select(Collection.user_id)
         .join(CollectionItem, CollectionItem.collection_id == Collection.id)
         .where(CollectionItem.target_type == "piece", CollectionItem.target_id == piece.id)
     )
-    return list(
-        db.execute(
-            select(User.id).where(
-                or_(User.id.in_(quick), User.id.in_(in_collection)),
-                User.id != piece.user_id,
-                User.deleted_at.is_(None),
-                _not_blocked_with(piece.user_id),
-            )
-        ).scalars().all()
+    return (
+        or_(User.id.in_(quick), User.id.in_(in_collection)),
+        User.id != piece.user_id,
+        User.deleted_at.is_(None),
+        _not_blocked_with(piece.user_id),
     )
+
+
+def savers_of(db: Session, piece: Piece) -> list[uuid.UUID]:
+    """Everyone who saved the piece, quickly or into a collection; not its artist, no deleted
+    accounts, nobody either side has blocked."""
+    return list(db.execute(select(User.id).where(*_savers_where(piece))).scalars().all())
+
+
+def count_savers(db: Session, piece: Piece) -> int:
+    """How many people `savers_of` would tell: the owner's "Saved by [N] people" and "We let
+    the [N] people who saved it know" (BACKEND_CHANGES B17). Each person once, however many
+    times or places they saved it."""
+    return db.execute(select(func.count(User.id)).where(*_savers_where(piece))).scalar_one()
 
 
 def followers_of(db: Session, artist_id: uuid.UUID) -> list[uuid.UUID]:

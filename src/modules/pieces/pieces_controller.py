@@ -286,6 +286,10 @@ def enrich_piece_dict(db, piece, viewer_id: Optional[uuid.UUID]) -> dict:
     series = series_dao.get_series_for_piece(db, piece.id)
     base["series"] = series_dao.series_detail_dict(db, series) if series else None
     base["relatedPosts"] = [post_to_dict(p) for p in list_related_posts(db, piece.id)]
+    # How many people saved it, for its owner only (BACKEND_CHANGES B17): never shown to anyone
+    # else, so the field is left out rather than sent as null.
+    if viewer_id is not None and viewer_id == piece.user_id:
+        base["savesCount"] = watchers.count_savers(db, piece)
     if piece.listing_type == "auction":
         # Falling back to the settling auction is what lets a closed piece still say who won.
         # get_running_auction covers draft/live/closing only, so once the sweep closed an
@@ -401,6 +405,9 @@ def patch(piece_id: str):
         db.commit()
         db.refresh(piece)
         result = piece_to_dict(piece, media=list_piece_media(db, piece.id))
+        # Only the owner can PATCH, so the count goes back too: List later's "We let the [N]
+        # people who saved it know" (B17).
+        result["savesCount"] = watchers.count_savers(db, piece)
         watchers.after_listing_change(db, piece, before)
         if opened is not None:
             # Savers hear it is up for auction, as on create and relist (B12).
