@@ -26,7 +26,7 @@ from src.modules.pieces.pieces_dao import (
 from src.modules.social import social_dao
 from src.modules.series import series_dao
 from src.modules.bids import auction_dao, bid_dao
-from src.modules.pieces import listing_rules, piece_state
+from src.modules.pieces import auction_sync, listing_rules, piece_state
 from src.modules.notifications import watchers
 
 
@@ -76,7 +76,12 @@ def _resolve_listing(db, body, current, user) -> dict:
         ),
         seller_enabled=user.seller_enabled,
         seller=user,
-        reserve_cents=body.get("reserveCents"),
+        # Kept from the running auction when the patch leaves it out, so a new starting bid is
+        # still checked against it (B16).
+        reserve_cents=(
+            body["reserveCents"] if "reserveCents" in body
+            else auction_sync.current_reserve(db, current)
+        ),
     )
 
 
@@ -365,8 +370,10 @@ def patch(piece_id: str):
         # independently and only `isForSale` triggered validation, so {"listingType":
         # "banana"} was accepted and a live auction could be switched to fixed-price,
         # orphaning every bid against it.
+        listing = None
         if any(field in body for field in listing_rules.COMMERCIAL_FIELDS):
             listing_rules.assert_terms_editable(db, piece)
+            auction_sync.assert_not_event_auction(db, piece)
             listing = _resolve_listing(db, body, piece, user)
             _validate_sale_detail_fields({**piece_to_dict(piece), **body})
             piece.is_for_sale = listing["is_for_sale"]
@@ -386,10 +393,18 @@ def patch(piece_id: str):
             # Keep the clock consistent with whatever the listing fields now say, e.g. a
             # piece switched from auction to fixed must not keep a countdown.
             piece_state.apply_auction_clock(piece)
+        # The Auction row follows the listing and the status in the same commit: made, its
+        # terms updated, opened, or cancelled (BACKEND_CHANGES B16).
+        opened = None
+        if listing is not None or "status" in body:
+            opened = auction_sync.sync(db, piece, user, listing)
         db.commit()
         db.refresh(piece)
         result = piece_to_dict(piece, media=list_piece_media(db, piece.id))
         watchers.after_listing_change(db, piece, before)
+        if opened is not None:
+            # Savers hear it is up for auction, as on create and relist (B12).
+            watchers.auction_opened(db, piece, opened)
         if before.status == piece_state.DRAFT and piece.status == piece_state.LIVE:
             watchers.artist_posted(db, user.id, "piece", piece.id)
         return result, 200

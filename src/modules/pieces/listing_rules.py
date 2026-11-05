@@ -27,6 +27,8 @@ COMMERCIAL_FIELDS = (
     "listingType",
     "priceCents",
     "auctionDurationDays",
+    # On the Auction, not the piece, but a term all the same (BACKEND_CHANGES B16).
+    "reserveCents",
 )
 
 # Statuses a piece owner may set directly. Everything else — reserved, sold, auction_won,
