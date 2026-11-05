@@ -119,6 +119,10 @@ def series_detail_dict(db: Session, series: Series) -> dict:
     d = series_summary_dict(db, series)
     d["pieceIds"] = [str(p.id) for p in pieces]
     d["pieces"] = [piece_to_dict(p) for p in newest]
+    # Auction pieces carry their bid, bid count and end time (BACKEND_CHANGES B21).
+    from src.modules.bids import auction_list_fields
+
+    auction_list_fields.add_to(db, zip(newest, d["pieces"]))
     author = db.get(User, series.user_id)
     if author:
         d["author"] = {

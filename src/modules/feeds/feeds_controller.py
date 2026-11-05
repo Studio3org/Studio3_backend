@@ -93,8 +93,10 @@ def _enrich_items(db, pieces, posts, viewer_id: Optional[uuid.UUID]):
         }
 
     items = []
+    piece_dicts = []
     for p in pieces:
         d = piece_to_dict(p)
+        piece_dicts.append((p, d))
         d["type"] = "piece"
         d["author"] = _author_block(p.user_id)
         d["likeCount"] = piece_like_counts.get(p.id, 0)
@@ -111,6 +113,10 @@ def _enrich_items(db, pieces, posts, viewer_id: Optional[uuid.UUID]):
         d["isLiked"] = p.id in liked_posts
         d["isSaved"] = p.id in saved_posts
         items.append((p.created_at, p.id, d))
+    # Auction pieces carry their bid, bid count and end time (BACKEND_CHANGES B21).
+    from src.modules.bids import auction_list_fields
+
+    auction_list_fields.add_to(db, piece_dicts)
 
     items.sort(key=lambda t: (t[0], t[1]), reverse=True)
     return items

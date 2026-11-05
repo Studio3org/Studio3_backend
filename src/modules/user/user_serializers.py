@@ -109,7 +109,12 @@ def user_to_dict(
     data["isSeller"] = data["sellerEnabled"]
 
     if include_private:
-        saved_pieces = [piece_to_dict(p) for p in list_saved_pieces(db, user.id)[:20]]
+        saved = list_saved_pieces(db, user.id)[:20]
+        saved_pieces = [piece_to_dict(p) for p in saved]
+        # Auction pieces carry their bid, bid count and end time (BACKEND_CHANGES B21).
+        from src.modules.bids import auction_list_fields
+
+        auction_list_fields.add_to(db, zip(saved, saved_pieces))
         data.update(
             {
                 "email": user.email,

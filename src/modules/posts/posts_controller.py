@@ -103,6 +103,11 @@ def enrich_post_dict(db, post, viewer_id: Optional[uuid.UUID]) -> dict:
     if post.linked_piece_id:
         piece = get_piece(db, post.linked_piece_id)
         base["piece"] = piece_to_dict(piece) if piece else None
+        if piece:
+            # The linked piece's auction too (BACKEND_CHANGES B21).
+            from src.modules.bids import auction_list_fields
+
+            auction_list_fields.add_to(db, [(piece, base["piece"])])
     else:
         base["piece"] = None
     return base

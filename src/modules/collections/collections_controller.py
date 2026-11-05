@@ -164,12 +164,14 @@ def get_detail(collection_id: str):
             }
 
         enriched = []
+        piece_dicts = []
         for item in items:
             if item.target_type == "piece":
                 target = pieces_by_id.get(item.target_id)
                 if not target:
                     continue
                 d = piece_to_dict(target)
+                piece_dicts.append((target, d))
                 d["author"] = _author(target.user_id)
                 d["likeCount"] = piece_like_counts.get(target.id, 0)
                 d["commentCount"] = piece_comment_counts.get(target.id, 0)
@@ -190,6 +192,10 @@ def get_detail(collection_id: str):
                 d["piece"] = None
             d["targetType"] = item.target_type
             enriched.append(d)
+        # Auction pieces carry their bid, bid count and end time (BACKEND_CHANGES B21).
+        from src.modules.bids import auction_list_fields
+
+        auction_list_fields.add_to(db, piece_dicts)
 
         return {
             "id": str(collection.id),

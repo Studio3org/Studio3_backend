@@ -206,6 +206,7 @@ def create():
             validate_user_media_url(user.username, image["mediaUrl"])
         listing = _resolve_listing(db, body, None, user)
         _validate_sale_detail_fields(body)
+        auction = None
         cover = images[0]
         piece = create_piece(
             db,
@@ -260,6 +261,9 @@ def create():
         db.refresh(piece)
         replace_piece_media(db, piece.id, images)
         result = piece_to_dict(piece, media=list_piece_media(db, piece.id))
+        if auction is not None:
+            # The bid summary, as on the detail (BACKEND_CHANGES B21).
+            result.update(bid_dao.bid_summary(db, auction, viewer_id=user.id))
         # Posted straight to the profile: followers hear about it (B12). A draft waits.
         if piece.status == piece_state.LIVE:
             watchers.artist_posted(db, user.id, "piece", piece.id)
@@ -453,7 +457,12 @@ def list_for_user(username: str, for_sale_only: bool = False):
             include_drafts=viewer_id == user.id,
         )
         media_map = batch_list_piece_media(db, [p.id for p in pieces])
-        return [piece_to_dict(p, media=media_map.get(p.id, [])) for p in pieces], 200
+        result = [piece_to_dict(p, media=media_map.get(p.id, [])) for p in pieces]
+        # Auction pieces carry their bid, bid count and end time (BACKEND_CHANGES B21).
+        from src.modules.bids import auction_list_fields
+
+        auction_list_fields.add_to(db, zip(pieces, result))
+        return result, 200
     finally:
         db.close()
 
@@ -493,6 +502,10 @@ def list_saved_for_me(user_id: uuid.UUID):
             base["series"] = None
             base["relatedPosts"] = []
             result.append(base)
+        # Auction pieces carry their bid, bid count and end time (BACKEND_CHANGES B21).
+        from src.modules.bids import auction_list_fields
+
+        auction_list_fields.add_to(db, zip(pieces, result))
         return result, 200
     finally:
         db.close()
