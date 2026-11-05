@@ -300,6 +300,11 @@ def enrich_piece_dict(db, piece, viewer_id: Optional[uuid.UUID]) -> dict:
             auction_dao.get_settling_auction(db, piece.id)
         )
         base.update(bid_dao.bid_summary(db, auction, viewer_id=viewer_id))
+    # The viewer's own bid, from any phone and after the close too (BACKEND_CHANGES B18).
+    # Signed-in viewers only; the owner can't bid, so theirs is always "none".
+    from src.modules.bids import my_bid
+
+    base.update(my_bid.viewer_bid(db, piece.id, viewer_id))
     return base
 
 

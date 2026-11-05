@@ -62,6 +62,9 @@ def detail(monkeypatch):
 
     monkeypatch.setattr(posts_dao, "list_related_posts", lambda _db, _id: [])
     monkeypatch.setattr(watchers, "count_savers", lambda _db, _piece: 12)
+    from src.modules.bids import my_bid
+
+    monkeypatch.setattr(my_bid, "viewer_bid", lambda _db, _id, _viewer: {})
     return lambda viewer: pieces_controller.enrich_piece_dict(None, piece, viewer)
 
 
