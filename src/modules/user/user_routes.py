@@ -260,6 +260,17 @@ def my_sales():
     return _ok("OK", data, status)
 
 
+@user_bp.get("/me/drafts")
+@auth_required
+@async_handler
+def my_drafts():
+    """Piece and Scene drafts together, newest edit first (BACKEND_CHANGES B33)."""
+    from src.modules.user import drafts
+
+    data, status = drafts.list_for_me(uuid.UUID(g.user["id"]))
+    return _ok("OK", data, status)
+
+
 @user_bp.get("/me/saved/posts")
 @auth_required
 @async_handler

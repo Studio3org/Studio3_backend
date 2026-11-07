@@ -88,5 +88,11 @@ def post_to_dict(post: Post) -> dict:
         "linkedPieceIds": [str(i) for i in (post.linked_piece_ids or [])]
         or ([str(post.linked_piece_id)] if post.linked_piece_id else []),
         "status": post.status,
+        # B33: every photo (the first is mediaUrl), comments off, and the draft fields.
+        "mediaUrls": list(getattr(post, "media_urls", None) or []) or [post.media_url],
+        "commentsOff": bool(getattr(post, "comments_off", False)),
+        "draftStep": getattr(post, "draft_step", None),
+        "publishFailed": bool(getattr(post, "publish_failed", False)),
         "createdAt": post.created_at.isoformat(),
+        "updatedAt": (getattr(post, "updated_at", None) or post.created_at).isoformat(),
     }

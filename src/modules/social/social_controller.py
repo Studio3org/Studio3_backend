@@ -328,11 +328,19 @@ def add_comment(target_type: str, target_id: str):
     db = SessionLocal()
     try:
         me = get_user_by_id(db, uuid.UUID(g.user["id"]))
+        try:
+            tid = uuid.UUID(target_id)
+        except ValueError:
+            raise AppError(f"{target_type.capitalize()} not found.", 404) from None
+        target = _require_target(db, target_type, tid)
+        # The artist turned comments off for this Scene (BACKEND_CHANGES B33).
+        if target_type == "post" and getattr(target, "comments_off", False):
+            raise AppError("Comments are off for this Scene.", 403)
         comment = Comment(
             id=uuid.uuid4(),
             user_id=me.id,
             target_type=target_type,
-            target_id=uuid.UUID(target_id),
+            target_id=tid,
             body=text[:1000],
         )
         db.add(comment)
@@ -371,6 +379,44 @@ def add_comment(target_type: str, target_id: str):
             "username": me.username,
             "createdAt": comment.created_at.isoformat(),
         }, 201
+    finally:
+        db.close()
+
+
+def delete_comment(comment_id: str):
+    """Delete a comment (B33): the one who wrote it, or the artist whose piece or Scene it is
+    on. Anyone else is told it isn't there."""
+    db = SessionLocal()
+    try:
+        me_id = uuid.UUID(g.user["id"])
+        try:
+            cid = uuid.UUID(comment_id)
+        except ValueError:
+            raise AppError("Comment not found.", 404) from None
+        comment = db.get(Comment, cid)
+        if not comment:
+            raise AppError("Comment not found.", 404)
+        if comment.user_id != me_id:
+            owner_id = _get_target_owner_id(db, comment.target_type, comment.target_id)
+            if owner_id != me_id:
+                raise AppError("Comment not found.", 404)
+        target_type, target_id = comment.target_type, comment.target_id
+        db.delete(comment)
+        db.commit()
+        try:
+            from src.shared.realtime.socketio_instance import socketio
+
+            socketio.emit(
+                "comment:deleted",
+                {"id": str(cid), "targetType": target_type, "targetId": str(target_id)},
+                room=f"target:{target_type}:{target_id}",
+            )
+        except Exception:
+            pass
+        return {
+            "deleted": True,
+            "commentCount": social_dao.count_comments(db, target_type, target_id),
+        }, 200
     finally:
         db.close()
 

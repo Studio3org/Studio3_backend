@@ -10,6 +10,7 @@ from src.shared.models.piece import Piece
 from src.shared.models.user import User
 from src.shared.storage.s3_service import validate_user_media_url
 from src.shared.utils.app_error import AppError
+from src.modules.user import drafts
 from src.modules.auth.auth_dao import find_user_by_username
 from src.modules.user.user_dao import get_user_by_id
 from src.modules.pieces.pieces_dao import (
@@ -241,6 +242,7 @@ def create():
             signed=body.get("signed"),
             mediums=body.get("mediums"),
             status="draft" if body.get("status") == "draft" else "live",
+            draft_step=drafts.step_from(body) if body.get("status") == "draft" else None,
         )
         if listing["listing_type"] == "auction":
             # The auction row, not the piece, owns the run. Created in draft here and opened
@@ -406,6 +408,9 @@ def patch(piece_id: str):
             # Keep the clock consistent with whatever the listing fields now say, e.g. a
             # piece switched from auction to fixed must not keep a countdown.
             piece_state.apply_auction_clock(piece)
+        # A draft's step and a failed publish (B33); going live clears them.
+        drafts.apply_fields(piece, body)
+        drafts.clear_when_live(piece)
         # The Auction row follows the listing and the status in the same commit: made, its
         # terms updated, opened, or cancelled (BACKEND_CHANGES B16).
         opened = None

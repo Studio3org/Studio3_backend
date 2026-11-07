@@ -110,8 +110,10 @@ def _enrich_items(db, pieces, posts, viewer_id: Optional[uuid.UUID]):
         d["isLiked"] = p.id in liked_pieces
         d["isSaved"] = p.id in saved_pieces
         items.append((p.created_at, p.id, d))
+    post_dicts = []
     for p in posts:
         d = post_to_dict(p)
+        post_dicts.append((p, d))
         d["type"] = "post"
         d["author"] = _author_block(p.user_id)
         d["likeCount"] = post_like_counts.get(p.id, 0)
@@ -119,6 +121,10 @@ def _enrich_items(db, pieces, posts, viewer_id: Optional[uuid.UUID]):
         d["isLiked"] = p.id in liked_posts
         d["isSaved"] = p.id in saved_posts
         items.append((p.created_at, p.id, d))
+    # Scenes carry their save count and linked pieces (BACKEND_CHANGES B33).
+    from src.modules.posts import post_extras
+
+    post_extras.add_to(db, post_dicts, viewer_id)
     # Auction pieces carry their bid, bid count and end time (BACKEND_CHANGES B21).
     from src.modules.bids import auction_list_fields
 

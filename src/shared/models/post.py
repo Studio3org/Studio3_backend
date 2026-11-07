@@ -28,6 +28,14 @@ class Post(Base):
     # Every piece the Scene shows on, in order; `linked_piece_id` stays the first so its
     # readers are unchanged. No foreign key on an array: a deleted piece is skipped on read.
     linked_piece_ids = Column(ARRAY(UUID(as_uuid=True)), nullable=True)
+    # Every photo of a photo Scene, in order (BACKEND_CHANGES B33); `media_url` stays the
+    # first. Null for a one-photo Scene and for video.
+    media_urls = Column(ARRAY(String(1024)), nullable=True)
+    # The artist turned comments off from the Scene's More menu (B33).
+    comments_off = Column(Boolean, default=False, nullable=False, server_default="false")
+    # A draft's posting step and whether going live failed (B33, `Drafts`).
+    draft_step = Column(String(32), nullable=True)
+    publish_failed = Column(Boolean, default=False, nullable=False, server_default="false")
     status = Column(String(32), default="live", nullable=False)
     deleted_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)

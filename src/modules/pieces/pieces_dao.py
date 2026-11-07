@@ -190,5 +190,9 @@ def piece_to_dict(piece: Piece, media: Optional[list[PieceMedia]] = None) -> dic
         "signed": piece.signed,
         "mediums": piece.mediums or ([piece.medium] if piece.medium else []),
         "status": piece.status,
+        # A draft's posting step and failed publish (BACKEND_CHANGES B33).
+        "draftStep": getattr(piece, "draft_step", None),
+        "publishFailed": bool(getattr(piece, "publish_failed", False)),
         "createdAt": piece.created_at.isoformat(),
+        "updatedAt": (getattr(piece, "updated_at", None) or piece.created_at).isoformat(),
     }

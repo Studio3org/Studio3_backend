@@ -87,6 +87,9 @@ class Piece(Base):
     # moves between them live in src/modules/pieces/piece_state.py, which is the only thing
     # that may write this column.
     status = Column(String(32), default="live", nullable=False)
+    # A draft's posting step and whether going live failed (BACKEND_CHANGES B33, `Drafts`).
+    draft_step = Column(String(32), nullable=True)
+    publish_failed = Column(Boolean, default=False, nullable=False, server_default="false")
     deleted_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)

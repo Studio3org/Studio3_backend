@@ -102,6 +102,31 @@ def share_piece(piece_id):
         db.close()
 
 
+@share_bp.get("/post/<post_id>")
+def share_post(post_id):
+    """A Scene's link (BACKEND_CHANGES B33): Share and Copy link in the Scene viewer. Only a
+    posted Scene; a draft or a deleted one answers not-found."""
+    from src.modules.posts.posts_dao import get_post
+
+    web_url = f"{_web_base_url()}/post/{post_id}"
+    db = SessionLocal()
+    try:
+        post = get_post(db, _uuid_or_none(post_id))
+        if not post or post.status != "live":
+            return _not_found(web_url)
+        author = get_user_by_id(db, post.user_id)
+        image = post.thumbnail_url or (post.media_url if post.media_type == "image" else None)
+        return _open_app_page(
+            deep_link=f"studio3://post/{post_id}",
+            web_url=web_url,
+            title=f"A Scene by {author.name}" if author else "A Scene on Studio 3",
+            description=(post.caption or "").strip() or "See this Scene on Studio 3.",
+            image_url=image,
+        )
+    finally:
+        db.close()
+
+
 @share_bp.get("/series/<series_id>")
 def share_series(series_id):
     web_url = f"{_web_base_url()}/series/{series_id}"

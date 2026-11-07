@@ -21,7 +21,12 @@ from src.modules.posts.posts_dao import (
     list_saved_posts,
     post_to_dict,
 )
+from src.modules.posts import post_extras
 from src.modules.social import social_dao
+from src.modules.user import drafts
+
+# Photos in one Scene (B33): the viewer's dots.
+MAX_SCENE_PHOTOS = 10
 
 
 def create():
@@ -31,13 +36,16 @@ def create():
     db = SessionLocal()
     try:
         user = get_user_by_id(db, uuid.UUID(g.user["id"]))
-        media_url = body.get("mediaUrl")
-        if not media_url:
-            raise AppError("mediaUrl is required.", 400)
-        validate_user_media_url(user.username, media_url)
         media_type = (body.get("mediaType") or "image").strip().lower()
         if media_type not in ("image", "video"):
             raise AppError("mediaType must be image or video.", 400)
+        media_urls = _scene_photos(body, media_type)
+        media_url = media_urls[0] if media_urls else body.get("mediaUrl")
+        if not media_url:
+            raise AppError("mediaUrl is required.", 400)
+        for url in media_urls or [media_url]:
+            validate_user_media_url(user.username, url)
+        is_draft = body.get("status") == "draft"
         linked_ids = _resolve_linked_pieces(db, user, body)
         is_process = body["isProcess"] if "isProcess" in body else False
         post = create_post(
@@ -52,7 +60,9 @@ def create():
             is_process=bool(is_process),
             linked_piece_id=linked_ids[0] if linked_ids else None,
             linked_piece_ids=linked_ids or None,
-            status="draft" if body.get("status") == "draft" else "live",
+            media_urls=media_urls if len(media_urls) > 1 else None,
+            draft_step=drafts.step_from(body) if is_draft else None,
+            status="draft" if is_draft else "live",
         )
         result = post_to_dict(post)
         # Posted straight away: followers hear about the Scene (B12). A draft waits.
@@ -63,6 +73,20 @@ def create():
         return result, 201
     finally:
         db.close()
+
+
+def _scene_photos(body, media_type: str) -> list[str]:
+    """`mediaUrls`: a photo Scene's photos in order (B33). Empty when the body sends none."""
+    if "mediaUrls" not in body:
+        return []
+    raw = body.get("mediaUrls") or []
+    if not isinstance(raw, list) or not all(isinstance(u, str) and u for u in raw):
+        raise AppError("mediaUrls must be a list of links.", 400)
+    if len(raw) > 1 and media_type != "image":
+        raise AppError("Only a photo Scene can have several photos.", 400)
+    if len(raw) > MAX_SCENE_PHOTOS:
+        raise AppError(f"A Scene can have up to {MAX_SCENE_PHOTOS} photos.", 400)
+    return list(raw)
 
 
 def _resolve_linked_pieces(db, user, body) -> list[uuid.UUID]:
@@ -100,6 +124,8 @@ def enrich_post_dict(db, post, viewer_id: Optional[uuid.UUID]) -> dict:
     base["commentCount"] = social_dao.count_comments(db, "post", post.id)
     base["isLiked"] = social_dao.user_liked(db, "post", post.id, viewer_id) if viewer_id else False
     base["isSaved"] = social_dao.user_saved(db, "post", post.id, viewer_id) if viewer_id else False
+    # The save count and every linked piece (B33).
+    post_extras.add_to(db, [(post, base)], viewer_id)
     if post.linked_piece_id:
         piece = get_piece(db, post.linked_piece_id)
         base["piece"] = piece_to_dict(piece) if piece else None
@@ -139,6 +165,13 @@ def patch(post_id: str):
             post.location = body["location"]
         if "status" in body:
             post.status = body["status"]
+        if "commentsOff" in body:
+            if not isinstance(body["commentsOff"], bool):
+                raise AppError("commentsOff must be true or false.", 400)
+            post.comments_off = body["commentsOff"]
+        # A draft's step and a failed publish (B33); going live clears them.
+        drafts.apply_fields(post, body)
+        drafts.clear_when_live(post)
         if "linkedPieceId" in body or "linkedPieceIds" in body:
             linked_ids = _resolve_linked_pieces(db, user, body)
             post.linked_piece_id = linked_ids[0] if linked_ids else None
@@ -178,7 +211,18 @@ def list_for_user(username: str):
         if not social_dao.can_view_content(db, user, viewer_id):
             raise AppError("This account is private.", 403)
         posts = list_user_posts(db, user.id, include_drafts=viewer_id == user.id)
-        return [post_to_dict(p) for p in posts], 200
+        # The counts the Scene viewer shows, as in the feed (B33).
+        ids = [p.id for p in posts]
+        comments = social_dao.batch_comment_counts(db, "post", ids)
+        saved = social_dao.batch_user_saves(db, "post", ids, viewer_id)
+        pairs = []
+        for p in posts:
+            d = post_to_dict(p)
+            d["commentCount"] = comments.get(p.id, 0)
+            d["isSaved"] = p.id in saved
+            pairs.append((p, d))
+        post_extras.add_to(db, pairs, viewer_id)
+        return [d for _, d in pairs], 200
     finally:
         db.close()
 
@@ -193,6 +237,7 @@ def list_saved_for_me(user_id: uuid.UUID):
 
         post_ids = [p.id for p in posts]
         like_counts = social_dao.batch_like_counts(db, "post", post_ids)
+        comment_counts = social_dao.batch_comment_counts(db, "post", post_ids)
         liked_ids = social_dao.batch_user_likes(db, "post", post_ids, user_id)
         author_ids = {p.user_id for p in posts}
         authors = {
@@ -200,7 +245,7 @@ def list_saved_for_me(user_id: uuid.UUID):
             for u in db.execute(select(User).where(User.id.in_(author_ids))).scalars()
         } if author_ids else {}
 
-        result = []
+        pairs = []
         for post in posts:
             base = post_to_dict(post)
             author = authors.get(post.user_id)
@@ -211,12 +256,14 @@ def list_saved_for_me(user_id: uuid.UUID):
                 "isFollowing": False,
             }
             base["likeCount"] = like_counts.get(post.id, 0)
-            base["commentCount"] = 0
+            base["commentCount"] = comment_counts.get(post.id, 0)
             base["isLiked"] = post.id in liked_ids
             base["isSaved"] = True
             base["piece"] = None
-            result.append(base)
-        return result, 200
+            pairs.append((post, base))
+        # The save count and linked pieces, batched (B33).
+        post_extras.add_to(db, pairs, user_id)
+        return [d for _, d in pairs], 200
     finally:
         db.close()
 

@@ -158,6 +158,14 @@ def comment_post(post_id):
     return _ok("Comment added.", data, status)
 
 
+@social_bp.delete("/comments/<comment_id>")
+@onboarding_required
+@async_handler
+def delete_comment(comment_id):
+    data, status = social_controller.delete_comment(comment_id)
+    return _ok("Comment deleted.", data, status)
+
+
 @social_bp.get("/pieces/<piece_id>/comments")
 @optional_auth
 @async_handler
