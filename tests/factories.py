@@ -91,7 +91,7 @@ def make_piece(
     piece = Piece(
         id=uuid.uuid4(),
         user_id=owner.id,
-        title="Test Piece",
+        title=overrides.pop("title", "Test Piece"),
         media_url="https://example.test/piece.jpg",
         media_type="image",
         is_for_sale=is_for_sale,
