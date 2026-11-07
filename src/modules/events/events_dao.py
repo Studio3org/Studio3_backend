@@ -29,6 +29,11 @@ from src.shared.models.user import User
 from src.shared.utils.app_error import AppError
 
 MAX_TITLE = 140
+
+# Host FAQs (BACKEND_CHANGES B24).
+MAX_FAQS = 10
+MAX_FAQ_QUESTION = 200
+MAX_FAQ_ANSWER = 1000
 DEFAULT_LIMIT = 20
 MAX_LIMIT = 50
 
@@ -59,6 +64,7 @@ def create_event(
     latitude: Optional[float] = None,
     longitude: Optional[float] = None,
     capacity: Optional[int] = None,
+    faqs=None,
     commit: bool = True,
 ) -> Event:
     """Create an event in draft. Publishing is a separate, deliberate step.
@@ -83,6 +89,7 @@ def create_event(
         latitude=latitude,
         longitude=longitude,
         capacity=_clean_capacity(capacity),
+        faqs=validate_faqs(faqs),
     )
     db.add(event)
     if commit:
@@ -111,6 +118,34 @@ def validate_title(title: Optional[str]) -> str:
     if len(cleaned) > MAX_TITLE:
         raise AppError(f"An event title can be at most {MAX_TITLE} characters.", 400)
     return cleaned
+
+
+def validate_faqs(raw) -> Optional[list]:
+    """The host's FAQs as stored (B24): `[{"question", "answer"}]` in the order given, each
+    trimmed, or None for none. A row left wholly blank (an editor's empty last row) is dropped;
+    an answer without its question is refused, as is anything over the limits."""
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        raise AppError("faqs must be a list of questions and answers.", 400)
+    faqs = []
+    for item in raw:
+        if not isinstance(item, dict):
+            raise AppError("Each FAQ needs a question and an answer.", 400)
+        question = str(item.get("question") or "").strip()
+        answer = str(item.get("answer") or "").strip()
+        if not question and not answer:
+            continue
+        if not question:
+            raise AppError("Each FAQ needs a question.", 400)
+        if len(question) > MAX_FAQ_QUESTION:
+            raise AppError(f"An FAQ question can be at most {MAX_FAQ_QUESTION} characters.", 400)
+        if len(answer) > MAX_FAQ_ANSWER:
+            raise AppError(f"An FAQ answer can be at most {MAX_FAQ_ANSWER} characters.", 400)
+        faqs.append({"question": question, "answer": answer})
+    if len(faqs) > MAX_FAQS:
+        raise AppError(f"An event can have at most {MAX_FAQS} FAQs.", 400)
+    return faqs or None
 
 
 def validate_category(category: Optional[str]) -> Optional[str]:

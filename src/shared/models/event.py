@@ -31,7 +31,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from src.shared.config.database import Base
 
@@ -142,6 +142,10 @@ class Event(Base):
     cancellation_reason = Column(String(200), nullable=True)
     # Set by the team from the admin Events page: the Events tab's Featured pick (B23).
     featured_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    # The host's questions and answers for the event page (BACKEND_CHANGES B24): a list of
+    # {"question", "answer"} in the host's order, or null for none. A column rather than a
+    # table: they belong to the event, are few, and are only ever read and written whole.
+    faqs = Column(JSONB, nullable=True)
 
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)

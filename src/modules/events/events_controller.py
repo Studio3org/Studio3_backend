@@ -93,6 +93,7 @@ def create():
             latitude=body.get("latitude"),
             longitude=body.get("longitude"),
             capacity=body.get("capacity"),
+            faqs=body.get("faqs"),
         )
         return event_to_dict(db, event, viewer_id=host.id), 201
     finally:
@@ -128,6 +129,8 @@ def patch(event_id: str):
             event.longitude = body.get("longitude")
         if "capacity" in body:
             event.capacity = events_dao.validate_capacity(db, event, body.get("capacity"))
+        if "faqs" in body:
+            event.faqs = events_dao.validate_faqs(body.get("faqs"))
 
         if "startsAt" in body or "endsAt" in body:
             starts_at = (
@@ -701,8 +704,29 @@ def event_to_dict(db, event: Event, viewer_id: Optional[uuid.UUID]) -> dict:
             lineup_entry_to_dict(db, entry, viewer_id=viewer_id)
             for entry in lineup_service.list_lineup(db, event.id)
         ],
+        "faqs": [
+            {"question": f.get("question") or "", "answer": f.get("answer") or ""}
+            for f in (event.faqs or [])
+            if isinstance(f, dict)
+        ],
     })
+    if viewer_id is not None:
+        base.update(_host_follow(db, event, viewer_id))
     return base
+
+
+def _host_follow(db, event: Event, viewer_id: uuid.UUID) -> dict:
+    """Whether the signed-in viewer follows the host, or has asked to (B24): the same answer
+    `POST /api/users/<username>/follow` gives, so the page needn't fetch the host's profile."""
+    from src.modules.social import social_dao
+
+    if event.host_id == viewer_id:
+        return {"hostIsFollowing": False, "hostFollowRequested": False}
+    row = social_dao.get_follow(db, viewer_id, event.host_id)
+    return {
+        "hostIsFollowing": row is not None and row.status == "accepted",
+        "hostFollowRequested": row is not None and row.status == "pending",
+    }
 
 
 def lineup_entry_to_dict(db, entry: EventPiece, viewer_id: Optional[uuid.UUID] = None) -> dict:
