@@ -12,6 +12,9 @@ OTP_TTL = 60 * 5  # 5 min
 LOCK_TTL = 30  # 30 s
 RESEND_WINDOW = 60  # 1 min
 RESEND_MAX = 3
+# Wrong guesses a login or reset code survives (BACKEND_CHANGES B30): those codes sign someone
+# in or change their password, so they are not left open to a million tries.
+MAX_ATTEMPTS = 5
 
 OTP_SERVICE_UNAVAILABLE = "OTP service is temporarily unavailable. Please try again in a moment."
 
@@ -76,6 +79,27 @@ def verify_otp(email: str, otp: str) -> bool:
     if stored is None or stored != otp:
         return False
     r.delete(key)
+    return True
+
+
+@_guard_redis
+def verify_otp_limited(email: str, otp: str, max_attempts: int = MAX_ATTEMPTS) -> bool:
+    """Single use, like verify_otp, and the code is thrown away after `max_attempts` wrong
+    guesses (a new one has to be asked for). Used for login and reset codes."""
+    r = get_redis_client()
+    key = _key_otp(email)
+    attempts_key = f"otp:attempts:{email}"
+    stored = r.get(key)
+    if stored is None:
+        return False
+    if stored != otp:
+        count = r.incr(attempts_key)
+        if count == 1:
+            r.expire(attempts_key, OTP_TTL)
+        if count >= max_attempts:
+            r.delete(key, attempts_key)
+        return False
+    r.delete(key, attempts_key)
     return True
 
 

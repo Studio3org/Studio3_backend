@@ -4,7 +4,7 @@ import uuid
 from flask import request, g
 
 from src.shared.config.database import SessionLocal
-from src.shared.constants import ALLOWED_ROLES, CURRENT_TERMS_VERSION
+from src.shared.constants import ALLOWED_ROLES, CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION
 from src.shared.storage.s3_service import validate_user_media_url, migrate_user_prefix
 from src.shared.username.claim import change_username
 from src.shared.username.constants import RATE_USERNAME_CHANGE_PER_USER
@@ -70,6 +70,7 @@ def accept_terms():
             raise AppError("User not found.", 404)
         user.terms_accepted_at = datetime.now(timezone.utc)
         user.terms_version = CURRENT_TERMS_VERSION
+        user.privacy_version = CURRENT_PRIVACY_VERSION
         db.commit()
         db.refresh(user)
         return user_to_dict(db, user, viewer_id=user.id), 200

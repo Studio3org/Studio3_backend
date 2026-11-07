@@ -30,6 +30,12 @@ def username_check():
     return _respond("OK", data, status, cookie_ops)
 
 
+@auth_bp.post("/email/check")
+def email_check():
+    data, status, cookie_ops = auth_controller.email_check()
+    return _respond("OK", data, status, cookie_ops)
+
+
 @auth_bp.post("/otp/generate")
 def otp_generate():
     data, status, cookie_ops = auth_controller.otp_generate()

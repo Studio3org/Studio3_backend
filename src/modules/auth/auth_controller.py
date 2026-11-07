@@ -9,7 +9,7 @@ from redis.exceptions import RedisError
 from sqlalchemy.exc import IntegrityError
 
 from src.shared.config.database import SessionLocal
-from src.shared.constants import CURRENT_TERMS_VERSION
+from src.shared.constants import CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION
 from src.shared.utils.app_error import AppError
 from src.shared.utils.messages import (
     OTP_VERIFICATION_FAILED,
@@ -37,15 +37,18 @@ from src.modules.auth.auth_dao import (
     find_user_by_username_or_history,
     create_user,
 )
+from src.modules.auth.services import login_lock
 from src.modules.auth.services.otp_service import (
     acquire_lock,
     check_resend_limit,
     store_otp,
     verify_otp,
+    verify_otp_limited,
     peek_otp,
     generate_otp,
 )
 from src.modules.auth.services.password_reset_service import (
+    issue_reset_grant,
     request_password_reset,
     reset_password as do_reset_password,
 )
@@ -71,6 +74,37 @@ SALT_ROUNDS = int(os.getenv("SALT_ROUNDS", "10"))
 REFRESH_TOKEN_DAYS = 365 * 100
 COOKIE_MAX_AGE = REFRESH_TOKEN_DAYS * 24 * 3600
 MIN_PASSWORD_LEN = 8
+
+# Sign-in by email (BACKEND_CHANGES B30): what a code is for. `signup` is the code that
+# precedes creating an account (and what an older app sends without a purpose); `login` signs
+# an existing account in; `reset` buys a short grant to set a new password.
+PURPOSE_SIGNUP = "signup"
+PURPOSE_LOGIN = "login"
+PURPOSE_RESET = "reset"
+PURPOSES = (PURPOSE_SIGNUP, PURPOSE_LOGIN, PURPOSE_RESET)
+
+# The email check answers whether an address has an account, so it is held to a few asks a
+# minute from one address.
+RATE_EMAIL_CHECK_PER_IP = 10
+# Login and reset codes: guesses from one address a minute, on top of the per-code limit.
+RATE_CODE_VERIFY_PER_IP = 20
+
+
+def _purpose(body: dict) -> str:
+    purpose = (body.get("purpose") or PURPOSE_SIGNUP).strip().lower()
+    if purpose not in PURPOSES:
+        raise AppError("Unknown code purpose.", 400)
+    return purpose
+
+
+def _otp_key(purpose: str, email: str) -> str:
+    """Each purpose keeps its own code, so a sign-up code can't be spent as a login."""
+    return email if purpose == PURPOSE_SIGNUP else f"{purpose}:{email}"
+
+
+def _live_account(db, email: str):
+    user = find_user_by_email(db, email)
+    return None if user is None or user.deleted_at else user
 
 
 def _hash_password(password: str) -> str:
@@ -136,18 +170,51 @@ def username_check():
         db.close()
 
 
+def email_check():
+    """`POST /api/auth/email/check {email}` → `{exists}` (B30): the first screen sends a new
+    email to the code and profile steps and a known one to Welcome back. Rate limited per
+    address; a deleted account doesn't count."""
+    rate_limit_ip("email_check", RATE_EMAIL_CHECK_PER_IP, 60)
+    body = request.get_json() or {}
+    email = (body.get("email") or "").strip().lower()
+    if not email or "@" not in email:
+        raise AppError(EMAIL_REQUIRED, 400)
+    db = SessionLocal()
+    try:
+        return {"exists": _live_account(db, email) is not None}, 200, None
+    finally:
+        db.close()
+
+
+_CODE_SUBJECTS = {
+    PURPOSE_SIGNUP: "Your verification code",
+    PURPOSE_LOGIN: "Your login code",
+    PURPOSE_RESET: "Your password reset code",
+}
+
+
 def otp_generate():
     body = request.get_json() or {}
     email = (body.get("email") or "").strip().lower()
     if not email:
         raise AppError(EMAIL_REQUIRED, 400)
-    if not acquire_lock(email):
+    purpose = _purpose(body)
+    key = _otp_key(purpose, email)
+    if not acquire_lock(key):
         raise AppError("Please wait before requesting another OTP.", 429)
-    if not check_resend_limit(email):
+    if not check_resend_limit(key):
         raise AppError("Resend limit exceeded. Try again later.", 429)
+    if purpose != PURPOSE_SIGNUP:
+        # A login or reset code only goes to an account; the answer is the same either way.
+        db = SessionLocal()
+        try:
+            if _live_account(db, email) is None:
+                return {"message": "OTP sent successfully."}, 200, None
+        finally:
+            db.close()
     otp = generate_otp(6)
-    store_otp(email, otp)
-    if not send_email(email, "Your verification code", get_otp_html(otp)):
+    store_otp(key, otp)
+    if not send_email(email, _CODE_SUBJECTS[purpose], get_otp_html(otp)):
         raise AppError("Could not send the verification email. Please try again.", 502)
     return {"message": "OTP sent successfully."}, 200, None
 
@@ -157,17 +224,42 @@ def otp_resend():
 
 
 def otp_verify():
-    """Check-only step used by the sign-up wizard's OTP screen — does not
-    consume the code or create an account. The real, single-use check still
-    happens in register() via verify_otp()."""
+    """The code screen.
+
+    `purpose: "signup"` (or none): check-only — does not consume the code or create an
+    account; the real, single-use check still happens in register() via verify_otp().
+
+    `purpose: "login"` (B30): spends the code and signs the account in, as `/login` does; it
+    also lifts a lock from wrong passwords. `purpose: "reset"`: spends the code and returns
+    `{"resetToken"}`, which `/reset-password` takes for ten minutes, once. Login and reset
+    codes die after five wrong guesses."""
     body = request.get_json() or {}
     email = (body.get("email") or "").strip().lower()
     otp = (body.get("otp") or "").strip()
     if not email:
         raise AppError(EMAIL_REQUIRED, 400)
-    if not otp or not peek_otp(email, otp):
+    purpose = _purpose(body)
+    if purpose == PURPOSE_SIGNUP:
+        if not otp or not peek_otp(email, otp):
+            raise AppError(OTP_VERIFICATION_FAILED, 400)
+        return {"verified": True}, 200, None
+
+    rate_limit_ip("otp_verify", RATE_CODE_VERIFY_PER_IP, 60)
+    if not otp or not verify_otp_limited(_otp_key(purpose, email), otp):
         raise AppError(OTP_VERIFICATION_FAILED, 400)
-    return {"verified": True}, 200, None
+    db = SessionLocal()
+    try:
+        user = _live_account(db, email)
+        if user is None:
+            raise AppError(OTP_VERIFICATION_FAILED, 400)
+        if purpose == PURPOSE_RESET:
+            return {"resetToken": issue_reset_grant(db, user)}, 200, None
+        login_lock.clear(user.id)
+        if _accepted_terms(body):
+            _record_terms_acceptance(db, user)
+        return _issue_session_and_tokens(user, request)
+    finally:
+        db.close()
 
 
 def _accepted_terms(body: dict) -> bool:
@@ -177,6 +269,7 @@ def _accepted_terms(body: dict) -> bool:
 def _record_terms_acceptance(db, user) -> None:
     user.terms_accepted_at = datetime.now(timezone.utc)
     user.terms_version = CURRENT_TERMS_VERSION
+    user.privacy_version = CURRENT_PRIVACY_VERSION
     db.commit()
     db.refresh(user)
 
@@ -267,8 +360,15 @@ def login():
 
         if not user or not user.password or user.deleted_at:
             raise AppError(INVALID_CREDENTIALS, 401)
+        # Five wrong passwords lock password log-in for 15 minutes, even with the right one;
+        # the emailed login code still works (B30).
+        if login_lock.is_locked(user.id):
+            raise AppError(login_lock.LOCKED_MESSAGE, 429)
         if not _verify_password(password, user.password):
+            if login_lock.record_failure(user.id):
+                raise AppError(login_lock.LOCKED_MESSAGE, 429)
             raise AppError(INVALID_CREDENTIALS, 401)
+        login_lock.clear(user.id)
         if _accepted_terms(body):
             _record_terms_acceptance(db, user)
         return _issue_session_and_tokens(user, request)
@@ -364,8 +464,10 @@ def forget_password():
 
 
 def reset_password():
+    """Sets a new password with the emailed link's token or the app's reset grant (B30,
+    `resetToken` from a reset code; sent as `token` or `resetToken`)."""
     body = request.get_json() or {}
-    token = (body.get("token") or "").strip()
+    token = (body.get("token") or body.get("resetToken") or "").strip()
     new_password = body.get("newPassword")
     if not token:
         raise AppError(INVALID_RESET_TOKEN, 400)

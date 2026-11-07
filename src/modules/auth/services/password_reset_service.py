@@ -21,6 +21,8 @@ import os
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 RESET_TOKEN_EXPIRY_HOURS = 1
+# A reset code from the app (BACKEND_CHANGES B30) buys this long to set the new password.
+RESET_GRANT_MINUTES = 10
 
 
 def _hash_token(token: str) -> str:
@@ -39,6 +41,15 @@ def request_password_reset(db: Session, email: str) -> None:
     reset_url = f"{FRONTEND_URL}/reset-password?token={raw_token}"
     html = get_password_reset_html(reset_url)
     send_email(user.email, "Reset your password", html)
+
+
+def issue_reset_grant(db: Session, user) -> str:
+    """After a reset code: a short-lived, single-use token that `/reset-password` takes like
+    the emailed link's (the same table, so using either clears both)."""
+    raw_token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=RESET_GRANT_MINUTES)
+    create_password_reset_token(db, user.id, _hash_token(raw_token), expires_at)
+    return raw_token
 
 
 def reset_password(db: Session, token: str, new_password_hash: str) -> bool:
