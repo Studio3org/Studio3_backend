@@ -4,6 +4,7 @@ from flask import Blueprint, request
 from src.middlewares.auth_middleware import optional_auth
 from src.shared.utils.api_response import success_response
 from src.shared.utils.async_handler import async_handler
+from src.modules.events import events_controller
 from src.modules.pieces import pieces_controller
 from src.modules.posts import posts_controller
 from src.modules.series import series_controller
@@ -47,6 +48,14 @@ def list_pieces_for_sale(username):
 @async_handler
 def list_posts(username):
     data, status = posts_controller.list_for_user(username)
+    return _ok("OK", data, status)
+
+
+@users_bp.get("/<username>/events")
+@optional_auth
+@async_handler
+def list_events(username):
+    data, status = events_controller.list_for_host(username)
     return _ok("OK", data, status)
 
 

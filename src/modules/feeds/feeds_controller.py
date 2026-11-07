@@ -122,6 +122,40 @@ def _enrich_items(db, pieces, posts, viewer_id: Optional[uuid.UUID]):
     return items
 
 
+def _wants_events() -> bool:
+    """`?include=events`: the app can show an event item (B27). Asked for, because an older app
+    reads any item it doesn't know as a piece and would draw an empty tile."""
+    return "events" in {p.strip() for p in (request.args.get("include") or "").split(",")}
+
+
+def _add_feed_event(db, result: dict, viewer_id: Optional[uuid.UUID], hidden: set):
+    """One `{"type": "event", "event": <card>}` on the first page (B27), after the third item:
+    starting in the next two weeks, a followed host's first, then one near the viewer."""
+    if request.args.get("cursor") or not _wants_events():
+        return
+    from src.modules.events import event_discovery
+    from src.modules.events.events_controller import event_card
+
+    at = event_discovery.feed_slot(len(result["items"]))
+    if at < 0:
+        return
+    event = event_discovery.feed_event(db, viewer_id, hidden=hidden)
+    if event is not None:
+        result["items"].insert(at, {"type": "event", "event": event_card(db, event, viewer_id)})
+
+
+def _upcoming_shows(db, viewer_id: Optional[uuid.UUID], hidden: set) -> list:
+    """Explore's Upcoming shows (B27): event cards, soonest first, each with `pieces` from its
+    bill."""
+    from src.modules.events import event_discovery
+    from src.modules.events.events_controller import event_card
+
+    return [
+        {**event_card(db, event, viewer_id), "pieces": pieces}
+        for event, pieces in event_discovery.upcoming_shows(db, hidden=hidden)
+    ]
+
+
 def _paginated_response(db, piece_query, post_query, viewer_id: Optional[uuid.UUID]):
     hidden = block_dao.blocked_user_ids(db, viewer_id)
     if hidden:
@@ -136,7 +170,9 @@ def _paginated_response(db, piece_query, post_query, viewer_id: Optional[uuid.UU
     merged = _enrich_items(db, pieces, posts, viewer_id)
     page = merged[:limit]
     next_cursor = _encode_cursor(page[-1][0], page[-1][1]) if len(merged) > limit and page else None
-    return {"items": [d for _, _, d in page], "nextCursor": next_cursor}
+    result = {"items": [d for _, _, d in page], "nextCursor": next_cursor}
+    _add_feed_event(db, result, viewer_id, hidden)
+    return result
 
 
 def following_feed():
@@ -164,7 +200,7 @@ def following_feed():
         db.close()
 
 
-def explore_feed():
+def explore_feed(shows: bool = True):
     medium = request.args.get("medium")
     viewer_id = uuid.UUID(g.user["id"]) if getattr(g, "user", None) else None
     db = SessionLocal()
@@ -182,7 +218,13 @@ def explore_feed():
             post_query = None
             piece_query = piece_query.where(Piece.medium == medium)
 
-        return _paginated_response(db, piece_query, post_query, viewer_id), 200
+        result = _paginated_response(db, piece_query, post_query, viewer_id)
+        # Explore's Upcoming shows ride on the first page of the whole grid (B27).
+        if shows and not medium and not request.args.get("cursor"):
+            result["upcomingShows"] = _upcoming_shows(
+                db, viewer_id, block_dao.blocked_user_ids(db, viewer_id)
+            )
+        return result, 200
     finally:
         db.close()
 
@@ -190,6 +232,6 @@ def explore_feed():
 def for_you_feed():
     # Open to signed-out guests too (App Store guideline 5.1.1(v): browsing isn't an
     # account feature) — explore_feed already treats a missing viewer as anonymous.
-    explore, status = explore_feed()
+    explore, status = explore_feed(shows=False)
     explore["stub"] = True
     return explore, status

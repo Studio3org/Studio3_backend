@@ -22,7 +22,7 @@ from src.shared.utils.app_error import AppError
 from src.shared.utils.logger import get_logger
 from src.modules.admin import audit_service
 from src.shared.models import audit
-from src.modules.events import event_state, events_dao, lineup_service, rsvp_service
+from src.modules.events import event_discovery, event_state, events_dao, lineup_service, rsvp_service
 from src.modules.pieces.pieces_dao import get_piece
 from src.modules.user.user_dao import get_user_by_id
 
@@ -531,18 +531,39 @@ def set_saved(event_id: str):
 
 
 def list_for_host(username: str):
-    from src.modules.user.user_dao import get_user_by_username
+    """`GET /api/users/<username>/events`: a host's events (B27). `?scope=upcoming` is the
+    published ones still to come, soonest first; otherwise everything published, newest first,
+    and the host's own drafts for the host. Hidden like the profile from someone blocked, and
+    like the profile's grids on a private account the viewer doesn't follow."""
+    from src.modules.auth.auth_dao import find_user_by_username
+    from src.modules.social import block_dao, social_dao
 
+    scope = (request.args.get("scope") or "").strip().lower()
     db = SessionLocal()
     try:
-        host = get_user_by_username(db, username)
+        host = find_user_by_username(db, username.lower())
         if host is None:
             raise AppError("User not found.", 404)
         viewer_id = _viewer_id()
-        events = events_dao.list_for_host(db, host.id, viewer_id=viewer_id)
+        if viewer_id and block_dao.is_blocked_either_way(db, viewer_id, host.id):
+            raise AppError("User not found.", 404)
+        if not social_dao.can_view_content(db, host, viewer_id):
+            raise AppError("This account is private.", 403)
+        if scope == "upcoming":
+            events = event_discovery.list_host_upcoming(
+                db, host.id, limit=_int_arg("limit", event_discovery.HOST_UPCOMING_LIMIT)
+            )
+        else:
+            events = events_dao.list_for_host(db, host.id, viewer_id=viewer_id)
         return {"events": [event_card(db, e, viewer_id) for e in events]}, 200
     finally:
         db.close()
+
+
+def upcoming_event_card(db, host_id: uuid.UUID, viewer_id: Optional[uuid.UUID]) -> Optional[dict]:
+    """The profile's Upcoming show (B27): the host's soonest published event still to come."""
+    event = event_discovery.upcoming_for_host(db, host_id)
+    return event_card(db, event, viewer_id) if event else None
 
 
 def set_rsvp(event_id: str):

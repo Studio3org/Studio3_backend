@@ -41,9 +41,18 @@ def get_me():
         user = get_user_by_id(db, uuid.UUID(g.user["id"]))
         if not user:
             raise AppError("User not found.", 404)
-        return user_to_dict(db, user, viewer_id=user.id), 200
+        data = user_to_dict(db, user, viewer_id=user.id)
+        data["upcomingEvent"] = _upcoming_event(db, user.id, user.id)
+        return data, 200
     finally:
         db.close()
+
+
+def _upcoming_event(db, user_id, viewer_id):
+    """The profile's Upcoming show card (BACKEND_CHANGES B27), or None."""
+    from src.modules.events.events_controller import upcoming_event_card
+
+    return upcoming_event_card(db, user_id, viewer_id)
 
 
 def accept_terms():
@@ -225,6 +234,7 @@ def get_public_profile(username: str):
             }, 200
 
         data = user_to_dict(db, user, include_private=False, viewer_id=viewer_id)
+        data["upcomingEvent"] = _upcoming_event(db, user.id, viewer_id)
         if is_redirect:
             data["redirectToUsername"] = user.username
         if not is_owner:
