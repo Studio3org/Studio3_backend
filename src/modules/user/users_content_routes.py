@@ -9,7 +9,7 @@ from src.modules.pieces import pieces_controller
 from src.modules.posts import posts_controller
 from src.modules.series import series_controller
 from src.modules.social import social_controller
-from src.modules.user import user_controller
+from src.modules.user import collected, user_controller
 
 users_bp = Blueprint("users", __name__)
 
@@ -56,6 +56,15 @@ def list_posts(username):
 @async_handler
 def list_events(username):
     data, status = events_controller.list_for_host(username)
+    return _ok("OK", data, status)
+
+
+@users_bp.get("/<username>/collection")
+@optional_auth
+@async_handler
+def list_collection(username):
+    """The pieces they have bought on Studio 3, for the profile's Collection tab (B37)."""
+    data, status = collected.list_for_user(username)
     return _ok("OK", data, status)
 
 
