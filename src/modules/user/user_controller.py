@@ -16,7 +16,7 @@ from src.modules.user.user_serializers import user_to_dict
 from src.modules.pieces.pieces_dao import list_user_pieces, get_piece
 from src.modules.social import social_dao
 from src.modules.social import block_dao
-from src.modules.user import device_dao
+from src.modules.user import device_dao, profile_extras
 
 
 def _resolve_target_owner(db, target_type: str, target_id: str):
@@ -127,6 +127,10 @@ def patch_me():
             if not isinstance(tags, list) or len(tags) > 8 or any(not isinstance(t, str) for t in tags):
                 raise AppError("tags must be a list of at most 8 strings.", 400)
             fields["tags"] = [t.strip().lstrip("#") for t in tags if t.strip()]
+        if "profileMediums" in body:
+            fields["profile_mediums"] = profile_extras.clean_profile_mediums(body.get("profileMediums"))
+        if "collectionPrivate" in body:
+            fields["collection_private"] = profile_extras.clean_collection_private(body.get("collectionPrivate"))
         if "mediums" in body:
             taste = dict(user.taste_preferences or {})
             taste["mediums"] = body.get("mediums") or []
@@ -225,14 +229,18 @@ def get_public_profile(username: str):
             # Locked profile header only — pieces/posts/series grids are gated separately
             # in each list endpoint via social_dao.can_view_content().
             is_pending = social_dao.has_pending_request(db, viewer_id, user.id) if viewer_id else False
-            return {
-                "username": user.username,
-                "name": user.name,
-                "profilePhotoUrl": user.image,
-                "profileVisibility": "private",
-                "isFollowing": is_follower,
-                "followRequestPending": is_pending,
-            }, 200
+            # `ProfilePrivate` (B36): the header stays visible; pieces, Scenes and Collection don't.
+            from src.modules.orders import orders_dao
+            from src.modules.user import collected
+
+            return profile_extras.locked_header(
+                user,
+                is_pending=is_pending,
+                following_count=social_dao.count_following(db, user.id),
+                collected_count=orders_dao.count_buyer_collected(db, user.id),
+                artists_count=collected.count_artists(db, user.id),
+                saves_count=social_dao.count_user_saves(db, user.id),
+            ), 200
 
         data = user_to_dict(db, user, include_private=False, viewer_id=viewer_id)
         data["upcomingEvent"] = _upcoming_event(db, user.id, viewer_id)

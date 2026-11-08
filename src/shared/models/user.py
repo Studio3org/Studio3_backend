@@ -58,6 +58,11 @@ class User(Base):
     # presets, not an enforced enum, same convention as pronouns above.
     category = Column(String(50), nullable=True)
     tags = Column(JSONB, nullable=True)  # list[str], up to 8 — discipline/style keywords
+    # Up to 3 mediums shown under the username, in order (BACKEND_CHANGES B31). Not the
+    # sign-up taste in taste_preferences.mediums.
+    profile_mediums = Column(JSONB, nullable=True)
+    # The owner hides their Collection from everyone else (BACKEND_CHANGES B34).
+    collection_private = Column(Boolean, default=False, server_default="false", nullable=False)
     # "Magnum opus" banner: a manually-pinned piece/post, or an auto-selection rule
     # computed at read time (no cron exists to materialize this — see user_serializers.py).
     banner_target_type = Column(String(16), nullable=True)  # piece|post

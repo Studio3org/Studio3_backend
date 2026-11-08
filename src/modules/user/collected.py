@@ -10,12 +10,13 @@ import uuid
 from typing import Iterable
 
 from flask import g
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from src.modules.auth.auth_dao import find_user_by_username
 from src.modules.orders.orders_dao import COMPLETED_STATUSES
 from src.modules.pieces.pieces_dao import batch_list_piece_media, piece_to_dict
 from src.modules.social import block_dao, social_dao
+from src.modules.user import profile_extras
 from src.shared.config.database import SessionLocal
 from src.shared.models.order import Order, OrderItem
 from src.shared.models.piece import Piece
@@ -56,6 +57,15 @@ def collected_pieces(db, buyer_id: uuid.UUID, limit: int = COLLECTION_LIMIT) -> 
     return first_of_each(rows)
 
 
+def count_artists(db, buyer_id: uuid.UUID) -> int:
+    """How many artists they've bought from: the "artists" stat (`ProfileCollector`)."""
+    return db.execute(
+        select(func.count(func.distinct(Order.seller_id))).where(
+            Order.buyer_id == buyer_id, Order.status.in_(COMPLETED_STATUSES)
+        )
+    ).scalar_one()
+
+
 def to_item(piece, media, author) -> dict:
     """A piece as a Collection tile: the piece, its artist, no price."""
     data = piece_to_dict(piece, media=media)
@@ -80,6 +90,9 @@ def list_for_user(username: str):
             raise AppError("User not found.", 404)
         if not social_dao.can_view_content(db, user, viewer_id):
             raise AppError("This account is private.", 403)
+        # Private Collection (B34): the owner's alone; everyone else sees an empty tab.
+        if not profile_extras.collection_visible(user, viewer_id):
+            return [], 200
 
         pieces = collected_pieces(db, user.id)
         if not pieces:

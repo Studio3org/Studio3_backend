@@ -87,6 +87,8 @@ def user_to_dict(
         "category": user.category,
         "tags": user.tags or [],
         "mediums": (user.taste_preferences or {}).get("mediums", []),
+        # Under the username, in order (B31).
+        "profileMediums": list(user.profile_mediums or []),
         "role": user.role,
         "sellerEnabled": user.seller_enabled,
         "onboardingComplete": user.onboarding_complete,
@@ -98,6 +100,10 @@ def user_to_dict(
     data["piecesCount"] = len(list_user_pieces(db, user.id))
     data["savesCount"] = social_dao.count_user_saves(db, user.id)
     data["collectedCount"] = orders_dao.count_buyer_collected(db, user.id)
+    # The collector's "artists" stat (`ProfileCollector`).
+    from src.modules.user import collected
+
+    data["artistsCount"] = collected.count_artists(db, user.id)
     data["isFollowing"] = social_dao.user_follows(db, viewer_id, user.id) if viewer_id else False
 
     # Flutter client documented fallback aliases (see BACKEND_API_README.md)
@@ -134,6 +140,7 @@ def user_to_dict(
                 "bannerAutoRule": user.banner_auto_rule,
                 "messagePermission": user.message_permission,
                 "profileVisibility": user.profile_visibility,
+                "collectionPrivate": bool(user.collection_private),
                 "notificationPreferences": user.notification_preferences,
                 "termsAcceptedAt": user.terms_accepted_at.isoformat() if user.terms_accepted_at else None,
                 "termsVersion": user.terms_version,
