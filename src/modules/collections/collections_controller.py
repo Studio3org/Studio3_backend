@@ -10,28 +10,56 @@ from src.modules.pieces.pieces_dao import get_piece
 from src.modules.posts.posts_dao import get_post
 from src.modules.collections import collections_dao
 
-_VALID_TARGET_TYPES = ("piece", "post")
+# Events too (BACKEND_CHANGES B35): saving anything offers "Save to collection".
+_VALID_TARGET_TYPES = ("piece", "post", "event")
+_TYPES_MESSAGE = "targetType must be 'piece', 'post' or 'event'."
 
 
-def _get_target(db, target_type: str, target_id: uuid.UUID):
+def _visible_event(event, viewer_id) -> bool:
+    """An event goes in a folder once it is out (published, or since cancelled or over); a
+    draft only for its host."""
+    from src.shared.models.event import EVENT_DRAFT
+
+    if event is None:
+        return False
+    return event.status != EVENT_DRAFT or event.host_id == viewer_id
+
+
+def _get_target(db, target_type: str, target_id: uuid.UUID, viewer_id=None):
     if target_type == "piece":
         return get_piece(db, target_id)
     if target_type == "post":
         return get_post(db, target_id)
+    if target_type == "event":
+        from src.modules.events import events_dao
+
+        event = events_dao.get_event(db, target_id)
+        return event if _visible_event(event, viewer_id) else None
     return None
+
+
+def _target_image(target_type: str, target) -> str | None:
+    return target.cover_media_url if target_type == "event" else target.media_url
 
 
 def _cover_dict(db, item) -> dict | None:
     if item is None:
         return None
-    target = _get_target(db, item.target_type, item.target_id)
+    target = _get_target(db, item.target_type, item.target_id, viewer_id=_viewer())
     if not target:
         return None
     return {
         "targetType": item.target_type,
         "targetId": str(item.target_id),
-        "mediaUrl": target.media_url,
+        "mediaUrl": _target_image(item.target_type, target),
     }
+
+
+def _viewer():
+    try:
+        return uuid.UUID(g.user["id"])
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
 
 
 def _collection_summary_dict(db, collection) -> dict:
@@ -118,6 +146,16 @@ def get_detail(collection_id: str):
 
         piece_ids = [i.target_id for i in items if i.target_type == "piece"]
         post_ids = [i.target_id for i in items if i.target_type == "post"]
+        event_ids = [i.target_id for i in items if i.target_type == "event"]
+        events_by_id = {}
+        if event_ids:
+            from src.shared.models.event import Event
+
+            events_by_id = {
+                e.id: e
+                for e in db.execute(select(Event).where(Event.id.in_(event_ids))).scalars()
+                if _visible_event(e, viewer_id)
+            }
         pieces_by_id = {}
         posts_by_id = {}
         if piece_ids:
@@ -166,6 +204,17 @@ def get_detail(collection_id: str):
         enriched = []
         piece_dicts = []
         for item in items:
+            if item.target_type == "event":
+                # An older app skips a type it doesn't know (BACKEND_CHANGES B35).
+                event = events_by_id.get(item.target_id)
+                if not event:
+                    continue
+                from src.modules.events.events_controller import event_card
+
+                d = event_card(db, event, viewer_id)
+                d["targetType"] = "event"
+                enriched.append(d)
+                continue
             if item.target_type == "piece":
                 target = pieces_by_id.get(item.target_id)
                 if not target:
@@ -213,15 +262,18 @@ def add_item(collection_id: str):
     target_type = body.get("targetType")
     target_id = body.get("targetId")
     if target_type not in _VALID_TARGET_TYPES:
-        raise AppError("targetType must be 'piece' or 'post'.", 400)
+        raise AppError(_TYPES_MESSAGE, 400)
     if not target_id:
         raise AppError("targetId is required.", 400)
     db = SessionLocal()
     try:
         user_id = uuid.UUID(g.user["id"])
         collection = _require_owned_collection(db, uuid.UUID(collection_id), user_id)
-        tid = uuid.UUID(target_id)
-        if not _get_target(db, target_type, tid):
+        try:
+            tid = uuid.UUID(str(target_id))
+        except ValueError:
+            raise AppError(f"{target_type.capitalize()} not found.", 404) from None
+        if not _get_target(db, target_type, tid, viewer_id=user_id):
             raise AppError(f"{target_type.capitalize()} not found.", 404)
         collections_dao.add_item(db, collection.id, target_type, tid)
         return {"added": True, "itemCount": collections_dao.count_items(db, collection.id)}, 200
@@ -231,7 +283,7 @@ def add_item(collection_id: str):
 
 def remove_item(collection_id: str, target_type: str, target_id: str):
     if target_type not in _VALID_TARGET_TYPES:
-        raise AppError("targetType must be 'piece' or 'post'.", 400)
+        raise AppError(_TYPES_MESSAGE, 400)
     db = SessionLocal()
     try:
         user_id = uuid.UUID(g.user["id"])
