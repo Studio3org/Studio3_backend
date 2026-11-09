@@ -46,6 +46,18 @@ def _owned_piece(db, piece_id: str, user_id: uuid.UUID):
     return piece
 
 
+def bid_history(piece_id: str):
+    """Every bid on the artist's own auction, with anonymous bidder numbers (B38)."""
+    from src.modules.bids import seller_view
+
+    db = SessionLocal()
+    try:
+        piece = _owned_piece(db, piece_id, uuid.UUID(g.user["id"]))
+        return seller_view.bid_history(db, piece.id), 200
+    finally:
+        db.close()
+
+
 def extend(piece_id: str):
     """The one manual extension a seller gets on a standalone auction."""
     body = request.get_json() or {}

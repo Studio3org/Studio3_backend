@@ -306,6 +306,14 @@ def enrich_piece_dict(db, piece, viewer_id: Optional[uuid.UUID]) -> dict:
             auction_dao.get_settling_auction(db, piece.id)
         )
         base.update(bid_dao.bid_summary(db, auction, viewer_id=viewer_id))
+        # The run that ended, for its artist only (B38, `ArtistAuctionUnsold`): with nothing
+        # running or settling the summary above is empty, and the page could not say why.
+        if auction is None and viewer_id is not None and viewer_id == piece.user_id:
+            from src.modules.bids import seller_view
+
+            last = seller_view.last_auction(db, piece.id)
+            if last is not None:
+                base["lastAuction"] = last
     # The viewer's own bid, from any phone and after the close too (BACKEND_CHANGES B18).
     # Signed-in viewers only; the owner can't bid, so theirs is always "none".
     from src.modules.bids import my_bid

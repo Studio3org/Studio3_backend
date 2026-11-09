@@ -98,6 +98,15 @@ def auction_checkout(piece_id):
 # holds a piece id, and a piece has at most one auction that matters at a time. Routing by
 # auction id would mean every caller first had to ask which auction is the current one.
 
+@pieces_bp.get("/<piece_id>/auction/bids")
+@onboarding_required
+@async_handler
+def auction_bids(piece_id):
+    from src.modules.bids import auction_controller
+    data, status = auction_controller.bid_history(piece_id)
+    return _ok("OK", data, status)
+
+
 @pieces_bp.post("/<piece_id>/auction/extend")
 @onboarding_required
 @async_handler
