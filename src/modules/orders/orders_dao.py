@@ -305,7 +305,62 @@ def count_seller_sales(db: Session, seller_id: uuid.UUID) -> int:
     ).scalar_one()
 
 
-def order_to_dict(db: Session, order: Order) -> dict:
+def piece_summaries(db: Session, piece_ids) -> dict:
+    """{piece_id: {id, title, mediaUrl, listingType}} for an order list, in two queries at most.
+
+    B34: order rows name and show their piece without the app fetching each one. The picture
+    follows the rule everywhere else uses (notifications_dao.piece_cover_url): the cover, or
+    for a video cover the piece's first photo — batched here instead of a query per piece.
+    """
+    from src.shared.models.piece_media import PieceMedia
+
+    ids = {pid for pid in piece_ids if pid}
+    if not ids:
+        return {}
+    pieces = db.execute(select(Piece).where(Piece.id.in_(ids))).scalars().all()
+    video_ids = [p.id for p in pieces if (p.media_type or "image") == "video"]
+    first_photo: dict = {}
+    if video_ids:
+        rows = db.execute(
+            select(PieceMedia.piece_id, PieceMedia.media_url)
+            .where(PieceMedia.piece_id.in_(video_ids), PieceMedia.media_type == "image")
+            .order_by(PieceMedia.piece_id, PieceMedia.sort_order)
+        ).all()
+        for piece_id, url in rows:
+            first_photo.setdefault(piece_id, url)
+    return {
+        p.id: {
+            "id": str(p.id),
+            "title": p.title,
+            "mediaUrl": first_photo.get(p.id) if (p.media_type or "image") == "video" else p.media_url,
+            "listingType": p.listing_type,
+        }
+        for p in pieces
+    }
+
+
+def order_items_by_order(db: Session, order_ids) -> dict:
+    """{order_id: [OrderItem, ...]} for a page of orders in one query."""
+    grouped: dict = {oid: [] for oid in order_ids}
+    if not grouped:
+        return grouped
+    for item in db.execute(
+        select(OrderItem).where(OrderItem.order_id.in_(list(grouped)))
+    ).scalars():
+        grouped[item.order_id].append(item)
+    return grouped
+
+
+def orders_to_dicts(db: Session, orders: list[Order]) -> list[dict]:
+    """order_to_dict for a page, with its items and pieces fetched once for the whole page."""
+    items = order_items_by_order(db, [o.id for o in orders])
+    pieces = piece_summaries(db, [i.piece_id for rows in items.values() for i in rows])
+    return [order_to_dict(db, o, items=items[o.id], pieces=pieces) for o in orders]
+
+
+def order_to_dict(
+    db: Session, order: Order, *, items: list | None = None, pieces: dict | None = None
+) -> dict:
     """Order payload for buyer/seller clients.
 
     Shipment and payout state are embedded rather than exposed as separate endpoints, so an
@@ -317,7 +372,10 @@ def order_to_dict(db: Session, order: Order) -> dict:
     from src.shared.models.payout import Payout
     from src.shared.models.shipment import Shipment
 
-    items = list_items(db, order.id)
+    if items is None:
+        items = list_items(db, order.id)
+    if pieces is None:
+        pieces = piece_summaries(db, [i.piece_id for i in items])
     shipment = db.execute(
         select(Shipment).where(Shipment.order_id == order.id)
     ).scalar_one_or_none()
@@ -339,8 +397,19 @@ def order_to_dict(db: Session, order: Order) -> dict:
         "received": order.received,
         "receivedAt": order.received_at.isoformat() if order.received_at else None,
         "items": [
-            {"pieceId": str(i.piece_id), "priceCents": i.price_cents, "quantity": i.quantity} for i in items
+            {
+                "pieceId": str(i.piece_id),
+                "priceCents": i.price_cents,
+                "quantity": i.quantity,
+                # B34: the piece, so a Sales or Purchases row can show it without a fetch.
+                # Null if the piece no longer exists.
+                "piece": pieces.get(i.piece_id),
+            }
+            for i in items
         ],
+        # True for an auction win (the hammer price was collected before checkout), so a
+        # row can say AUCTION rather than SOLD (B34).
+        "fromAuction": (order.prepaid_cents or 0) > 0,
         "shipment": {
             "courier": shipment.courier,
             "trackingNumber": shipment.tracking_number,

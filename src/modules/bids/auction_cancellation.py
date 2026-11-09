@@ -17,7 +17,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.shared.models.bid import Bid
-from src.shared.models.auction import AUCTION_CANCELLED, AUCTION_CLOSING, AUCTION_LIVE, Auction
+from src.shared.models.auction import (
+    AUCTION_CANCELLED,
+    AUCTION_CLOSING,
+    AUCTION_DRAFT,
+    AUCTION_LIVE,
+    Auction,
+)
 from src.shared.models.piece import Piece
 from src.shared.utils.app_error import AppError
 from src.shared.utils.logger import get_logger
@@ -85,6 +91,47 @@ def cancel_auction(
         _record(db, auction, locked, bids, reason, actor_id)
         notify_cancelled_bidders(db, locked, bids, reason)
     return bids
+
+
+def cancel_draft_auction(
+    db: Session,
+    piece: Piece,
+    auction_id: uuid.UUID,
+    reason: str,
+    *,
+    actor_id: Optional[uuid.UUID] = None,
+    target_status: str = piece_state.DELISTED,
+) -> Auction:
+    """Cancel an auction that has not opened yet (a draft, or one scheduled for later).
+
+    Kept apart from cancel_auction, whose callers (deactivation, event tagging, event
+    cancellation) deliberately touch only running auctions. A draft has no bids and no holds,
+    so there is no money to release; it only has to stop existing. The seller's Cancel used
+    to find a draft, hand it to cancel_auction — which looks for live ones only — and answer
+    200 with the auction still in place.
+    """
+    locked_piece = db.execute(
+        select(Piece).where(Piece.id == piece.id).with_for_update()
+    ).scalar_one_or_none()
+    auction = db.execute(
+        select(Auction).where(Auction.id == auction_id).with_for_update()
+    ).scalar_one_or_none()
+    if locked_piece is None or auction is None:
+        raise AppError("Auction not found.", 404)
+    if auction.status != AUCTION_DRAFT:
+        raise AppError("This auction has already opened.", 409)
+
+    auction.status = AUCTION_CANCELLED
+    auction.cancelled_reason = reason[:64]
+    auction.closed_at = datetime.now(timezone.utc)
+    if locked_piece.status == piece_state.LIVE:
+        piece_state.transition_piece(
+            db, locked_piece, target_status, allowed_from={piece_state.LIVE},
+            reason=reason, commit=False,
+        )
+    db.commit()
+    _record(db, auction, locked_piece, [], reason, actor_id)
+    return auction
 
 
 def _record(db, auction, piece, bids, reason: str, actor_id) -> None:

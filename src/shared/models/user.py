@@ -47,6 +47,9 @@ class User(Base):
     # Reduced commission for a specific artist, in basis points. Null = the standard
     # platform rate; set only for the client's named lower-rate tier.
     commission_bps_override = Column(Integer, nullable=True)
+    # When the override stops applying (the founding-artist tier lasts 12 months, B3).
+    # Null = no end date.
+    commission_override_until = Column(DateTime(timezone=True), nullable=True)
     onboarding_complete = Column(Boolean, default=False, nullable=False)
     taste_preferences = Column(JSONB, nullable=True)  # {mediums, styles, themes}
     last_username_change_at = Column(DateTime(timezone=True), nullable=True)

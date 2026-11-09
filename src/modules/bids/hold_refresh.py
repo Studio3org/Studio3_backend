@@ -20,7 +20,7 @@ unrecoverable — their place in the ordering cannot be given back.
 from datetime import datetime, timedelta, timezone
 
 from src.shared.config.database import SessionLocal
-from src.shared.models.auction import HOLD_EXPIRED, Hold
+from src.shared.models.auction import HOLD_EXPIRED, Auction, Hold
 from src.shared.models.bid import Bid
 from src.shared.models.user import User
 from src.shared.utils.logger import get_logger
@@ -93,13 +93,17 @@ def _refresh_one(db, hold_id) -> None:
 
 def _notify_expired(db, hold: Hold, bidder: User) -> None:
     bid = db.get(Bid, hold.bid_id)
+    # The piece is what a tap should open — the bidder has to get back to that auction to add
+    # a card. This used to go out with no target, so the notification opened nothing.
+    auction = db.get(Auction, bid.auction_id) if bid else None
+    piece_id = auction.piece_id if auction else None
     try:
         notifications_dao.create_and_push(
             db,
             user_id=bidder.id,
             type="bid_hold_expired",
             target_type="piece",
-            target_id=None,
+            target_id=piece_id,
             payload={"amountCents": hold.amount_cents, "bidId": str(bid.id) if bid else None},
             title="Update your card to stay in this auction",
             body="We couldn't renew the hold on your card. Your bid still stands, but you'll "

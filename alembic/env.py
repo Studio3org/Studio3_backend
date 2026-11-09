@@ -3,13 +3,17 @@ import os
 from pathlib import Path
 
 # Load .env so DATABASE_URL is set when running: alembic upgrade head
+#
+# The environment wins over the files (override=False), as in run.py. With override=True a
+# DATABASE_URL set in the shell was silently replaced by .env.development's, so a migration
+# meant for a local database ran against the shared development one instead.
 from dotenv import load_dotenv
 _base = Path(__file__).resolve().parent.parent
-load_dotenv(_base / ".env")
+load_dotenv(_base / ".env", override=False)
 _env = os.getenv("FLASK_ENV", "development")
 _env_file = _base / f".env.{_env}"
 if _env_file.exists():
-    load_dotenv(_env_file, override=True)
+    load_dotenv(_env_file, override=False)
 
 from logging.config import fileConfig
 

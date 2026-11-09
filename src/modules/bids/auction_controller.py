@@ -13,6 +13,7 @@ from flask import g, request
 from src.shared.config.database import SessionLocal
 from src.shared.models.auction import (
     AUCTION_AWAITING_PAYMENT,
+    AUCTION_DRAFT,
     AUCTION_CLOSED_NO_BIDS,
     AUCTION_CLOSED_RESERVE_NOT_MET,
     AUCTION_NEEDS_SELLER_ACTION,
@@ -101,6 +102,22 @@ def cancel(piece_id: str):
         auction = auction_dao.get_running_auction(db, piece.id)
         if auction is None:
             raise AppError("This piece has no auction running.", 409)
+
+        if auction.status == AUCTION_DRAFT:
+            # Not open yet: nothing to refund, only the auction itself to call off.
+            auction_cancellation.cancel_draft_auction(
+                db, piece, auction.id,
+                auction_cancellation.REASON_SELLER_CANCELLED,
+                actor_id=seller_id,
+                target_status=piece_state.DELISTED,
+            )
+            db.refresh(piece)
+            return {
+                "pieceId": str(piece.id),
+                "auctionId": str(auction.id),
+                "cancelledBids": 0,
+                "status": piece.status,
+            }, 200
 
         bids = auction_cancellation.cancel_auction(
             db, piece,

@@ -13,6 +13,7 @@ Two things this module exists to keep straight:
   tomorrow would silently restate what every past artist is owed.
 """
 import os
+from datetime import datetime, timezone
 
 from src.shared.utils.logger import get_logger
 
@@ -82,10 +83,21 @@ def resolve_bps(seller, sale_kind: str = SALE_ART) -> int:
     expressed: it is a property of the relationship, not of the listing, so it lives on the
     user rather than being re-entered per piece.
     """
-    override = getattr(seller, "commission_bps_override", None) if seller is not None else None
-    if override is not None and sale_kind == SALE_ART:
-        return max(0, min(int(override), 10000))
+    if sale_kind == SALE_ART and override_active(seller):
+        return max(0, min(int(seller.commission_bps_override), 10000))
     return default_bps(sale_kind)
+
+
+def override_active(seller, now: datetime | None = None) -> bool:
+    """Whether this seller's own art rate applies right now.
+
+    The founding-artist tier is time-limited (B3): past `commission_override_until` the
+    seller is back on the standard rate. No end date means it never lapses.
+    """
+    if seller is None or getattr(seller, "commission_bps_override", None) is None:
+        return False
+    until = getattr(seller, "commission_override_until", None)
+    return until is None or (now or datetime.now(timezone.utc)) < until
 
 
 def commission_cents(amount_cents: int, bps: int) -> int:

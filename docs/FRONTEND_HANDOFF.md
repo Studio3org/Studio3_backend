@@ -10,6 +10,7 @@ Responses keep the usual envelope `{success, message, data}`. Errors are `{succe
 |---|---|---|
 | 1. Security | Done on branch `phase2` | Small: error messages on sign-in and code screens |
 | 2. Refunds and cancellation | Done on branch `phase2` | Order detail: cancel buttons, artist cancel confirmation, buyer "Report an issue" |
+| 2A. Quick fixes | Done on branch `phase2` | Use the piece on order rows; logout-all message; founding-rate end date |
 | 3. Ticketing core | Not started | — |
 | 4. Ticket refunds, waitlist, check-in | Not started | — |
 | 5. Event invites and approvals | Not started | — |
@@ -101,3 +102,54 @@ Inbox type `order`, `targetType: "order"`, `targetId` = the order ID. A tap shou
 - **Late payments:** a payment that completes after its order was cancelled is now refunded automatically. Before, the buyer was charged for nothing.
 - **Shipped orders:** refunding a `shipped` or `awaiting_confirmation` order (for example, lost in transit) now works end to end. Before, Stripe refunded the buyer but the order stayed "shipped".
 - **Ledger fix (BE-1):** refunds now record that Stripe keeps its fee. Earlier refunds are corrected with `scripts/fix_be1_refund_ledger.py` (dry run first).
+
+---
+
+## Phase 2A: Quick fixes
+
+### 2A.1 Order rows carry their piece (B34)
+
+`GET /api/user/me/orders`, `GET /api/user/me/sales` and `GET /api/orders/:id`: each entry in `items` now has a `piece` object. Each order also has `fromAuction`.
+
+```json
+{
+  "items": [{
+    "pieceId": "…", "priceCents": 50000, "quantity": 1,
+    "piece": {"id": "…", "title": "Paper Planes III", "mediaUrl": "https://…", "listingType": "fixed"}
+  }],
+  "fromAuction": false
+}
+```
+
+- `piece.mediaUrl` is always a picture. For a piece with a video cover it's the piece's first photo, the same rule the notifications use. It's `null` if the piece has no photo.
+- `piece` is `null` if the piece no longer exists.
+- `fromAuction` is `true` for an auction win, so the row can say AUCTION instead of SOLD.
+
+**App changes:**
+- [ ] Sales and Purchases rows: take the title and picture from `items[0].piece`, and stop fetching each piece.
+- [ ] Show AUCTION when `fromAuction` is true.
+
+### 2A.2 Log out of all devices keeps this phone (B34)
+
+`POST /api/auth/logout-all` now signs out every **other** device and keeps the one that asked.
+- The response no longer clears this device's refresh cookie.
+- The message is "Logged out of all other devices."
+
+**App changes:**
+- [ ] After the call succeeds, stay signed in and show the message. Don't send the user to the login screen.
+
+### 2A.3 Founding-artist rate end date (B3)
+
+`GET /api/user/me/commission-quote` adds `reducedRateUntil`: an ISO date-time when the reduced rate ends, or `null` when it has no end date or there's no reduced rate.
+- After that date, `reducedRate` is `false` and the standard rate applies.
+- Orders and auctions keep the rate they were sold at.
+
+**App changes:**
+- [ ] Optional: when `reducedRateUntil` is set, add "until <Month Year>" to the "15% founding artist commission" line.
+
+### 2A.4 Auction fixes (no app change needed)
+
+- **"Update your card" notification:** `bid_hold_expired` now has `targetType: "piece"` and `targetId` set to the piece, so a tap opens the auction. Before, it opened nothing.
+- **Bidding again after a card hold expired:** this no longer leaves two active bids. The earlier one becomes `outbid`.
+- **Cancelling an auction that hasn't opened** (draft or scheduled) with `POST /api/pieces/:id/auction/cancel` now actually cancels it. Before, it answered 200 and left it in place.
+- **`docs/API.md`** now lists every status relist accepts: `needs_seller_action`, `closed_no_bids` and `closed_reserve_not_met`.

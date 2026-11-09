@@ -4,6 +4,7 @@ Milestone 1 covers the order list/detail the ops queue is built on; dispute reso
 payout retry queries land with Milestone 5.
 """
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import select, func
@@ -108,6 +109,32 @@ def list_failed_payouts(db: Session) -> list[dict]:
         .order_by(Payout.updated_at.desc())
     ).all()
     return [{"payout": p, "order": o, "seller": u} for p, o, u in rows]
+
+
+# A refund still `pending` this long after it started is stuck, not in flight: the service
+# records it, calls Stripe and settles it within one request.
+STUCK_REFUND_AFTER = timedelta(minutes=15)
+
+
+def list_failed_refunds(db: Session) -> list[dict]:
+    """Refunds that did not go through at Stripe (or never finished), newest first.
+
+    While one sits here the order's payout stays blocked, so the artist is not paid out of
+    money the buyer may be getting back. An admin retries it from this list.
+    """
+    from src.shared.models.refund import REFUND_FAILED, REFUND_PENDING, Refund
+
+    stuck_before = datetime.now(timezone.utc) - STUCK_REFUND_AFTER
+    rows = db.execute(
+        select(Refund, Order)
+        .outerjoin(Order, Order.id == Refund.order_id)
+        .where(
+            (Refund.status == REFUND_FAILED)
+            | ((Refund.status == REFUND_PENDING) & (Refund.updated_at < stuck_before))
+        )
+        .order_by(Refund.updated_at.desc())
+    ).all()
+    return [{"refund": r, "order": o} for r, o in rows]
 
 
 def count_failed_payouts(db: Session) -> int:

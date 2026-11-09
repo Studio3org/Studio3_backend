@@ -243,6 +243,20 @@ def place_bid(
             previous_bid.status = BID_OUTBID
         holds_service.release_hold(db, previous_hold, "raised_own_bid", commit=False)
 
+    # A bidder has one standing bid per auction. The lookup above only finds a bid whose hold
+    # is still live, so a bidder re-bidding after their hold expired (the "update your card"
+    # case) used to keep the old bid active too — two active bids, one with nothing behind it.
+    # Its hold has already lapsed, so there is nothing to release at Stripe.
+    for stale in db.execute(
+        select(Bid).where(
+            Bid.auction_id == auction.id,
+            Bid.bidder_id == bidder.id,
+            Bid.status == BID_ACTIVE,
+            Bid.id != bid.id,
+        )
+    ).scalars():
+        stale.status = BID_OUTBID
+
     # A bid in the closing minutes pushes the end out, so nobody wins by sniping.
     auction_dao.apply_soft_close(db, auction, now)
 

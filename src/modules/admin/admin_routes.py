@@ -72,6 +72,12 @@ def resolve_dispute(order_id):
     return admin_controller.resolve_dispute(order_id)
 
 
+@admin_bp.post("/orders/<order_id>/retry-refund")
+@admin_session_required
+def retry_refund(order_id):
+    return admin_controller.retry_refund(order_id)
+
+
 @admin_bp.post("/orders/<order_id>/retry-payout")
 @admin_session_required
 def retry_payout(order_id):

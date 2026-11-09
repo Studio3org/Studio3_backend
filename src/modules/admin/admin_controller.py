@@ -155,6 +155,7 @@ def disputes_queue():
             admin=g.admin,
             rows=admin_dao.list_disputes(db, status=status),
             failed_payouts=admin_dao.list_failed_payouts(db),
+            failed_refunds=admin_dao.list_failed_refunds(db),
             open_count=admin_dao.count_open_disputes(db),
             failed_count=admin_dao.count_failed_payouts(db),
             active_status=status,
@@ -461,6 +462,41 @@ def retry_payout(order_id: str):
         )
         return order_detail(order_id, notice="Payout released.")
     return order_detail(order_id, error=result.get("reason") or "Payout could not be released.")
+
+
+def retry_refund(order_id: str):
+    """Run a refund that failed at Stripe again, through the same path as any admin refund.
+
+    Safe to press more than once: each payment can only be refunded once, and a payment
+    Stripe already refunded counts as done (refunds_service). The payout stays blocked until
+    the refund goes through."""
+    from sqlalchemy import select
+
+    from src.shared.models.refund import LEG_LATE, REFUND_SUCCEEDED, Refund
+
+    oid = _parse_uuid(order_id)
+    if not oid:
+        return redirect(url_for("admin.disputes_queue"))
+    db = SessionLocal()
+    try:
+        pending = db.execute(
+            select(Refund).where(
+                Refund.order_id == oid, Refund.leg != LEG_LATE, Refund.status != REFUND_SUCCEEDED
+            )
+        ).scalars().first()
+        reason = (pending.reason if pending else None) or "Retried after a failed refund."
+    finally:
+        db.close()
+    try:
+        result = disputes_service.refund_order(oid, g.admin.id, reason)
+    except AppError as e:
+        return order_detail(order_id, error=e.message)
+    _audit(
+        audit.AUDIT_REFUND_ISSUED,
+        subject_id=oid,
+        detail={"amountCents": result.get("amountCents"), "retried": True},
+    )
+    return order_detail(order_id, notice="Refund went through. The payout stays cancelled.")
 
 
 def _audit(action: str, *, subject_id, subject_type: str = "order",

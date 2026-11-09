@@ -721,8 +721,8 @@ hold is released — nothing is charged to anyone.
 | Method | URL | Body | Notes |
 |--------|-----|------|-------|
 | POST | `/api/pieces/:id/auction/extend` | `{ "extraDays": 1-3 }` | Once per auction, and only more than 3 days before it closes, so extending cannot be used to control exactly when an auction ends. Never shortens. Not available on event auctions. Bids and holds survive. |
-| POST | `/api/pieces/:id/auction/cancel` | — | Withdraws a live auction. Every bid is voided, every hold released, every bidder notified. The piece is delisted. |
-| POST | `/api/pieces/:id/auction/relist` | `{ "durationDays", "startingBidCents"?, "reserveCents"? }` | Only from `needs_seller_action` (reserve not met, or nobody could pay). Creates a **new** auction row; the old one stays as the record of what happened. Omitted fields inherit the previous auction's terms. |
+| POST | `/api/pieces/:id/auction/cancel` | — | Withdraws an auction. A live one: every bid is voided, every hold released, every bidder notified. One not yet open (draft or scheduled): it is cancelled, with no bids to void. Either way the piece is delisted. |
+| POST | `/api/pieces/:id/auction/relist` | `{ "durationDays", "startingBidCents"?, "reserveCents"? }` | From an auction that ended without a sale: `needs_seller_action` (reserve not met, or nobody could pay), `closed_no_bids` or `closed_reserve_not_met` (`RELISTABLE_AUCTION_STATUSES` in `auction_controller.py`). Creates a **new** auction row; the old one stays as the record of what happened. Omitted fields inherit the previous auction's terms. |
 
 All three are owner-only and answer `404` — not `403` — for a piece you do not own.
 

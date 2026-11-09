@@ -39,6 +39,15 @@ def revoke_by_id(db: Session, token_id: uuid.UUID) -> None:
     db.commit()
 
 
-def revoke_all_for_user(db: Session, user_id: uuid.UUID) -> None:
-    db.execute(update(RefreshToken).where(RefreshToken.user_id == user_id).values(is_revoked=True))
+def revoke_all_for_user(
+    db: Session, user_id: uuid.UUID, keep_session_id: Optional[str] = None
+) -> None:
+    """Revoke every refresh token of this user, except the one belonging to `keep_session_id`
+    when given (the device that asked to log out everywhere else)."""
+    stmt = update(RefreshToken).where(RefreshToken.user_id == user_id)
+    if keep_session_id:
+        stmt = stmt.where(
+            (RefreshToken.session_id.is_(None)) | (RefreshToken.session_id != keep_session_id)
+        )
+    db.execute(stmt.values(is_revoked=True))
     db.commit()

@@ -445,13 +445,16 @@ def logout_all():
         uid = uuid.UUID(user_id)
     except ValueError:
         raise AppError(UNAUTHORIZED, 401)
+    # Everything but this device (B34): the person asking stays signed in here, and every
+    # other phone, tablet and browser is signed out. Its refresh cookie is left alone.
+    current = g.user.get("sessionId")
     db = SessionLocal()
     try:
-        revoke_all_for_user(db, uid)
+        revoke_all_for_user(db, uid, keep_session_id=current)
     finally:
         db.close()
-    delete_all_sessions_for_user(user_id)
-    return {"message": LOGOUT_ALL_SUCCESS}, 200, {"clear_refresh_cookie": refresh_cookie_flags()}
+    delete_all_sessions_for_user(user_id, keep_session_id=current)
+    return {"message": LOGOUT_ALL_SUCCESS}, 200, None
 
 
 def forget_password():

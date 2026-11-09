@@ -40,11 +40,17 @@ def delete_session(session_id: str) -> None:
     r.delete(f"session:{session_id}")
 
 
-def delete_all_sessions_for_user(user_id: str) -> None:
-    """Scan keys session:* and remove those whose value contains this user_id. O(n) over keys."""
+def delete_all_sessions_for_user(user_id: str, keep_session_id: str | None = None) -> None:
+    """Scan keys session:* and remove those whose value contains this user_id. O(n) over keys.
+
+    `keep_session_id` spares one session: "log out of all devices" keeps the device asking
+    (B34). Password resets and account deletion pass nothing and sign everything out."""
     r = get_redis_client()
     pattern = "session:*"
+    keep_key = f"session:{keep_session_id}" if keep_session_id else None
     for key in r.scan_iter(match=pattern):
+        if keep_key and (key.decode() if isinstance(key, bytes) else key) == keep_key:
+            continue
         try:
             raw = r.get(key)
             if raw:

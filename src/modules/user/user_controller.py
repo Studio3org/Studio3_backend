@@ -424,6 +424,13 @@ def commission_quote():
             # True when this seller's own rate is below the standard one (the founding-artist
             # tier), so the listing form can name it without knowing the standard rate.
             "reducedRate": bps < commission_policy.default_bps(sale_kind),
+            # When that reduced rate ends (the founding-artist tier lasts 12 months, B3), or
+            # null when it has no end date or there is no reduced rate.
+            "reducedRateUntil": (
+                user.commission_override_until.isoformat()
+                if bps < commission_policy.default_bps(sale_kind) and user.commission_override_until
+                else None
+            ),
             # False means this sale is too small for the commission to cover processing.
             # Surfaced so a host pricing a cheap ticket finds out now, not at reconciliation.
             "coversProcessingFee": commission_policy.covers_stripe_fee(price_cents, bps),

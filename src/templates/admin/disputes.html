@@ -1,6 +1,74 @@
 {% extends "admin/layout.html" %}
-{% block title %}Disputes{% endblock %}
-{% block nav_disputes %}active{% endblock %}
+{% block title %}Disputes
+<div class="panel table-scroll">
+  <h2 style="font-size:15px;margin-top:0;">Refunds that didn't go through ({{ failed_refunds|length }})</h2>
+  <p class="muted" style="margin-top:0;">
+    The buyer may not have their money back, and the artist's payout is on hold until it does.
+    A late payment (money that arrived after its order was cancelled) is retried by Stripe itself.
+  </p>
+  <table>
+    <thead><tr><th>Order</th><th>Payment</th><th>Amount</th><th>Started by</th><th>Error</th><th></th></tr></thead>
+    <tbody>
+      {% for row in failed_refunds %}
+      <tr>
+        <td class="mono">
+          {% if row.order %}<a href="{{ url_for('admin.order_detail', order_id=row.order.id) }}">{{ row.order.id.hex[:8] }}</a>{% else %}—{% endif %}
+        </td>
+        <td class="mono muted">{{ row.refund.leg }} · {{ row.refund.payment_intent_id[-10:] }}</td>
+        <td>${{ '%.2f'|format(row.refund.amount_cents / 100) }}</td>
+        <td class="muted">{{ row.refund.initiated_by_role }}</td>
+        <td style="color:var(--danger);">{{ (row.refund.failure_reason or row.refund.status)[:160] }}</td>
+        <td>
+          {% if row.order and row.refund.leg != 'late' %}
+          <form method="post" action="{{ url_for('admin.retry_refund', order_id=row.order.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit">Retry refund</button>
+          </form>
+          {% else %}<span class="muted">Stripe retries</span>{% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="muted">No failed refunds.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+{% block nav_disputes %}active
+<div class="panel table-scroll">
+  <h2 style="font-size:15px;margin-top:0;">Refunds that didn't go through ({{ failed_refunds|length }})</h2>
+  <p class="muted" style="margin-top:0;">
+    The buyer may not have their money back, and the artist's payout is on hold until it does.
+    A late payment (money that arrived after its order was cancelled) is retried by Stripe itself.
+  </p>
+  <table>
+    <thead><tr><th>Order</th><th>Payment</th><th>Amount</th><th>Started by</th><th>Error</th><th></th></tr></thead>
+    <tbody>
+      {% for row in failed_refunds %}
+      <tr>
+        <td class="mono">
+          {% if row.order %}<a href="{{ url_for('admin.order_detail', order_id=row.order.id) }}">{{ row.order.id.hex[:8] }}</a>{% else %}—{% endif %}
+        </td>
+        <td class="mono muted">{{ row.refund.leg }} · {{ row.refund.payment_intent_id[-10:] }}</td>
+        <td>${{ '%.2f'|format(row.refund.amount_cents / 100) }}</td>
+        <td class="muted">{{ row.refund.initiated_by_role }}</td>
+        <td style="color:var(--danger);">{{ (row.refund.failure_reason or row.refund.status)[:160] }}</td>
+        <td>
+          {% if row.order and row.refund.leg != 'late' %}
+          <form method="post" action="{{ url_for('admin.retry_refund', order_id=row.order.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit">Retry refund</button>
+          </form>
+          {% else %}<span class="muted">Stripe retries</span>{% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="muted">No failed refunds.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
 {% block content %}
 <h1>Needs attention</h1>
 
@@ -68,6 +136,40 @@
       </tr>
       {% else %}
       <tr><td colspan="4" class="muted">No failed payouts.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="panel table-scroll">
+  <h2 style="font-size:15px;margin-top:0;">Refunds that didn't go through ({{ failed_refunds|length }})</h2>
+  <p class="muted" style="margin-top:0;">
+    The buyer may not have their money back, and the artist's payout is on hold until it does.
+    A late payment (money that arrived after its order was cancelled) is retried by Stripe itself.
+  </p>
+  <table>
+    <thead><tr><th>Order</th><th>Payment</th><th>Amount</th><th>Started by</th><th>Error</th><th></th></tr></thead>
+    <tbody>
+      {% for row in failed_refunds %}
+      <tr>
+        <td class="mono">
+          {% if row.order %}<a href="{{ url_for('admin.order_detail', order_id=row.order.id) }}">{{ row.order.id.hex[:8] }}</a>{% else %}—{% endif %}
+        </td>
+        <td class="mono muted">{{ row.refund.leg }} · {{ row.refund.payment_intent_id[-10:] }}</td>
+        <td>${{ '%.2f'|format(row.refund.amount_cents / 100) }}</td>
+        <td class="muted">{{ row.refund.initiated_by_role }}</td>
+        <td style="color:var(--danger);">{{ (row.refund.failure_reason or row.refund.status)[:160] }}</td>
+        <td>
+          {% if row.order and row.refund.leg != 'late' %}
+          <form method="post" action="{{ url_for('admin.retry_refund', order_id=row.order.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit">Retry refund</button>
+          </form>
+          {% else %}<span class="muted">Stripe retries</span>{% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="muted">No failed refunds.</td></tr>
       {% endfor %}
     </tbody>
   </table>

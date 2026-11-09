@@ -451,7 +451,7 @@ def list_my_orders():
         orders = orders_dao.list_buyer_orders(db, user_id, limit=limit + 1, before=before)
         has_more = len(orders) > limit
         orders = orders[:limit]
-        items = [orders_dao.order_to_dict(db, o) for o in orders]
+        items = orders_dao.orders_to_dicts(db, orders)
         next_cursor = orders[-1].created_at.isoformat() if has_more and orders else None
         return {"items": items, "nextCursor": next_cursor}, 200
     finally:
@@ -468,7 +468,7 @@ def list_my_sales():
         orders = orders_dao.list_seller_orders(db, user_id, limit=limit + 1, before=before)
         has_more = len(orders) > limit
         orders = orders[:limit]
-        items = [orders_dao.order_to_dict(db, o) for o in orders]
+        items = orders_dao.orders_to_dicts(db, orders)
         next_cursor = orders[-1].created_at.isoformat() if has_more and orders else None
         return {"items": items, "nextCursor": next_cursor}, 200
     finally:
