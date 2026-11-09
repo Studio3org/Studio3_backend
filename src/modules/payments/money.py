@@ -23,8 +23,10 @@ from src.shared.models.ledger import (
     DEBIT,
     TXN_AUCTION_CAPTURED,
     TXN_AUCTION_REFUNDED,
+    TXN_LATE_PAYMENT_REFUNDED,
     TXN_ORDER_PAID,
     TXN_PAYOUT_RELEASED,
+    TXN_REFUND_FEE_CORRECTION,
     TXN_REFUND_ISSUED,
     TXN_SHIPPING_COST_RECORDED,
     TXN_TRANSFER_REVERSED,
@@ -128,11 +130,22 @@ def book_payout_released(db: Session, order: Order, amount_cents: int, commit: b
     )
 
 
-def book_refund_issued(db: Session, order: Order, stripe_fee_cents: int, commit: bool = True):
+def book_refund_issued(db: Session, order: Order, commit: bool = True):
     """Reverse of book_order_paid, with one deliberate asymmetry: **Stripe does not return
-    its processing fee on a refund**. The stripe_fees debit therefore stands, and the
-    platform ends up down by the fee. Crediting it back would make the books show money the
-    platform doesn't have.
+    its processing fee on a refund**.
+
+        debit  seller_payable      artwork - commission
+        debit  platform_revenue    commission + shipping
+        debit  tax_payable         tax
+        credit platform_clearing   total                 (every cent leaves the Stripe balance)
+
+    The stripe_fees debit booked when the payment arrived simply stands: that is the platform
+    being down by the fee, which is the truth. This used to credit stripe_fees with the fee and
+    clearing with total minus fee — as if Stripe had handed the fee back — leaving clearing a
+    fee higher than the real Stripe balance after every refund (BE-1).
+
+    An auction order's total includes the hammer price, which was refunded as its own leg;
+    it leaves the balance too, so clearing takes the full total either way.
     """
     bps = order_commission_bps(order)
     artist = artist_share_cents(order.artwork_cents, bps)
@@ -143,10 +156,7 @@ def book_refund_issued(db: Session, order: Order, stripe_fee_cents: int, commit:
         (get_platform_account(db, ACCOUNT_PLATFORM_REVENUE), DEBIT,
          commission + order.shipping_cents),
         (get_platform_account(db, ACCOUNT_TAX_PAYABLE), DEBIT, order.tax_cents),
-        (get_platform_account(db, ACCOUNT_PLATFORM_CLEARING), CREDIT,
-         order.total_cents - stripe_fee_cents),
-        # The fee the platform ate on a sale that ultimately refunded.
-        (get_platform_account(db, ACCOUNT_STRIPE_FEES), CREDIT, stripe_fee_cents),
+        (get_platform_account(db, ACCOUNT_PLATFORM_CLEARING), CREDIT, order.total_cents),
     ]
     return ledger_service.post_transaction(
         db,
@@ -261,5 +271,57 @@ def book_auction_refunded(db: Session, auction, hold, commit: bool = True):
         entries=entries,
         idempotency_key=f"auction_refunded:{hold.id}",
         description=f"Hammer price refunded for auction {auction.id}",
+        commit=commit,
+    )
+
+
+def book_late_payment_refunded(
+    db: Session, order: Order, intent_id: str, stripe_fee_cents: int, commit: bool = True
+):
+    """A payment that succeeded after its order was cancelled, refunded straight back.
+
+        debit  stripe_fees         fee
+        credit platform_clearing   fee
+
+    Nothing was booked when the money arrived — the order was already cancelled, so there was
+    no sale to book — and the refund sent every cent of it back. What is left is the fee
+    Stripe kept on the charge, which came out of the balance; that is the whole of it.
+    Keyed on the payment, so a webhook retried by Stripe cannot book it twice.
+    """
+    if stripe_fee_cents <= 0:
+        return None
+    currency = platform_currency().upper()
+    entries = [
+        (get_platform_account(db, ACCOUNT_STRIPE_FEES, currency), DEBIT, stripe_fee_cents),
+        (get_platform_account(db, ACCOUNT_PLATFORM_CLEARING, currency), CREDIT, stripe_fee_cents),
+    ]
+    return ledger_service.post_transaction(
+        db,
+        txn_type=TXN_LATE_PAYMENT_REFUNDED,
+        entries=entries,
+        idempotency_key=f"late_payment_refunded:{intent_id}",
+        order_id=order.id,
+        description=f"Late payment {intent_id} refunded for cancelled order {order.id}",
+        commit=commit,
+    )
+
+
+def book_refund_fee_correction(db: Session, order_id, fee_cents: int, commit: bool = True):
+    """Undo the fee credit a pre-BE-1 refund booked (scripts/fix_be1_refund_ledger.py).
+
+        debit  stripe_fees         fee   (the fee was never returned; it is an expense again)
+        credit platform_clearing   fee   (and it never came back into the Stripe balance)
+    """
+    entries = [
+        (get_platform_account(db, ACCOUNT_STRIPE_FEES), DEBIT, fee_cents),
+        (get_platform_account(db, ACCOUNT_PLATFORM_CLEARING), CREDIT, fee_cents),
+    ]
+    return ledger_service.post_transaction(
+        db,
+        txn_type=TXN_REFUND_FEE_CORRECTION,
+        entries=entries,
+        idempotency_key=f"be1_fix:{order_id}",
+        order_id=order_id,
+        description=f"Correct refund fee booked as returned for order {order_id} (BE-1)",
         commit=commit,
     )

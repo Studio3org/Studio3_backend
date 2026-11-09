@@ -1,6 +1,7 @@
 """Redis OTP: lock (30s), resend limit (3 per 1 min), store/verify OTP (5 min TTL)."""
 import functools
-import random
+import hmac
+import secrets
 import string
 
 from redis.exceptions import RedisError
@@ -15,6 +16,10 @@ RESEND_MAX = 3
 # Wrong guesses a login or reset code survives (BACKEND_CHANGES B30): those codes sign someone
 # in or change their password, so they are not left open to a million tries.
 MAX_ATTEMPTS = 5
+# Wrong guesses one address takes across all its codes in an hour (SEC-3). Generous for a
+# person mistyping; at 30 an hour a 6-digit code takes years to guess.
+FAILS_PER_HOUR = 30
+FAILS_WINDOW = 60 * 60
 
 OTP_SERVICE_UNAVAILABLE = "OTP service is temporarily unavailable. Please try again in a moment."
 
@@ -69,55 +74,67 @@ def store_otp(email: str, otp: str) -> None:
     r.setex(_key_otp(email), OTP_TTL, otp)
 
 
-@_guard_redis
-def verify_otp(email: str, otp: str) -> bool:
-    """Verify and delete OTP key if match — the real, single-use consumption
-    used by register()/confirm_email_change()."""
-    r = get_redis_client()
-    key = _key_otp(email)
-    stored = r.get(key)
-    if stored is None or stored != otp:
+def _matches(stored, otp: str) -> bool:
+    if stored is None or not otp:
         return False
-    r.delete(key)
-    return True
+    if isinstance(stored, bytes):
+        stored = stored.decode()
+    return hmac.compare_digest(str(stored), otp)
 
 
-@_guard_redis
-def verify_otp_limited(email: str, otp: str, max_attempts: int = MAX_ATTEMPTS) -> bool:
-    """Single use, like verify_otp, and the code is thrown away after `max_attempts` wrong
-    guesses (a new one has to be asked for). Used for login and reset codes."""
+def _check(email: str, otp: str, *, consume: bool, max_attempts: int) -> bool:
+    """Every code check goes through here, so every one of them is guess-limited.
+
+    Two limits: a code dies after `max_attempts` wrong guesses, and one address takes at most
+    FAILS_PER_HOUR wrong guesses in total — without the second, asking for a fresh code (three
+    a minute) would buy five more guesses each time."""
     r = get_redis_client()
     key = _key_otp(email)
     attempts_key = f"otp:attempts:{email}"
+    fails_key = f"otp:fails:{email}"
+    if int(r.get(fails_key) or 0) >= FAILS_PER_HOUR:
+        return False
     stored = r.get(key)
     if stored is None:
         return False
-    if stored != otp:
+    if not _matches(stored, otp):
+        fails = r.incr(fails_key)
+        if fails == 1:
+            r.expire(fails_key, FAILS_WINDOW)
         count = r.incr(attempts_key)
         if count == 1:
             r.expire(attempts_key, OTP_TTL)
         if count >= max_attempts:
             r.delete(key, attempts_key)
         return False
-    r.delete(key, attempts_key)
+    if consume:
+        r.delete(key, attempts_key)
+    else:
+        # Sign-up's check-only step: the remaining steps (username, phone, password) should
+        # not race the original five minutes.
+        r.expire(key, OTP_TTL)
     return True
 
 
 @_guard_redis
-def peek_otp(email: str, otp: str) -> bool:
-    """Check the OTP matches without deleting it, and refresh its TTL on
-    success so the remaining sign-up steps (username/phone/password) aren't
-    racing the original 5-minute window. Used by the dedicated /otp/verify
-    step; the real, single-use check still happens in verify_otp() at
-    registration time."""
-    r = get_redis_client()
-    key = _key_otp(email)
-    stored = r.get(key)
-    if stored is None or stored != otp:
-        return False
-    r.expire(key, OTP_TTL)
-    return True
+def verify_otp(email: str, otp: str, max_attempts: int = MAX_ATTEMPTS) -> bool:
+    """Single-use check: deleted on a match, thrown away after `max_attempts` wrong guesses.
+    Used by register() and confirm_email_change()."""
+    return _check(email, otp, consume=True, max_attempts=max_attempts)
+
+
+@_guard_redis
+def verify_otp_limited(email: str, otp: str, max_attempts: int = MAX_ATTEMPTS) -> bool:
+    """Login and reset codes. Same as verify_otp; kept as its own name for those callers."""
+    return _check(email, otp, consume=True, max_attempts=max_attempts)
+
+
+@_guard_redis
+def peek_otp(email: str, otp: str, max_attempts: int = MAX_ATTEMPTS) -> bool:
+    """Check the code without spending it (sign-up's /otp/verify step); register() spends it.
+    Wrong guesses count against the code exactly as they do for verify_otp."""
+    return _check(email, otp, consume=False, max_attempts=max_attempts)
 
 
 def generate_otp(length: int = 6) -> str:
-    return "".join(random.choices(string.digits, k=length))
+    return "".join(secrets.choice(string.digits) for _ in range(length))

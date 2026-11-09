@@ -9,24 +9,21 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from src.shared.config.database import SessionLocal
-from src.shared.config.stripe_client import get_stripe, stripe_configured
 from src.shared.models.dispute import (
-    DISPUTE_RESOLVED_REFUND,
     DISPUTE_RESOLVED_RELEASE,
     Dispute,
 )
-from src.shared.models.payout import PAYOUT_BLOCKED, PAYOUT_RELEASED, Payout
 from src.shared.utils.app_error import AppError
 from src.shared.utils.logger import get_logger
 from src.modules.orders import orders_dao
-from src.modules.payments import money, payouts_service
+from src.modules.payments import payouts_service, refunds_service
+from src.shared.models.refund import ROLE_ADMIN
 from src.modules.notifications import notifications_dao
 
 logger = get_logger(__name__)
 
-# A refund can only happen while the platform still holds the money. Once a payout is
-# released the funds are in the artist's Stripe account and this path can't claw them back.
-REFUNDABLE_ORDER_STATUSES = ("paid", "shipped", "awaiting_confirmation", "disputed")
+# Kept for callers that list what an admin can refund; the rule itself is refunds_service's.
+REFUNDABLE_ORDER_STATUSES = refunds_service.REFUNDABLE_ORDER_STATUSES
 
 
 def _load(db, order_id: uuid.UUID):
@@ -40,107 +37,17 @@ def _load(db, order_id: uuid.UUID):
 def refund_order(order_id: uuid.UUID, admin_id: uuid.UUID, reason: str) -> dict:
     """Refund the collector in full and reverse the order's ledger entries.
 
-    Phase 1 is full refunds only — partial refunds would need the ledger reversal to be
-    apportioned across commission, shipping and tax, which is a product decision that
-    hasn't been made.
+    The money movement itself lives in refunds_service, shared with the artist cancelling a
+    paid order, so the two can't disagree on how a refund works. It holds the artist's payout
+    before calling Stripe, which closes the race where a refund and a "confirm received"
+    payout could both go out (PAY-4).
+
+    Full refunds only — partial refunds would need the ledger reversal apportioned across
+    commission, shipping and tax, which is a product decision that hasn't been made.
     """
-    db = SessionLocal()
-    try:
-        order, dispute = _load(db, order_id)
-
-        payout = db.execute(select(Payout).where(Payout.order_id == order_id)).scalar_one_or_none()
-        if payout and payout.status == PAYOUT_RELEASED:
-            raise AppError(
-                "The artist has already been paid for this order; a refund here would leave "
-                "the platform out of pocket. Recover the transfer in Stripe first.",
-                409,
-            )
-        if order.status == "refunded":
-            return {"status": "already_refunded"}
-        if order.status not in REFUNDABLE_ORDER_STATUSES:
-            raise AppError(f"Can't refund an order in status '{order.status}'.", 409)
-
-        charge_id = order.stripe_charge_id
-        total = order.total_cents
-        # An auction order was paid in two goes: the hammer price captured from the winner's
-        # hold when the auction closed, and the shipping-and-tax balance at checkout.
-        # book_refund_issued reverses the FULL total, so refunding only the balance charge
-        # would have the ledger claim a refund that never happened and leave the buyer out
-        # of pocket by the whole hammer price.
-        prepaid_reference = order.prepaid_reference
-        prepaid_cents = order.prepaid_cents or 0
-        prepaid_fee = order.prepaid_fee_cents or 0
-    finally:
-        db.close()
-
-    # Stripe calls outside the transaction — same reasoning as payout release.
-    stripe_fee = 0
-    if stripe_configured():
-        stripe = get_stripe()
-        if charge_id:
-            try:
-                stripe.Refund.create(
-                    charge=charge_id,
-                    reason="requested_by_customer",
-                    metadata={"order_id": str(order_id), "admin_id": str(admin_id)},
-                    idempotency_key=f"refund:{order_id}",
-                )
-                # The original charge's fee, which Stripe keeps on a refund — the ledger
-                # reversal has to account for it rather than netting to zero.
-                charge = stripe.Charge.retrieve(charge_id, expand=["balance_transaction"])
-                bt = charge.get("balance_transaction")
-                stripe_fee = int(bt.get("fee", 0)) if isinstance(bt, dict) else 0
-            except Exception as e:
-                logger.exception("Refund failed for order %s: %s", order_id, e)
-                raise AppError(f"Stripe refund failed: {e}", 502)
-
-        if prepaid_cents and prepaid_reference and not prepaid_reference.startswith("dev_"):
-            # A separate idempotency key: this is a second, genuinely different refund, and
-            # reusing the balance charge's key would make Stripe hand back that refund's
-            # cached response and quietly skip this one.
-            try:
-                stripe.Refund.create(
-                    payment_intent=prepaid_reference,
-                    reason="requested_by_customer",
-                    metadata={"order_id": str(order_id), "admin_id": str(admin_id),
-                              "leg": "auction_hold"},
-                    idempotency_key=f"refund:{order_id}:prepaid",
-                )
-            except Exception as e:
-                logger.exception(
-                    "Hammer-price refund failed for order %s (intent %s): %s",
-                    order_id, prepaid_reference, e,
-                )
-                raise AppError(f"Stripe refund failed: {e}", 502)
-            # Stripe keeps this fee too, so both legs' fees are absorbed.
-            stripe_fee += prepaid_fee
-
-    db = SessionLocal()
-    try:
-        order, dispute = _load(db, order_id)
-        if order.status != "refunded":
-            orders_dao.transition_order(db, order, "refunded", commit=False)
-            orders_dao.release_pieces(db, order, commit=False)
-            money.book_refund_issued(db, order, stripe_fee_cents=stripe_fee, commit=False)
-        if dispute:
-            dispute.status = DISPUTE_RESOLVED_REFUND
-            dispute.resolved_by_admin_id = admin_id
-            dispute.resolution_note = reason
-            dispute.resolved_at = datetime.now(timezone.utc)
-        if payout_row := db.execute(
-            select(Payout).where(Payout.order_id == order_id)
-        ).scalar_one_or_none():
-            # BLOCKED, not TRANSFER_FAILED: nothing was attempted and nothing should be
-            # retried. TRANSFER_FAILED is in RELEASABLE_STATUSES, so labelling a deliberate
-            # cancellation that way puts refunded money back in reach of a release.
-            payout_row.status = PAYOUT_BLOCKED
-            payout_row.failure_reason = "Order refunded; payout cancelled."
-        db.commit()
-        _notify(db, order, refunded=True)
-        logger.info("Order %s refunded by admin %s: %s", order_id, admin_id, reason)
-        return {"status": "refunded", "amountCents": total}
-    finally:
-        db.close()
+    return refunds_service.refund_paid_order(
+        order_id, actor_id=admin_id, actor_role=ROLE_ADMIN, reason=reason
+    )
 
 
 def release_order(order_id: uuid.UUID, admin_id: uuid.UUID, reason: str) -> dict:

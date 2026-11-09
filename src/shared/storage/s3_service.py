@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-from flask import request
+from flask import current_app, request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -11,6 +11,7 @@ from src.shared.models.piece import Piece
 from src.shared.models.piece_media import PieceMedia
 from src.shared.models.post import Post
 from src.shared.models.user import User
+from src.shared.storage.local_storage import local_media_enabled, signed_upload_query
 from src.shared.storage.s3_client import get_public_base_url, get_s3_client, get_bucket, s3_configured
 from src.shared.storage.s3_paths import build_media_key, public_url
 from src.shared.utils.app_error import AppError
@@ -77,9 +78,17 @@ def presign_put(
                 "(S3_BUCKET is set but AWS credentials are missing).",
                 503,
             )
-        # Dev fallback — PUT the bytes to this same server's local media store.
+        if not local_media_enabled():
+            # Deployed environments refuse to boot without S3 (settings.py); this is the
+            # belt to that brace, so a misconfigured host never hands out a dead URL.
+            raise AppError("Media storage is not configured on the server.", 503)
+        # Dev fallback — PUT the bytes to this same server's local media store, through a
+        # URL signed for this one key, type and size, the way S3's presigned URL is.
+        ct = content_type.split(";")[0].strip().lower()
+        max_bytes = content_length or (VIDEO_MAX_BYTES if ct in ALLOWED_VIDEO else IMAGE_MAX_BYTES)
+        query = signed_upload_query(current_app.secret_key, key, ct, max_bytes)
         return {
-            "presignedPutUrl": url,
+            "presignedPutUrl": f"{url}?{query}",
             "url": url,
             "key": key,
             "devMode": True,

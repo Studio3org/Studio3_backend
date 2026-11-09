@@ -85,7 +85,7 @@ def test_a_refund_reverses_at_the_original_rate(db):
     order = _completed(db, seller, buyer, 200_00)
     assert seller_balance(db, seller.id) == 170_00
 
-    money.book_refund_issued(db, order, stripe_fee_cents=0)
+    money.book_refund_issued(db, order)
 
     db.expire_all()
     assert seller_balance(db, seller.id) == 0, "refund did not reverse the original split"

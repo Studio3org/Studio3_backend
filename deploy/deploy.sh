@@ -88,11 +88,26 @@ RSYNC=(rsync -az --delete
   --exclude 'logs'
   --exclude 'uploads'
   --exclude '.DS_Store'
+  # This ships the working directory, so anything sitting in it goes to the server too.
+  # Credentials and material the API never reads stay behind (SEC-4).
+  --exclude '*accessKeys*.csv'
+  --exclude 'Product Specification Docs'
+  --exclude 'postman'
+  --exclude 'tests'
+  --exclude 'conftest.py'
+  --exclude 'requirements-dev.txt'
+  --exclude '.github'
+  --exclude '.pytest_cache'
+  --exclude '.ruff_cache'
+  --exclude 'CLAUDE.md'
 )
 
 echo "==> Syncing code -> ${EC2_USER}@${EC2_HOST}:${APP_DIR}"
 "${RSYNC[@]}" -e "ssh -i ${SSH_KEY} -o StrictHostKeyChecking=accept-new" \
   "${ROOT}/" "${EC2_USER}@${EC2_HOST}:${APP_DIR}/"
+# --delete never removes excluded paths (it is what protects the server's .venv and .env),
+# so an access-key file copied by an earlier deploy would stay. Remove that one explicitly.
+"${SSH[@]}" "find ${APP_DIR} -maxdepth 1 -name '*accessKeys*.csv' -delete"
 
 # Generated on the first deploy only. upsert_config further down writes them back
 # into config.env, so the next deploy reads them from there rather than minting new

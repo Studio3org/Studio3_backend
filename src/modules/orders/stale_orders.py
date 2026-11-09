@@ -39,7 +39,7 @@ logger = get_logger(__name__)
 ABANDONED_AFTER = timedelta(minutes=15)
 
 
-def _stripe_says_unpaid(order: Order) -> bool:
+def stripe_agrees_unpaid(order: Order) -> bool:
     """Ask Stripe to cancel the intent, and treat its refusal as the source of truth.
 
     Cancelling also closes the door behind us: an intent left open could still be confirmed
@@ -83,7 +83,7 @@ def expire_abandoned_orders() -> int:
             if not order or order.status != "pending_payment":
                 db.rollback()
                 continue
-            if not _stripe_says_unpaid(order):
+            if not stripe_agrees_unpaid(order):
                 db.rollback()
                 continue
 

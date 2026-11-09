@@ -134,11 +134,12 @@ def test_render_yaml_deploys_a_known_environment():
 
 
 def test_staging_requires_infrastructure_but_not_payment_credentials():
-    """Staging is a test environment: it must have a database, Redis and real secrets, but
-    deliberately runs without Stripe and S3 so the unconfigured paths stay exercisable."""
+    """Staging is a test environment: it must have a database, Redis, real secrets and media
+    storage, but deliberately runs without Stripe so the dev-mode checkout stays exercisable.
+    Storage is required because the local media fallback only exists in development."""
     staging_required = {var.name for var in ENV_VARS if STAGING in var.required_in}
-    assert {"DATABASE_URL", "REDIS_URL", "SECRET_KEY", "JWT_SECRET"} <= staging_required
-    assert not staging_required & {"STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "S3_BUCKET"}
+    assert {"DATABASE_URL", "REDIS_URL", "SECRET_KEY", "JWT_SECRET", "S3_BUCKET"} <= staging_required
+    assert not staging_required & {"STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"}
 
 
 def test_every_deployed_environment_requires_the_signing_secrets():

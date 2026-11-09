@@ -78,6 +78,7 @@ class StripeStub:
         self.balance_transactions: dict[str, dict] = {}
         self.transfers: list[dict] = []
         self.refunds: list[dict] = []
+        self.refund_error: Exception | None = None
         self.payment_intents: dict[str, dict] = {}
         self.accounts: dict[str, dict] = {}
         # What Connect onboarding actually sent to /v2, so tests can assert the
@@ -189,6 +190,10 @@ class StripeStub:
         return {"object": "list", "data": found}
 
     def _refund_create(self, **kwargs) -> dict:
+        # Set to an exception to make the next Refund.create raise, for the failure paths.
+        if self.refund_error is not None:
+            error, self.refund_error = self.refund_error, None
+            raise error
         refund = {
             "id": f"re_{uuid.uuid4().hex[:24]}",
             "charge": kwargs.get("charge"),

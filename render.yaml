@@ -14,8 +14,9 @@ services:
     healthCheckPath: /
     envVars:
       # This Render service is a test environment, not production. It behaves like
-      # production for anything security-shaped, but does not require the Stripe and S3
-      # credentials — see src/shared/config/settings.py.
+      # production for anything security-shaped, but does not require the Stripe
+      # credentials — see src/shared/config/settings.py. It does need its own S3 bucket:
+      # the local media fallback is development-only.
       - key: FLASK_ENV
         value: staging
       - key: DATABASE_URL

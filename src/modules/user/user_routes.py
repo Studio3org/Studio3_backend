@@ -1,11 +1,17 @@
 """User and media routes."""
 import uuid
 
-from flask import Blueprint, Response, abort, g, request
+from flask import Blueprint, Response, abort, current_app, g, request
 
 from src.middlewares.auth_middleware import auth_required, optional_auth
-from src.shared.storage.local_storage import guess_content_type, read_local_file, save_local_file
-from src.shared.storage.s3_service import VIDEO_MAX_BYTES
+from src.shared.storage.local_storage import (
+    guess_content_type,
+    local_media_enabled,
+    read_local_file,
+    save_local_file,
+    verify_upload,
+)
+from src.shared.storage.s3_service import ALLOWED_IMAGE, ALLOWED_VIDEO, VIDEO_MAX_BYTES
 from src.shared.utils.api_response import success_response, apply_cookie_ops
 from src.shared.utils.async_handler import async_handler
 from src.modules.user import user_controller
@@ -297,17 +303,43 @@ def presign():
 
 @media_bp.put("/local/<path:key>")
 def upload_local_media(key):
-    """Dev-only stand-in for an S3 presigned PUT when no bucket is configured."""
+    """Dev-only stand-in for an S3 presigned PUT when no bucket is configured.
+
+    Authorised like S3's: by the signed query string /presign handed out for this key, not by
+    a login — the app PUTs to presigned URLs without its bearer token."""
+    if not local_media_enabled():
+        abort(404)
     if (request.content_length or 0) > VIDEO_MAX_BYTES:
         abort(413)
-    save_local_file(key, request.get_data())
+    if not verify_upload(
+        current_app.secret_key, key, request.args, request.content_type, request.content_length
+    ):
+        abort(403)
+    data = request.get_data()
+    if len(data) > int(request.args["max"]):
+        abort(413)
+    try:
+        save_local_file(key, data)
+    except ValueError:
+        abort(400)
     return "", 204
 
 
 @media_bp.get("/local/<path:key>")
 def download_local_media(key):
-    """Dev-only stand-in for a public S3 object URL."""
-    data = read_local_file(key)
+    """Dev-only stand-in for a public S3 object URL. Serves image and video types only, so the
+    API origin can never be made to serve a page."""
+    if not local_media_enabled():
+        abort(404)
+    content_type = guess_content_type(key)
+    if content_type not in ALLOWED_IMAGE | ALLOWED_VIDEO:
+        abort(404)
+    try:
+        data = read_local_file(key)
+    except ValueError:
+        abort(404)
     if data is None:
         abort(404)
-    return Response(data, mimetype=guess_content_type(key))
+    response = Response(data, mimetype=content_type)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response

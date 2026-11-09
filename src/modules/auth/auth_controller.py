@@ -88,6 +88,9 @@ PURPOSES = (PURPOSE_SIGNUP, PURPOSE_LOGIN, PURPOSE_RESET)
 RATE_EMAIL_CHECK_PER_IP = 10
 # Login and reset codes: guesses from one address a minute, on top of the per-code limit.
 RATE_CODE_VERIFY_PER_IP = 20
+# Password attempts from one address a minute. The per-account lock (login_lock) stops one
+# account being guessed; this stops one address trying a password across many accounts.
+RATE_LOGIN_PER_IP = 20
 
 
 def _purpose(body: dict) -> str:
@@ -239,12 +242,12 @@ def otp_verify():
     if not email:
         raise AppError(EMAIL_REQUIRED, 400)
     purpose = _purpose(body)
+    rate_limit_ip("otp_verify", RATE_CODE_VERIFY_PER_IP, 60, fail_closed=True)
     if purpose == PURPOSE_SIGNUP:
         if not otp or not peek_otp(email, otp):
             raise AppError(OTP_VERIFICATION_FAILED, 400)
         return {"verified": True}, 200, None
 
-    rate_limit_ip("otp_verify", RATE_CODE_VERIFY_PER_IP, 60)
     if not otp or not verify_otp_limited(_otp_key(purpose, email), otp):
         raise AppError(OTP_VERIFICATION_FAILED, 400)
     db = SessionLocal()
@@ -275,7 +278,7 @@ def _record_terms_acceptance(db, user) -> None:
 
 
 def register():
-    rate_limit_ip("register", RATE_REGISTER_PER_IP, 60)
+    rate_limit_ip("register", RATE_REGISTER_PER_IP, 60, fail_closed=True)
     body = request.get_json() or {}
     username_raw = (body.get("username") or "").strip()
     name = (body.get("name") or "").strip()
@@ -340,6 +343,7 @@ def register():
 
 
 def login():
+    rate_limit_ip("login", RATE_LOGIN_PER_IP, 60, fail_closed=True)
     body = request.get_json() or {}
     identifier_raw = (body.get("username") or "").strip()
     password = body.get("password")
@@ -716,6 +720,7 @@ def confirm_email_change():
     otp = (body.get("otp") or "").strip()
     if not new_email:
         raise AppError(EMAIL_REQUIRED, 400)
+    rate_limit_ip("otp_verify", RATE_CODE_VERIFY_PER_IP, 60, fail_closed=True)
     if not otp or not verify_otp(_email_change_otp_key(new_email), otp):
         raise AppError(OTP_VERIFICATION_FAILED, 400)
 

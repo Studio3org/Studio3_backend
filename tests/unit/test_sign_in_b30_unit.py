@@ -166,7 +166,7 @@ def controller(monkeypatch, redis):
     monkeypatch.setattr(auth_controller, "_verify_password", lambda pw, h: pw == "right")
     monkeypatch.setattr(auth_controller, "send_email", lambda to, subject, html: state.sent.append((to, subject)) or True)
     monkeypatch.setattr(auth_controller, "generate_otp", lambda n: "654321")
-    monkeypatch.setattr(auth_controller, "rate_limit_ip", lambda action, limit, window: state.limited.append(action))
+    monkeypatch.setattr(auth_controller, "rate_limit_ip", lambda action, limit, window, **_: state.limited.append(action))
     monkeypatch.setattr(
         auth_controller, "_issue_session_and_tokens",
         lambda user, req: ({"accessToken": f"token-{user.id}"}, 200, {"set_refresh_cookie": {}}),

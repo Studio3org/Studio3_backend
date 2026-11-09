@@ -22,7 +22,7 @@ DEVELOPMENT = "development"
 TESTING = "testing"
 # A deployed environment that is not production. Behaves like production for anything
 # security-shaped (secure cookies, no file logging, real CORS), but does not require the
-# payment and storage credentials, so it can exercise the dev-mode checkout path.
+# payment credentials, so it can exercise the dev-mode checkout path. It does need storage.
 STAGING = "staging"
 PRODUCTION = "production"
 
@@ -45,8 +45,9 @@ class EnvVar:
 
 # Infrastructure and secrets: a deployed environment cannot function without these.
 _REQUIRED_DEPLOYED = frozenset({STAGING, PRODUCTION})
-# Payments and storage: production only. Staging deliberately runs without them so the
-# unconfigured paths (dev-mode checkout, local media fallback) stay exercisable.
+# Payments: production only. Staging deliberately runs without them so the dev-mode
+# checkout path stays exercisable. Storage is not in this group: the local media fallback
+# is a development-only route, so a deployed environment without S3 cannot store media.
 _REQUIRED_IN_PROD = frozenset({PRODUCTION})
 
 ENV_VARS: tuple[EnvVar, ...] = (
@@ -69,6 +70,9 @@ ENV_VARS: tuple[EnvVar, ...] = (
            _REQUIRED_DEPLOYED),
     EnvVar("CORS_ORIGINS", "Extra browser origins, comma-separated."),
     EnvVar("BACKEND_URL", "This service's own public URL, for links it generates."),
+    EnvVar("TRUSTED_PROXY_HOPS",
+           "Reverse proxies in front of the app (nginx = 1). The client IP is read from that "
+           "many X-Forwarded-For entries; 0 when nothing is in front.", default="1"),
 
     # --- app association -----------------------------------------------------------------
     # These make a shared https:// link open the app instead of a browser. Unset simply means
@@ -101,14 +105,14 @@ ENV_VARS: tuple[EnvVar, ...] = (
            default="https://studio-3.co/connect"),
 
     # --- storage ------------------------------------------------------------------------
-    EnvVar("AWS_ACCESS_KEY_ID", "AWS credentials for S3 and SES.", _REQUIRED_IN_PROD, secret=True),
-    EnvVar("AWS_SECRET_ACCESS_KEY", "AWS credentials for S3 and SES.", _REQUIRED_IN_PROD,
+    EnvVar("AWS_ACCESS_KEY_ID", "AWS credentials for S3 and SES.", _REQUIRED_DEPLOYED, secret=True),
+    EnvVar("AWS_SECRET_ACCESS_KEY", "AWS credentials for S3 and SES.", _REQUIRED_DEPLOYED,
            secret=True),
     EnvVar("AWS_REGION", "AWS region for S3 and SES.", default="us-east-1"),
-    EnvVar("S3_BUCKET", "Media bucket.", _REQUIRED_IN_PROD, aliases=("STUDIO3_S3_BUCKET",)),
-    EnvVar("S3_PUBLIC_BASE_URL", "Public base URL media is served from.", _REQUIRED_IN_PROD,
+    EnvVar("S3_BUCKET", "Media bucket.", _REQUIRED_DEPLOYED, aliases=("STUDIO3_S3_BUCKET",)),
+    EnvVar("S3_PUBLIC_BASE_URL", "Public base URL media is served from.", _REQUIRED_DEPLOYED,
            aliases=("STUDIO3_S3_PUBLIC_BASE_URL",)),
-    EnvVar("LOCAL_MEDIA_DIR", "Where /api/media/local writes when S3 is unconfigured."),
+    EnvVar("LOCAL_MEDIA_DIR", "Where /api/media/local writes when S3 is unconfigured (development only)."),
 
     # --- notifications ------------------------------------------------------------------
     EnvVar("SES_FROM_EMAIL", "Verified SES sender. Unset = OTP and reset emails are skipped."),

@@ -30,6 +30,7 @@ from src.modules.bids import auction_dao, auction_winner, bid_dao
 from src.modules.orders.shipping import SHIPPING_RATES_CENTS, FLAT_TAX_RATE
 from src.modules.notifications import notifications_dao
 from src.modules.payments import money
+from src.modules.orders import stale_orders
 
 logger = get_logger(__name__)
 
@@ -396,14 +397,46 @@ def patch(order_id: str):
             # payment-affecting transitions are webhook-driven, so there is nothing else a
             # buyer or seller may set here directly.
             raise AppError(f"Status '{new_status}' cannot be set directly.", 403)
-        if order.status not in ("pending_payment", "paid"):
-            raise AppError(f"Cannot cancel an order in status '{order.status}'.", 409)
 
-        orders_dao.transition_order(db, order, "cancelled", commit=False)
-        orders_dao.release_pieces(db, order, commit=False)
-        db.commit()
-        db.refresh(order)
-        return orders_dao.order_to_dict(db, order), 200
+        if order.status == "pending_payment":
+            # Nothing has been paid — unless Stripe is charging the card right now. Ask it to
+            # cancel the payment first and let its answer decide; cancelling on our own say-so
+            # is how a buyer ended up charged for an order we had already called off (PAY-1).
+            if not stale_orders.stripe_agrees_unpaid(order):
+                raise AppError(
+                    "This payment is already going through. Check back in a moment.", 409
+                )
+            orders_dao.transition_order(db, order, "cancelled", commit=False)
+            orders_dao.release_pieces(db, order, commit=False)
+            db.commit()
+            db.refresh(order)
+            return orders_dao.order_to_dict(db, order), 200
+
+        if order.status != "paid":
+            raise AppError(f"Cannot cancel an order in status '{order.status}'.", 409)
+        if order.seller_id != user_id:
+            # Decided 9 Nov: a paid order is cancelled by the artist or by us, never the
+            # buyer. A buyer with a problem reports it, which opens a dispute for ops.
+            raise AppError(
+                "A paid order can't be cancelled by the buyer. If something's wrong, "
+                "report an issue and we'll sort it out.",
+                403,
+            )
+    finally:
+        db.close()
+
+    # The artist calling off a paid sale: a full refund, through the same path an admin uses.
+    # Outside the session above — the refund takes the order's row lock itself.
+    from src.modules.payments import refunds_service
+    from src.shared.models.refund import ROLE_SELLER
+
+    refunds_service.refund_paid_order(
+        uuid.UUID(order_id), actor_id=user_id, actor_role=ROLE_SELLER,
+        reason=(body.get("reason") or "Cancelled by the artist.").strip()[:2000],
+    )
+    db = SessionLocal()
+    try:
+        return orders_dao.order_to_dict(db, orders_dao.get_order(db, uuid.UUID(order_id))), 200
     finally:
         db.close()
 

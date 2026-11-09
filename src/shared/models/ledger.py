@@ -64,6 +64,12 @@ TXN_TRANSFER_REVERSED = "transfer_reversed"
 TXN_AUCTION_CAPTURED = "auction_captured"
 # That capture given back when the winner forfeits or the sale cannot complete.
 TXN_AUCTION_REFUNDED = "auction_refunded"
+# A payment that succeeded after its order was cancelled, refunded straight back. Only the
+# Stripe fee it cost remains on the books.
+TXN_LATE_PAYMENT_REFUNDED = "late_payment_refunded"
+# One-off correction for refunds booked before BE-1 was fixed, which treated the Stripe fee as
+# returned (scripts/fix_be1_refund_ledger.py).
+TXN_REFUND_FEE_CORRECTION = "refund_fee_correction"
 
 DEBIT = "debit"
 CREDIT = "credit"

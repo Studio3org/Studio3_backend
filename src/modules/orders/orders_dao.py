@@ -36,8 +36,11 @@ IN_PROGRESS_STATUSES = (
 VALID_TRANSITIONS = {
     "pending_payment": {"paid", "failed", "cancelled"},
     "paid": {"shipped", "cancelled", "refunded", "disputed"},
-    "shipped": {"awaiting_confirmation", "disputed"},
-    "awaiting_confirmation": {"completed", "disputed"},
+    # Refundable in transit and on arrival (lost or damaged in shipping). These two edges were
+    # missing, so an admin refund of a shipped order sent the money back at Stripe and then
+    # failed to record it: the order stayed shipped, the ledger unbooked, the payout live.
+    "shipped": {"awaiting_confirmation", "disputed", "refunded"},
+    "awaiting_confirmation": {"completed", "disputed", "refunded"},
     "disputed": {"completed", "refunded"},
     # A delivered order can still be refunded — a dashboard-issued refund or a late dispute
     # both land here. Without this edge charge.refunded raised 409 inside the webhook, which

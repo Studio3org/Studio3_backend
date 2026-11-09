@@ -23,6 +23,7 @@ from src.shared.models.order import Order
 from src.shared.models.payout import (
     PAYOUT_BLOCKED,
     PAYOUT_PENDING,
+    PAYOUT_RELEASED,
     PAYOUT_TRANSFER_FAILED,
     Payout,
 )
@@ -200,7 +201,7 @@ def _on_payment_succeeded(db: Session, intent) -> None:
     if not order:
         logger.error("payment_intent.succeeded for unknown order: %s", intent["id"])
         return
-    if order.status not in ("pending_payment", "paid"):
+    if order.status not in ("pending_payment", "paid", "cancelled", "failed"):
         logger.warning(
             "Ignoring payment_intent.succeeded for order %s in status %s.",
             order.id, order.status,
@@ -211,6 +212,17 @@ def _on_payment_succeeded(db: Session, intent) -> None:
     charge_id = intent.get("latest_charge")
     charge = stripe.Charge.retrieve(charge_id, expand=["balance_transaction"]) if charge_id else None
     fee = _stripe_fee_for_charge(charge) if charge else 0
+
+    if order.status in ("cancelled", "failed"):
+        # The money arrived after the order was given up — usually a payment that was still
+        # processing when the buyer walked away. Logging and dropping it charged the buyer for
+        # nothing (PAY-2). The order stays cancelled (its piece may be someone else's now);
+        # the money goes straight back. A Stripe failure raises, so Stripe redelivers.
+        from src.modules.payments import refunds_service
+
+        refunds_service.refund_late_payment(db, order, intent, fee)
+        db.commit()
+        return
 
     already_paid = order.status == "paid"
     order.payment_provider = "stripe"
@@ -323,7 +335,15 @@ def _on_charge_refunded(db: Session, charge) -> None:
 
     orders_dao.transition_order(db, order, "refunded", commit=False)
     orders_dao.release_pieces(db, order, commit=False)
-    money.book_refund_issued(db, order, stripe_fee_cents=_stripe_fee_for_charge(charge), commit=False)
+    money.book_refund_issued(db, order, commit=False)
+    # The money is back with the buyer, so the artist's share is no longer owed. Without this
+    # a dashboard refund left the payout pending and releasable.
+    payout = db.execute(
+        select(Payout).where(Payout.order_id == order.id).with_for_update()
+    ).scalar_one_or_none()
+    if payout and payout.status != PAYOUT_RELEASED:
+        payout.status = PAYOUT_BLOCKED
+        payout.failure_reason = "Order refunded in Stripe; payout cancelled."
     db.commit()
     logger.info("Order %s refunded (via Stripe).", order.id)
 

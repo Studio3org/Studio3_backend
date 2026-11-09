@@ -5,6 +5,7 @@ from datetime import timedelta
 from flask import Flask
 from flask_cors import CORS
 from flask_wtf.csrf import CSRFProtect
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from src.middlewares.error_handler import register_error_handler
 from src.middlewares.request_context import init_request_context
@@ -57,6 +58,14 @@ def create_app(config_overrides: dict | None = None):
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     app.config["SESSION_COOKIE_SECURE"] = os.getenv("FLASK_ENV", "development") != "development"
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=12)
+
+    # Behind a reverse proxy (nginx on AWS, Render's router), the connecting address is the
+    # proxy's. ProxyFix takes the client address from X-Forwarded-For, trusting only as many
+    # entries as there are proxies we run — the left-most entry is whatever the client sent,
+    # so reading it directly let anyone pick their own rate-limit bucket (AUTH-1).
+    hops = int(os.getenv("TRUSTED_PROXY_HOPS", "1"))
+    if hops > 0:
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=hops, x_proto=hops)
 
     # Credentialed CORS for the web app (Vite :5173) and mobile/web on :3000.
     CORS(
@@ -138,6 +147,10 @@ def create_app(config_overrides: dict | None = None):
     def _csrf_protect_admin():
         from flask import request
 
+        # protect() validates unconditionally, so honour WTF_CSRF_ENABLED here the way
+        # Flask-WTF's own hook does — tests switch it off; it is on everywhere else.
+        if not app.config.get("WTF_CSRF_ENABLED", True):
+            return
         if request.blueprint == "admin" and request.method not in ("GET", "HEAD", "OPTIONS"):
             csrf.protect()
 

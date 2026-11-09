@@ -9,14 +9,18 @@ from src.shared.utils.app_error import AppError
 
 
 def _client_ip() -> str:
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+    # ProxyFix (src/app.py) has already replaced remote_addr with the client address taken
+    # from the trusted end of X-Forwarded-For. Reading the header here would read the
+    # client-supplied end of it, which is the bug this replaced (AUTH-1).
     return request.remote_addr or "unknown"
 
 
-def rate_limit(key: str, limit: int, window_seconds: int) -> None:
-    """Increment counter; raise 429 if over limit."""
+def rate_limit(key: str, limit: int, window_seconds: int, *, fail_closed: bool = False) -> None:
+    """Increment counter; raise 429 if over limit.
+
+    With Redis down the limit cannot be counted. Most endpoints carry on (fail open); the ones
+    guarding credentials pass `fail_closed` and answer 503 instead, rather than becoming
+    unlimited for exactly as long as Redis is out."""
     try:
         redis_client = get_redis_client()
         full_key = f"rl:{key}"
@@ -28,12 +32,14 @@ def rate_limit(key: str, limit: int, window_seconds: int) -> None:
     except AppError:
         raise
     except Exception:
-        # Fail open if Redis unavailable
-        pass
+        if fail_closed:
+            raise AppError("Sign-in is temporarily unavailable. Please try again shortly.", 503)
 
 
-def rate_limit_ip(action: str, limit: int, window_seconds: int = 60) -> None:
-    rate_limit(f"{action}:ip:{_client_ip()}", limit, window_seconds)
+def rate_limit_ip(
+    action: str, limit: int, window_seconds: int = 60, *, fail_closed: bool = False
+) -> None:
+    rate_limit(f"{action}:ip:{_client_ip()}", limit, window_seconds, fail_closed=fail_closed)
 
 
 def rate_limit_user(action: str, user_id: str, limit: int, window_seconds: int = 60) -> None:
