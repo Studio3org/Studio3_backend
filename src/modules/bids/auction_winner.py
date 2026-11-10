@@ -160,6 +160,10 @@ def _finish_win(db: Session, auction: Auction, piece: Optional[Piece], bid: Bid,
     auction.winner_deadline_at = None
     auction.next_payment_retry_at = None
     _move_piece_off_market(db, auction, piece)
+    # Phase 7b: shipping, insurance and tax follow on the same card once this commits.
+    from src.modules.bids import auction_autocheckout
+
+    auction_autocheckout.queue(db, auction)
 
 
 def _park_for_payment(

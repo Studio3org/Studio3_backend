@@ -17,7 +17,7 @@ Responses keep the usual envelope `{success, message, data}`. Errors are `{succe
 | 5. Co-host and artist invites, piece approvals, bidding end | Done, on `development` (`5063d2f`) | Invite inbox and accept/decline; piece request screen; "Waiting for" in Lineup; bidding end picker; Exhibited on piece pages |
 | 6. Account and settings (going public, selling off, deletion check, hide from collection) | Done, on `development` (`5063d2f`) | Drop the one-by-one approvals; new turn-off message; Delete account reads the check; Hide from my Collection; fees from seller-terms |
 | 7a. Auctions v2 (charge at close, 12-hour fix window, second-chance offer) | Done, on `development` (`a655a20`) | Card check and Ship to at the first bid; new increments; no extensions; payment-failed and second-chance screens |
-| 7b. Shipping, insurance and tax in the charge at close | After Phase 8 | Remove the auction checkout |
+| 7b. Shipping, insurance and tax in the charge at close | Done (not yet committed); works once Convelio is on | Show the automatic charge; keep the auction checkout only as the fallback |
 | 8. Convelio shipping and checkout pricing | Done, on `development` (`5fea30f`); Convelio is off until switched on | New checkout (speed, delivery type, insurance, live quote, pending quote); listing fields; pickup address screen; shipment tracker; piece-page estimate |
 
 The shared dev database (Aiven) is at migration `060_convelio_shipping`, so a build pointed at it can use everything through Phase 8.
@@ -1031,3 +1031,48 @@ Order responses and the piece's `viewerOrder` carry the shipment:
 - **Tax:** with `SALES_TAX_PROVIDER=stripe`, Stripe Tax works out the tax on the artwork and the shipping from the delivery address.
 - **Deploy:** migration `060_convelio_shipping`.
 - **Also fixed:** a server bug where a "run after commit" job could start too early, when a savepoint committed partway through a transaction. It affected wallet updates and waitlist notifications too.
+
+---
+
+## Phase 7b: No checkout after winning (the 9 Nov design)
+
+Once the hammer price has been charged at close (7a), the rest is charged to the **same saved card**, with nothing for the winner to do:
+1. Convelio is asked for a quote to the winner's **Ship to** address, the `addressId` sent with their first bid (7a.1).
+2. **Instant price:** the winner's order is created and shipping, insurance and tax are charged at once. The courier is booked exactly as for any sale (8.3, 8.4).
+3. **Custom quote** (Convelio prices it by hand within 24 hours): the winner gets `auction_shipping_pending` ("Shipping price on its way"). The charge happens automatically when Convelio's price arrives; no checkout to come back to.
+4. **That charge fails:** the order is called off and the piece goes back to the winner. They get `auction_shipping_failed` ("Finish your purchase") and complete at the existing `POST /api/pieces/:id/auction-checkout` with another card.
+
+When it's done the winner gets `auction_shipping_charged` ("Delivery booked"), and the piece shows its `viewerOrder` with tracking (8.4).
+
+**Not used** (the winner checks out as before, at `auction-checkout`) when:
+- the piece is collected at the event (`deliveryMode: "pickup"`);
+- the winner gave no Ship to address;
+- the artist hasn't added the packed size, weight or pickup address;
+- or Convelio is off.
+
+**While the auction is settling,** the winner's auction summary carries:
+
+```json
+"autoCheckout": {"state": "pending_quote" | "charged" | "failed" | "manual", "orderId": "…" | null}
+```
+
+It's `null` for everyone else.
+
+| `state` | What to show |
+|---|---|
+| `pending_quote` | "Shipping price on its way" |
+| `charged` | The order (`orderId`) |
+| `failed` | "Finish your purchase", opening the auction checkout |
+| `manual` | The auction checkout, as today |
+
+Once the order is paid, the auction is sold, and the piece's `viewerOrder` (8.4) is the place to read it.
+
+**App changes:**
+- [ ] After winning, don't open checkout when `autoCheckout.state` is `pending_quote` or `charged`. Show the shipping-pending note, or the order.
+- [ ] Open the auction checkout only for `failed` or `manual` (or no `autoCheckout`).
+- [ ] Handle the `auction_shipping_pending`, `auction_shipping_charged` and `auction_shipping_failed` notifications: open the piece.
+- [ ] Make sure the first bid sends `addressId` (7a.1). Without it, the winner falls back to checkout.
+
+**Server-side only (for awareness):**
+- **Deploy:** migration `061_auction_auto_checkout`. No new settings: it runs whenever `CONVELIO_ENABLED` is on.
+- **Same payment path:** the follow-on charge is an ordinary order payment (metadata `kind: auction_balance`), so refunds, payouts and the ledger treat it like any sale.

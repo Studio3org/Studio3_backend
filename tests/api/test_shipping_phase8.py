@@ -1,70 +1,19 @@
 """Phase 8: Convelio shipping (the Convelio plan's D-1 to D-12, B19, B31, B32), against a fake
 Convelio that answers like the v2 API."""
-import hashlib
-import hmac
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
 
-import pytest
 from sqlalchemy import select, update
 
-from src.modules.shipping import booking_service, convelio_client, shipping_jobs
+from src.modules.shipping import booking_service, shipping_jobs
 from src.shared.models.notification import Notification
 from src.shared.models.order import Order
 from src.shared.models.shipment import Shipment
 from src.shared.models.shipping import ProviderWebhookEvent, ShippingQuote
+from tests.convelio_fixtures import KEY, signed_webhook  # noqa: F401
 from tests.factories import make_address, make_piece, make_user
 from tests.helpers import assert_ledger_balanced
-
-KEY = "sk_test_fake_convelio"
-
-
-class FakeConvelio:
-    def __init__(self):
-        self.quotes = []
-        self.orders = []
-        self.mode = "instant"      # instant | processing
-        self.order_mode = "ok"     # ok | timeout | refuse
-        self.estimate_mode = "422"
-        self.price = {"currency_code": "USD", "vat_excluded_amount": 340_00,
-                      "vat_included_amount": 340_00, "vat_amount": 0, "insurance_amount": 25_00}
-
-    def create_quote(self, body):
-        self.quotes.append(body)
-        qid = f"q_{uuid.uuid4().hex[:10]}"
-        if self.mode == "processing":
-            return {"id": qid, "quote_reference_number": "QVO-1", "status": "processing", "price": None}
-        return {"id": qid, "quote_reference_number": "QVO-1", "status": "created", "price": self.price}
-
-    def get_quote(self, quote_id):
-        return {"id": quote_id, "quote_reference_number": "QVO-1", "status": "created", "price": self.price}
-
-    def create_order(self, body):
-        if self.order_mode == "timeout":
-            raise convelio_client.ConvelioTimeout("slow", 504)
-        if self.order_mode == "refuse":
-            raise convelio_client.ConvelioError("Shipping request was refused: bad quote", 400)
-        self.orders.append(body)
-        return {"id": f"o_{len(self.orders)}", "order_reference_number": f"CVO-{len(self.orders)}",
-                "tracking_link": "https://track.convelio.test/x", "dashboard_order_link": "https://dash.test/x",
-                "price": self.price}
-
-    def estimate(self, body):
-        if self.estimate_mode == "422":
-            raise convelio_client.ConvelioError("Shipping couldn't be priced: no estimate", 422)
-        return {"price": {"vat_excluded_amount": 300_00, "vat_included_amount": 300_00}}
-
-
-@pytest.fixture
-def convelio(monkeypatch):
-    fake = FakeConvelio()
-    monkeypatch.setenv("CONVELIO_ENABLED", "true")
-    monkeypatch.setenv("CONVELIO_API_KEY", KEY)
-    for name in ("create_quote", "get_quote", "create_order", "estimate"):
-        monkeypatch.setattr(convelio_client, name, getattr(fake, name))
-    return fake
-
 
 def _shippable(db, *, price=3000_00):
     artist = make_user(db, seller=True)
@@ -86,13 +35,6 @@ def _buyer(db):
 def _quote(client, auth, piece, address, **body):
     return client.post(f"/api/pieces/{piece.id}/shipping-quotes", headers=auth,
                        json={"addressId": str(address.id), **body})
-
-
-def _signed(client, event: dict):
-    raw = json.dumps(event).encode()
-    sig = hmac.new(KEY.encode(), raw, hashlib.sha256).hexdigest()
-    return client.post("/api/webhooks/convelio", data=raw, content_type="application/json",
-                       headers={"X-Convelio-signature": sig})
 
 
 def _notes(db, user, type_):
@@ -174,7 +116,7 @@ def test_a_custom_quote_waits_for_convelio_then_the_buyer_is_told(db, client, au
     assert early.status_code == 409 and "still being priced" in early.get_json()["message"]
 
     provider_id = db.get(ShippingQuote, uuid.UUID(quote["id"])).provider_quote_id
-    assert _signed(client, {"event": "custom_quote_ready", "created": "now",
+    assert signed_webhook(client, {"event": "custom_quote_ready", "created": "now",
                             "payload": {"quote_id": provider_id}}).status_code == 200
 
     ready = client.get(f"/api/shipping-quotes/{quote['id']}", headers=auth_headers(buyer)).get_json()["data"]
@@ -190,8 +132,8 @@ def test_webhooks_need_a_valid_signature_and_duplicates_are_ignored(db, client, 
                       headers={"X-Convelio-signature": "0" * 64})
     assert bad.status_code == 401
     event = {"event": "quote_paid", "created": "x", "payload": {"quote_id": "q"}}
-    assert _signed(client, event).status_code == 200
-    again = _signed(client, event)
+    assert signed_webhook(client, event).status_code == 200
+    again = signed_webhook(client, event)
     assert again.status_code == 200 and again.get_json()["duplicate"] is True
     assert db.query(ProviderWebhookEvent).count() == 1
 
@@ -210,7 +152,7 @@ def test_convelio_statuses_move_the_order_and_tell_the_buyer(db, client, auth_he
     artist, piece, buyer, order_id = _booked_order(db, client, auth_headers, convelio)
 
     for status in ("shipment_created", "picked_up", "out_for_delivery", "shipment_completed"):
-        assert _signed(client, {"event": "shipment_status_changed", "created": status,
+        assert signed_webhook(client, {"event": "shipment_status_changed", "created": status,
                                 "payload": {"order_id": "o_1", "status": status}}).status_code == 200
 
     db.expire_all()
@@ -229,7 +171,7 @@ def test_convelio_statuses_move_the_order_and_tell_the_buyer(db, client, auth_he
 
 def test_a_delivered_order_completes_itself_after_7_days_and_pays_the_artist(db, client, auth_headers, convelio):
     artist, piece, buyer, order_id = _booked_order(db, client, auth_headers, convelio)
-    _signed(client, {"event": "shipment_status_changed", "created": "x",
+    signed_webhook(client, {"event": "shipment_status_changed", "created": "x",
                      "payload": {"order_id": "o_1", "status": "shipment_completed"}})
 
     assert shipping_jobs.auto_complete_delivered() == 0, "not before the 7 days"
@@ -249,7 +191,7 @@ def test_a_booking_that_times_out_is_never_retried_blind(db, client, auth_header
 
     assert booking_service.book_order(str(order_id)) == {"state": "unknown"}, "no second booking"
     quote = db.execute(select(ShippingQuote)).scalar_one()
-    _signed(client, {"event": "order_created", "created": "x",
+    signed_webhook(client, {"event": "order_created", "created": "x",
                      "payload": {"quote_id": quote.provider_quote_id, "order_id": "o_late"}})
     db.expire_all()
     shipment = db.execute(select(Shipment)).scalar_one()

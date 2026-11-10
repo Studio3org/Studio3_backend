@@ -172,6 +172,13 @@ def _quote_ready(db, provider_quote_id: str) -> None:
         logger.warning("custom_quote_ready for unknown quote %s", provider_quote_id)
         return
     quote_service.refresh(db, quote)
+    from src.modules.bids import auction_autocheckout
+    from src.shared.models.auction import Auction
+
+    if db.execute(select(Auction.id).where(Auction.shipping_quote_id == quote.id)).first():
+        # An auction win (Phase 7b): charged automatically, no checkout to come back to.
+        auction_autocheckout.on_quote_ready(db, quote)
+        return
     if quote.status == QUOTE_READY:
         _notify(db, quote.buyer_id, "shipping_quote_ready", "piece", quote.piece_id,
                 "Shipping quote ready", "Your shipping price is in. Finish checking out before it expires.",

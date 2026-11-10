@@ -256,6 +256,8 @@ def stripe_stub(monkeypatch):
         "src.modules.bids.holds_service",
         # Phase 7a: the card check at the first bid and the winner's charge at close.
         "src.modules.bids.auction_payments",
+        # Phase 7b: the balance charged after an auction win.
+        "src.modules.bids.auction_autocheckout",
         "src.modules.payments.payment_methods_controller",
         # Connect onboarding. Absent from this list until the Accounts v2 move, which is why
         # the entire onboarding surface had no tests.
@@ -294,6 +296,8 @@ def stripe_enabled(monkeypatch, stripe_stub):
         "src.modules.bids.holds_service",
         # Phase 7a: the card check at the first bid and the winner's charge at close.
         "src.modules.bids.auction_payments",
+        # Phase 7b: the balance charged after an auction win.
+        "src.modules.bids.auction_autocheckout",
         "src.modules.payments.payment_methods_controller",
         "src.modules.connect.connect_controller",
         "src.modules.orders.stale_orders",
@@ -305,3 +309,7 @@ def stripe_enabled(monkeypatch, stripe_stub):
     ):
         monkeypatch.setattr(f"{target}.stripe_configured", lambda: True, raising=False)
     return stripe_stub
+
+
+# The fake Convelio (tests/convelio_fixtures.py), for any test that asks for `convelio`.
+from tests.convelio_fixtures import convelio  # noqa: E402,F401

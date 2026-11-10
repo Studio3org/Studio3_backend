@@ -218,40 +218,9 @@ def auction_checkout(piece_id: str):
         if not address or address.user_id != buyer.id:
             raise AppError("Address not found.", 404)
 
-        artwork_cents = winning.amount_cents
-        priced = _price_shipping(db, body, buyer=buyer, piece=piece, address=address,
-                                 artwork_cents=artwork_cents)
-        shipping_cents, tax_cents = priced["shipping_cents"], priced["tax_cents"]
-        total_cents = artwork_cents + shipping_cents + tax_cents
-
-        # What the close already collected. Read from the hold rather than assumed to be the
-        # bid amount: a capture is the only thing that proves the money actually arrived.
-        hold = bid_dao.hold_for_bid(db, winning.id)
-        prepaid_cents = 0
-        prepaid_fee_cents = 0
-        prepaid_reference = None
-        if hold is not None and hold.status == HOLD_CAPTURED:
-            prepaid_cents = hold.amount_cents
-            prepaid_fee_cents = hold.capture_fee_cents or 0
-            prepaid_reference = hold.stripe_payment_intent_id
-
-        order = orders_dao.create_auction_order(
-            db,
-            buyer_id=buyer.id,
-            seller_id=piece.user_id,
-            piece=piece,
-            winning_bid_id=winning.id,
-            shipping_method=priced["method"],
-            address_snapshot=priced["snapshot"],
-            artwork_cents=artwork_cents,
-            shipping_cents=shipping_cents,
-            tax_cents=tax_cents,
-            total_cents=total_cents,
-            prepaid_cents=prepaid_cents,
-            prepaid_fee_cents=prepaid_fee_cents,
-            prepaid_reference=prepaid_reference,
-        )
-        _stamp(order, priced)  # Phase 8: quote, delivery type, insurance, tax calculation
+        order = create_winner_order(db, piece=piece, buyer=buyer, winning=winning, address=address,
+                                    body=body)
+        total_cents, prepaid_cents = order.total_cents, order.prepaid_cents
 
         # PAY-3: the auction stays `awaiting_winner` until this order is paid (the webhook
         # marks it sold). Marking it sold here meant an abandoned checkout stranded the winner:
@@ -264,6 +233,38 @@ def auction_checkout(piece_id: str):
         return result, 201
     finally:
         db.close()
+
+
+def create_winner_order(db, *, piece, buyer, winning, address, body: dict):
+    """The auction winner's order: the hammer price already collected (prepaid), plus
+    shipping, insurance and tax. Shared by the auction checkout and Phase 7b's automatic
+    checkout. Caller commits."""
+    artwork_cents = winning.amount_cents
+    priced = _price_shipping(db, body, buyer=buyer, piece=piece, address=address,
+                             artwork_cents=artwork_cents)
+    shipping_cents, tax_cents = priced["shipping_cents"], priced["tax_cents"]
+    # What the close already collected. Read from the hold rather than assumed to be the bid
+    # amount: a capture is the only thing that proves the money actually arrived.
+    hold = bid_dao.hold_for_bid(db, winning.id)
+    prepaid = hold if hold is not None and hold.status == HOLD_CAPTURED else None
+    order = orders_dao.create_auction_order(
+        db,
+        buyer_id=buyer.id,
+        seller_id=piece.user_id,
+        piece=piece,
+        winning_bid_id=winning.id,
+        shipping_method=priced["method"],
+        address_snapshot=priced["snapshot"],
+        artwork_cents=artwork_cents,
+        shipping_cents=shipping_cents,
+        tax_cents=tax_cents,
+        total_cents=artwork_cents + shipping_cents + tax_cents,
+        prepaid_cents=prepaid.amount_cents if prepaid else 0,
+        prepaid_fee_cents=(prepaid.capture_fee_cents or 0) if prepaid else 0,
+        prepaid_reference=prepaid.stripe_payment_intent_id if prepaid else None,
+    )
+    _stamp(order, priced)  # Phase 8: quote, delivery type, insurance, tax calculation
+    return order
 
 
 def confirm(order_id: str):
@@ -290,43 +291,41 @@ def confirm(order_id: str):
 
         # Dev mode: no payment provider configured — auto-succeed so the rest of the
         # order lifecycle (inventory lock, history, notifications) is testable today.
-        orders_dao.transition_order(db, order, "paid", commit=False)
-        auction_dao.mark_sold_for_order(db, order)  # PAY-3: sold only once paid
-        from src.modules.shipping import booking_service
-
-        booking_service.queue_after_payment(db, order)  # Phase 8 (D-5)
-        items = orders_dao.list_items(db, order.id)
-        for item in items:
-            piece = get_piece(db, item.piece_id)
-            if piece:
-                piece_state.transition_piece(
-                    db, piece, piece_state.SOLD,
-                    allowed_from={piece_state.RESERVED}, commit=False,
-                )
-        # Dev mode still books the ledger and creates the payout row, so the rest of the
-        # escrow flow (release, refund) is exercisable without Stripe keys.
-        db.add(
-            Payout(
-                id=uuid.uuid4(),
-                order_id=order.id,
-                seller_id=order.seller_id,
-                status=PAYOUT_PENDING,
-                idempotency_key=f"payout:{order.id}",
-            )
-        )
-        money.book_order_paid(db, order, stripe_fee_cents=0, commit=False)
-        db.commit()
-        db.refresh(order)
-
-        # The seller hears `sale`, the buyer `purchase` (BACKEND_CHANGES B14).
-        from src.modules.orders import order_notices
-
-        order_notices.notify_paid(db, order)
+        settle_paid_without_stripe(db, order)
         result = orders_dao.order_to_dict(db, order)
         result["devMode"] = True
         return result, 200
     finally:
         db.close()
+
+
+def settle_paid_without_stripe(db, order) -> None:
+    """Mark an order paid with no payment provider (development): the same steps the Stripe
+    webhook takes — order paid, auction sold, courier queued, piece sold, payout row, ledger —
+    then the buyer and seller are told. Shared by the confirm endpoint and Phase 7b's
+    automatic charge after an auction win."""
+    orders_dao.transition_order(db, order, "paid", commit=False)
+    auction_dao.mark_sold_for_order(db, order)  # PAY-3: sold only once paid
+    from src.modules.shipping import booking_service
+
+    booking_service.queue_after_payment(db, order)  # Phase 8 (D-5)
+    for item in orders_dao.list_items(db, order.id):
+        piece = get_piece(db, item.piece_id)
+        if piece:
+            piece_state.transition_piece(
+                db, piece, piece_state.SOLD, allowed_from={piece_state.RESERVED}, commit=False,
+            )
+    # Dev mode still books the ledger and creates the payout row, so the rest of the escrow
+    # flow (release, refund) is exercisable without Stripe keys.
+    db.add(Payout(id=uuid.uuid4(), order_id=order.id, seller_id=order.seller_id,
+                  status=PAYOUT_PENDING, idempotency_key=f"payout:{order.id}"))
+    money.book_order_paid(db, order, stripe_fee_cents=0, commit=False)
+    db.commit()
+    db.refresh(order)
+    # The seller hears `sale`, the buyer `purchase` (BACKEND_CHANGES B14).
+    from src.modules.orders import order_notices
+
+    order_notices.notify_paid(db, order)
 
 
 def _require_participant(order, user_id):

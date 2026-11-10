@@ -141,6 +141,12 @@ class Auction(Base):
     # runs. The fix window (winner_deadline_at) is set once, at the first failure (BE-4).
     payment_attempts = Column(Integer, default=0, server_default="0", nullable=False)
     next_payment_retry_at = Column(DateTime(timezone=True), nullable=True)
+    # Phase 7b: shipping, insurance and tax charged after the win, with no checkout.
+    auto_checkout_state = Column(String(16), nullable=True)
+    shipping_quote_id = Column(UUID(as_uuid=True), ForeignKey("shipping_quotes.id", ondelete="SET NULL"),
+                               nullable=True)
+    checkout_order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id", ondelete="SET NULL"),
+                               nullable=True)
     cancelled_reason = Column(String(64), nullable=True)
     closed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
@@ -211,6 +217,12 @@ class Hold(Base):
     released_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+AUTO_PENDING_QUOTE = "pending_quote"
+AUTO_CHARGED = "charged"
+AUTO_FAILED = "failed"
+AUTO_MANUAL = "manual"
 
 
 # --- second-chance offers (Phase 7a) ------------------------------------------------------

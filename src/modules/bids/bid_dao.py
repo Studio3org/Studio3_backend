@@ -184,6 +184,14 @@ def bid_summary(db: Session, auction: Optional[Auction], viewer_id: Optional[uui
             and bool(viewer_id and winner is not None and winner.bidder_id == viewer_id) else None
         ),
         "secondChanceOffer": _offer_for(db, auction, viewer_id),
+        # Phase 7b, the winner only: shipping, insurance and tax after the win — pending_quote,
+        # charged, failed (finish at the auction checkout) or manual (the checkout, as before).
+        "autoCheckout": (
+            {"state": auction.auto_checkout_state,
+             "orderId": str(auction.checkout_order_id) if auction.checkout_order_id else None}
+            if viewer_id and winner is not None and winner.bidder_id == viewer_id
+            and auction.auto_checkout_state else None
+        ),
         "fixedEndTime": not auction.soft_close_enabled,
     }
 

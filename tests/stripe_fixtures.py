@@ -99,6 +99,8 @@ class StripeStub:
         self.capture_failures: set[str] = set()
         # Phase 7a: cards that decline an off-session charge, and every charge made.
         self.declined_methods: set[str] = set()
+        # Or decline one kind of charge only (metadata "kind"), e.g. an auction's balance.
+        self.declined_kinds: set[str] = set()
         self.charged: list[dict] = []
         # What Stripe "charges" on a capture, so the ledger's fee leg has something real.
         self.capture_fee_cents: int = 0
@@ -239,14 +241,16 @@ class StripeStub:
         # (with a real charge and fee) unless the test declined that card.
         if kwargs.get("confirm") and kwargs.get("off_session") and not manual:
             method = kwargs.get("payment_method")
-            if method in self.declined_methods:
+            kind = (kwargs.get("metadata") or {}).get("kind")
+            if method in self.declined_methods or kind in self.declined_kinds:
                 raise real_stripe.error.CardError(  # type: ignore[attr-defined]
                     "Your card was declined.", param=None, code="card_declined"
                 )
             charge = self.add_charge(f"ch_{uuid.uuid4().hex[:24]}", fee_cents=self.capture_fee_cents,
                                      amount_cents=kwargs.get("amount") or 0)
+            # An id, as Stripe returns it unexpanded: callers retrieve the charge for its fee.
             intent = {"id": f"pi_{uuid.uuid4().hex[:24]}", "amount": kwargs.get("amount"),
-                      "status": "succeeded", "latest_charge": charge,
+                      "status": "succeeded", "latest_charge": charge["id"],
                       "metadata": kwargs.get("metadata", {}), "payment_method": method}
             self.payment_intents[intent["id"]] = intent
             self.charged.append({"payment_method": method, "amount": kwargs.get("amount"),
