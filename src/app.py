@@ -78,7 +78,8 @@ def create_app(config_overrides: dict | None = None):
 
     # Blueprints
     from src.modules.auth.auth_routes import auth_bp
-    from src.modules.user.user_routes import collection_bp, user_bp, media_bp
+    from src.modules.user.user_routes import collection_bp, shipping_quotes_bp, user_bp, media_bp
+    from src.modules.shipping.convelio_webhook import convelio_webhook_bp
     from src.modules.wallet.wallet_routes import wallet_bp
     from src.modules.user.users_content_routes import users_bp
     from src.modules.pieces.pieces_routes import pieces_bp
@@ -109,6 +110,8 @@ def create_app(config_overrides: dict | None = None):
     app.register_blueprint(users_bp, url_prefix="/api/users")
     app.register_blueprint(media_bp, url_prefix="/api/media")
     app.register_blueprint(collection_bp, url_prefix="/api/collection")
+    app.register_blueprint(shipping_quotes_bp, url_prefix="/api/shipping-quotes")
+    app.register_blueprint(convelio_webhook_bp, url_prefix="/api/webhooks")
     app.register_blueprint(wallet_bp, url_prefix="/api/wallet")
     app.register_blueprint(pieces_bp, url_prefix="/api/pieces")
     app.register_blueprint(posts_bp, url_prefix="/api/posts")

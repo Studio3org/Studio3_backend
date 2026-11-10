@@ -127,3 +127,21 @@ def expire_ticket_holds() -> None:
     from src.modules.events.ticketing_service import expire_holds as run
 
     _run("ticket-holds", run)
+
+
+
+@celery_app.task(name="orders.auto_complete_delivered")
+def auto_complete_delivered() -> None:
+    """A delivered order the buyer never confirmed completes after ORDER_AUTO_COMPLETE_DAYS,
+    and the artist is paid (Convelio plan D-9)."""
+    from src.modules.shipping.shipping_jobs import auto_complete_delivered as run
+
+    _run("auto-complete-delivered", run)
+
+
+@celery_app.task(name="shipping.flag_stale_shipments")
+def flag_stale_shipments() -> None:
+    """Convelio shipments gone quiet, and bookings whose outcome is unknown, for ops."""
+    from src.modules.shipping.shipping_jobs import flag_stale_shipments as run
+
+    _run("stale-shipments", run)

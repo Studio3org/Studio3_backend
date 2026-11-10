@@ -288,6 +288,27 @@ def my_tickets():
     return _ok("OK", data, status)
 
 
+@user_bp.get("/me/pickup-address")
+@auth_required
+@async_handler
+def get_pickup_address():
+    """B31: the studio Convelio collects sold work from. Only ever shown to its owner."""
+    from src.modules.shipping import shipping_controller
+
+    data, status = shipping_controller.get_pickup_address()
+    return _ok("OK", data, status)
+
+
+@user_bp.put("/me/pickup-address")
+@auth_required
+@async_handler
+def set_pickup_address():
+    from src.modules.shipping import shipping_controller
+
+    data, status = shipping_controller.set_pickup_address()
+    return _ok("Pickup address saved.", data, status)
+
+
 @user_bp.get("/me/deletion-check")
 @auth_required
 @async_handler
@@ -451,3 +472,18 @@ def unhide_collected(piece_id):
 
     data, status = collected.set_hidden(piece_id, False)
     return _ok("Back in your Collection.", data, status)
+
+
+
+# Phase 8: re-reading a shipping quote (`/api/shipping-quotes/<id>`).
+shipping_quotes_bp = Blueprint("shipping_quotes", __name__)
+
+
+@shipping_quotes_bp.get("/<quote_id>")
+@auth_required
+@async_handler
+def get_shipping_quote(quote_id):
+    from src.modules.shipping import shipping_controller
+
+    data, status = shipping_controller.get_quote(quote_id)
+    return _ok("OK", data, status)

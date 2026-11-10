@@ -68,6 +68,10 @@ def detail(monkeypatch):
     from src.modules.events import lineup_service
 
     monkeypatch.setattr(lineup_service, "exhibitions_for_piece", lambda _db, _id: [])
+    monkeypatch.setattr(pieces_controller, "_viewer_order", lambda _db, _piece, _viewer: None)
+    from src.modules.shipping import shipping_controller
+
+    monkeypatch.setattr(shipping_controller, "readiness", lambda _db, _piece: {"ready": True, "missing": []})
     return lambda viewer: pieces_controller.enrich_piece_dict(None, piece, viewer)
 
 

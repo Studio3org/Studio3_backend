@@ -6,7 +6,7 @@ Ops books FedEx/UPS by hand and records the result here; there is no delivery we
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, String, Integer, ForeignKey
+from sqlalchemy import Column, DateTime, String, Integer, ForeignKey, Text
 from sqlalchemy.dialects.postgresql import UUID
 
 from src.shared.config.database import Base
@@ -33,8 +33,9 @@ class Shipment(Base):
         unique=True,
         index=True,
     )
-    courier = Column(String(64), nullable=False)
-    tracking_number = Column(String(128), nullable=False)
+    # Hand-entered for a manual booking; empty for Convelio, which gives a tracking link.
+    courier = Column(String(64), nullable=True)
+    tracking_number = Column(String(128), nullable=True)
     shipment_date = Column(DateTime(timezone=True), nullable=True)
     status = Column(String(24), default=SHIPMENT_LABEL_CREATED, nullable=False)
     # What the courier actually charged the platform, entered by ops. The collector pays a
@@ -42,6 +43,18 @@ class Shipment(Base):
     # the platform's shipping margin (often negative) is invisible. Booked to the ledger as
     # a shipping_costs expense against platform_bank — the courier is paid outside Stripe.
     actual_shipping_cost_cents = Column(Integer, nullable=True)
+    # Phase 8 (Convelio): their order, its raw status (for display), links, and whether our
+    # booking call is known to have worked (D-6).
+    provider = Column(String(16), nullable=True)
+    provider_order_id = Column(String(64), nullable=True, unique=True)
+    provider_order_ref = Column(String(64), nullable=True)
+    provider_status = Column(String(32), nullable=True)
+    tracking_link = Column(String(1024), nullable=True)
+    dashboard_link = Column(String(1024), nullable=True)
+    booking_state = Column(String(12), nullable=True)
+    booking_error = Column(Text, nullable=True)
+    last_event_at = Column(DateTime(timezone=True), nullable=True)
+    delivered_at = Column(DateTime(timezone=True), nullable=True)
     created_by_admin_id = Column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
     )

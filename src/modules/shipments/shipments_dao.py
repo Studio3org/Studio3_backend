@@ -132,6 +132,11 @@ def update_shipment(
                 f"Status must be one of: {', '.join(VALID_SHIPMENT_STATUSES)}", 400
             )
         shipment.status = status
+        if status == SHIPMENT_DELIVERED:
+            # Starts the auto-complete clock (Phase 8, D-9) for a hand-entered delivery too.
+            from datetime import datetime, timezone
+
+            shipment.delivered_at = shipment.delivered_at or datetime.now(timezone.utc)
         if status == SHIPMENT_DELIVERED and order.status == "shipped":
             orders_dao.transition_order(
                 db, order, "awaiting_confirmation", allowed_from={"shipped"}, commit=False

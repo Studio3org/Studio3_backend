@@ -158,6 +158,7 @@ def disputes_queue():
             failed_refunds=admin_dao.list_failed_refunds(db),
             event_payouts=admin_dao.list_event_payouts_needing_attention(db),
             host_debts=admin_dao.list_open_host_debts(db),
+            shipments=admin_dao.list_shipments_needing_attention(db),
             open_count=admin_dao.count_open_disputes(db),
             failed_count=admin_dao.count_failed_payouts(db),
             active_status=status,
@@ -553,4 +554,19 @@ def retry_event_payout(event_id: str):
                        "status": result.get("status")})
     except AppError as e:
         logger.warning("Event payout retry %s: %s", event_id, e.message)
+    return redirect(url_for("admin.disputes_queue"))
+
+
+
+def retry_booking(order_id: str):
+    """Book a Convelio shipment again after Convelio refused it (Phase 8). Not offered for an
+    unknown outcome: that one may already exist (D-6)."""
+    from src.modules.shipping import booking_service
+
+    oid = _parse_uuid(order_id)
+    if not oid:
+        return redirect(url_for("admin.disputes_queue"))
+    result = booking_service.book_order(str(oid), retry=True)
+    _audit(audit.AUDIT_SHIPMENT_UPDATED, subject_id=oid,
+           detail={"rebooked": True, "bookingState": result.get("state"), "reason": result.get("reason")})
     return redirect(url_for("admin.disputes_queue"))

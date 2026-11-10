@@ -296,6 +296,12 @@ def enrich_piece_dict(db, piece, viewer_id: Optional[uuid.UUID]) -> dict:
     from src.modules.events.lineup_service import exhibitions_for_piece
 
     base["exhibitions"] = exhibitions_for_piece(db, piece.id)
+    # B32: the viewer's own order for this piece (buyer or artist), for the delivery card.
+    base["viewerOrder"] = _viewer_order(db, piece, viewer_id)
+    if viewer_id is not None and viewer_id == piece.user_id:
+        from src.modules.shipping.shipping_controller import readiness
+
+        base["shippingReady"] = readiness(db, piece)
     # How many people saved it, for its owner only (BACKEND_CHANGES B17): never shown to anyone
     # else, so the field is left out rather than sent as null.
     if viewer_id is not None and viewer_id == piece.user_id:
@@ -324,6 +330,38 @@ def enrich_piece_dict(db, piece, viewer_id: Optional[uuid.UUID]) -> dict:
 
     base.update(my_bid.viewer_bid(db, piece.id, viewer_id))
     return base
+
+
+def _viewer_order(db, piece, viewer_id) -> Optional[dict]:
+    if viewer_id is None:
+        return None
+    from sqlalchemy import or_
+
+    from src.modules.orders import orders_dao
+    from src.shared.models.order import Order, OrderItem
+    from src.shared.models.shipment import Shipment
+
+    order = db.execute(
+        select(Order).join(OrderItem, OrderItem.order_id == Order.id)
+        .where(OrderItem.piece_id == piece.id, or_(Order.buyer_id == viewer_id, Order.seller_id == viewer_id),
+               Order.status.notin_(("cancelled", "failed")))
+        .order_by(Order.created_at.desc()).limit(1)
+    ).scalar_one_or_none()
+    if order is None:
+        return None
+    shipment = db.execute(select(Shipment).where(Shipment.order_id == order.id)).scalar_one_or_none()
+    return {
+        "id": str(order.id),
+        "side": "buyer" if order.buyer_id == viewer_id else "seller",
+        "status": order.status,
+        "deliveryType": order.delivery_type,
+        "shipment": orders_dao.shipment_view(shipment),
+        # Convelio arranges the pickup date with the artist by phone and gives no ETA in its
+        # API, so these stay empty until it does.
+        "pickupAt": None,
+        "arrivalWindow": None,
+        "onTime": None,
+    }
 
 
 def get_detail(piece_id: str, viewer_id: Optional[uuid.UUID] = None):

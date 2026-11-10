@@ -18,7 +18,7 @@ Responses keep the usual envelope `{success, message, data}`. Errors are `{succe
 | 6. Account and settings (going public, selling off, deletion check, hide from collection) | Done, on `development` (`5063d2f`) | Drop the one-by-one approvals; new turn-off message; Delete account reads the check; Hide from my Collection; fees from seller-terms |
 | 7a. Auctions v2 (charge at close, 12-hour fix window, second-chance offer) | Done, on `development` (`a655a20`) | Card check and Ship to at the first bid; new increments; no extensions; payment-failed and second-chance screens |
 | 7b. Shipping, insurance and tax in the charge at close | After Phase 8 | Remove the auction checkout |
-| 8. Convelio shipping and checkout pricing | Not started | — |
+| 8. Convelio shipping and checkout pricing | Done (not yet committed); Convelio is off until switched on | New checkout (speed, delivery type, insurance, live quote, pending quote); listing fields; pickup address screen; shipment tracker; piece-page estimate |
 
 The shared dev database (Aiven) is at migration `059_auctions_v2`, so a build pointed at it can use everything through Phase 7a.
 
@@ -893,3 +893,141 @@ If the winner abandons the checkout (the 15-minute sweep cancels the order), the
 - **Event auctions now get the same 12 hours.** The old rule was 10 minutes at an event.
 - **Auctions already running** when this deploys keep their holds: their winner is captured from the hold, and their runners-up cascade as before.
 - **Local development (no Stripe):** the card id `pm_card_chargeDeclined` declines, as it does in Stripe's test mode, so the failure flows can be tried.
+
+---
+
+## Phase 8: Convelio shipping and checkout pricing (B19, B31, B32)
+
+Built to the Convelio plan and Convelio's v2 API. **Convelio is off until the server switches it on** (`CONVELIO_ENABLED`). Until then, checkout keeps the flat rates and the current app works unchanged.
+- **Switching on:** only after the app below ships. With Convelio on, checkout needs a `quoteId`.
+- **Checking which mode is on:** `GET /api/pieces/:id/shipping-quote` returns `live: true` or `false`.
+
+### 8.1 What the artist fills in (listing, `SettingsSelling`)
+
+Convelio prices on the **packed** piece. Before a piece can be shipped, the piece and the artist need:
+
+| Field | Notes |
+|---|---|
+| `packageLengthCm`, `packageWidthCm`, `packageHeightCm` | Packed size. Collect it in inches and convert |
+| `weightKg` | Packed weight. Collect it in pounds and convert |
+| `declaredValueCents` | Optional; the price is used otherwise |
+| `shippingItemType` | One of `fine_art.painting`, `fine_art.picture`, `fine_art.sculpture`, `fine_art.installation`, `decorative.ceramics`, `decorative.artefact`, `other.other`. If not sent, it's guessed from the medium |
+| `shippingPacking` | `not_packed` (Convelio crates it, the default) or `wood_crated` |
+| `shippingMaterials` | A list from `glass`, `stone`, `ceramic`, `framed_glass`, `unframed`, `pastel`, `wet`, `protruding`, … |
+| **Pickup address** (on the artist, B31) | `PUT /api/user/me/pickup-address {"addressId"}`, one of their own **US** addresses **with a phone** (Convelio calls it to arrange pickup). `GET` returns it. Only ever shown to the artist |
+
+The piece's owner sees `shippingReady: {ready, missing: ["weight", "pickup address", …]}` on the piece detail.
+
+**App changes:**
+- [ ] Listing form: packed size in inches, weight in pounds, packing, item type, and materials or framing.
+- [ ] A Pickup address screen in Settings, Selling.
+- [ ] Show `shippingReady.missing` to the artist.
+
+### 8.2 The piece page estimate (B19)
+
+`GET /api/pieces/:id/shipping-estimate?zip=&state=` (no sign-in needed):
+
+```json
+{"available": true, "source": "table", "lowCents": 25000, "highCents": 60000, "currency": "USD", "live": false}
+```
+
+- `source: "convelio"` when Convelio prices it; for now it doesn't for US routes, so `source` is `"table"`, a range from the packed size and weight.
+- `available: false` (with `missing`) when the artist hasn't added the size and weight.
+
+**App changes:**
+- [ ] "Shipping from about $250 to $600" on the piece page.
+
+### 8.3 Checkout with a live quote (`collect_piece_sheet.dart`)
+
+**1. Quote.** `POST /api/pieces/:id/shipping-quotes`:
+
+```json
+{"addressId": "…", "speed": "regular_speed" | "express", "deliveryType": "curbside" | "white_glove", "insurance": true}
+```
+
+`insurance` defaults to on. The response is `201`:
+
+```json
+{"id": "…", "status": "created", "pending": false, "speed": "regular_speed", "deliveryType": "curbside",
+ "insurance": true, "shippingCents": 34000, "insuranceCents": 2500, "totalShippingCents": 36500,
+ "currency": "USD", "reference": "QVO-…", "expiresAt": "…"}
+```
+
+- The call takes **2 to 9 seconds**. Show a loading state and use a 30-second timeout.
+- **`pending: true`** (`status: "processing"`) means Convelio is pricing it by hand, within 24 hours. The prices are `null`. Show "Shipping quote on its way: we'll notify you".
+  - Nothing is reserved. The buyer gets `shipping_quote_ready` (a push, target the piece, `payload.quoteId`).
+  - `GET /api/shipping-quotes/:id` then shows `status: "ready"` with prices.
+- **`409`** with a message when the artist hasn't added what Convelio needs.
+- **`400`** for a non-US address.
+
+**2. Order.** `POST /api/pieces/:id/collect` with `{"addressId", "quoteId"}`. The server takes the price from the quote; the app never sends one.
+
+| Case | Status and message |
+|---|---|
+| The quote is still pending | `409` "This shipping quote is still being priced…" |
+| The quote has expired | `409` "…has expired. Get a new one." (expires after 24 hours for now) |
+| The quote is for another address | `409` |
+| Convelio on, no `quoteId` | `400` |
+
+The order carries:
+- `shippingCents`: shipping plus insurance;
+- `insuranceCents`: the insurance part of that;
+- `deliveryType`;
+- `taxCents`.
+
+- **A piece collected in the room at an event:** send `"shippingMethod": "pickup"` instead of a quote (only allowed for event pieces with pickup delivery).
+- **Auction checkout** (`/auction-checkout`) takes the same `quoteId`.
+
+**3. Payment.** As now. After the payment goes through, Studio 3 books the courier with Convelio. Nothing is booked before payment.
+
+**App changes:**
+- [ ] Replace the 4 flat tiers with Regular or Express, Curbside or White-glove, and an insurance toggle.
+- [ ] Show the quote's shipping and insurance on separate lines.
+- [ ] Add loading, error and pending states.
+- [ ] Handle the `shipping_quote_ready` notification by opening checkout again on that quote.
+
+### 8.4 Tracking (B32)
+
+Order responses and the piece's `viewerOrder` carry the shipment:
+
+```json
+"shipment": {"provider": "convelio", "providerStatus": "out_for_delivery", "status": "in_transit",
+  "trackingUrl": "https://…", "reference": "CVO-…", "deliveredAt": null, "onHold": false, "cancelled": false,
+  "steps": [{"key": "booked", "done": true}, {"key": "picked_up", "done": true},
+            {"key": "in_transit", "done": true}, {"key": "out_for_delivery", "done": true},
+            {"key": "delivered", "done": false}]}
+```
+
+- **On a collected piece:** `GET /api/pieces/:id` adds `viewerOrder: {id, side: "buyer" | "seller", status, deliveryType, shipment, pickupAt, arrivalWindow, onTime}` for the buyer and the artist; `null` for everyone else.
+- **Not available yet:** `pickupAt`, `arrivalWindow` and `onTime` stay `null`. Convelio arranges pickup with the artist by phone and gives no delivery estimate in its API.
+- **The order moves by itself:**
+  - Convelio's "shipment created" or "picked up" → `shipped`;
+  - "delivered" → `awaiting_confirmation`, and the buyer gets `order_delivered`.
+- **Buyer notifications:**
+
+  | Type | When |
+  |---|---|
+  | `shipment_picked_up` | The courier collected it |
+  | `shipment_out_for_delivery` | It's out for delivery |
+  | `order_delivered` | Delivered |
+  | `shipment_on_hold` | Convelio put it on hold |
+  | `shipment_canceled` | The shipment was cancelled |
+
+- **Auto-complete:** if the buyer never taps "Confirm received", the order completes **7 days after delivery** (unless they reported an issue), and the artist is paid.
+
+**App changes:**
+- [ ] Order detail and the collected-piece card: a tracker from `steps`, the reference, and "Track shipment" opening `trackingUrl`.
+- [ ] Show "Confirm received" after delivery, with "or it completes automatically in 7 days".
+
+### 8.5 Server-side only (for awareness)
+
+- **Settings** (all optional):
+  - `CONVELIO_ENABLED`, `CONVELIO_API_KEY` (`CONVELIO_BASE_URL` is optional);
+  - `SHIPPING_QUOTE_VALID_HOURS` (24) and `SHIPPING_INSURANCE_DEFAULT` (true);
+  - `ORDER_AUTO_COMPLETE_DAYS` (7);
+  - `SALES_TAX_PROVIDER`: `flat`, the default, until the accountant agrees to `stripe`.
+- **Webhook:** `POST /api/webhooks/convelio`, signature-checked. Each event is stored first, then processed. `scripts/register_convelio_webhooks.py` registers it for all five events.
+- **Booking safety:** a booking whose result we never heard back about is never retried automatically, so a piece can't be booked with two couriers. The admin console lists failed and unknown bookings with Book again.
+- **Tax:** with `SALES_TAX_PROVIDER=stripe`, Stripe Tax works out the tax on the artwork and the shipping from the delivery address.
+- **Deploy:** migration `060_convelio_shipping`.
+- **Also fixed:** a server bug where a "run after commit" job could start too early, when a savepoint committed partway through a transaction. It affected wallet updates and waitlist notifications too.

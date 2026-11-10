@@ -283,19 +283,12 @@ def make_payout(db: Session, order: Order, *, status: str = PAYOUT_PENDING, **ov
 
 
 def make_address(db: Session, user: User, **overrides) -> Address:
-    address = Address(
-        id=uuid.uuid4(),
-        user_id=user.id,
-        first_name="Test",
-        last_name="Collector",
-        phone="+15555550123",
-        line1="1 Test St",
-        city="Dallas",
-        state="TX",
-        zip="75201",
-        country="US",
+    fields = {
+        "first_name": "Test", "last_name": "Collector", "phone": "+15555550123",
+        "line1": "1 Test St", "city": "Dallas", "state": "TX", "zip": "75201", "country": "US",
         **overrides,
-    )
+    }
+    address = Address(id=uuid.uuid4(), user_id=user.id, **fields)
     db.add(address)
     db.commit()
     db.refresh(address)

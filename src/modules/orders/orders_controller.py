@@ -27,7 +27,6 @@ from src.modules.orders import orders_dao
 from src.modules.pieces import listing_rules, piece_state
 from src.modules.bids import auction_dao, auction_winner, bid_dao
 from src.modules.orders.shipping import SHIPPING_RATES_CENTS
-from src.shared.config.tax import tax_cents as compute_tax_cents
 from src.modules.notifications import notifications_dao
 from src.modules.payments import money
 from src.modules.orders import stale_orders
@@ -41,14 +40,80 @@ logger = get_logger(__name__)
 CLIENT_DRIVEN_TRANSITIONS = {"cancelled"}
 
 
+def _price_shipping(db, body: dict, *, buyer, piece, address, artwork_cents: int) -> dict:
+    """Shipping, insurance and tax for a checkout (Phase 8).
+
+    Convelio on: the buyer pays the stored quote (`quoteId`); the app never sends a price. A
+    piece collected in the room at an event ("pickup") ships nothing. Convelio off: the flat
+    rates, as before, so installed apps keep working. Insurance is folded into
+    `shipping_cents` (and noted in `insurance_cents`), so the order's parts still add up to
+    its total and the ledger books it as shipping."""
+    from src.modules.shipping import quote_service, shipping_config
+    from src.shared.config import tax_service
+
+    method = (body.get("shippingMethod") or "").strip().lower()
+    quote = None
+    if shipping_config.enabled() and method not in ("pickup",):
+        if not body.get("quoteId"):
+            raise AppError("Get a shipping quote for this address first (quoteId).", 400)
+        quote = quote_service.buyable(db, body.get("quoteId"), buyer, piece)
+        if quote.address_id != address.id:
+            raise AppError("That shipping quote is for a different address.", 409)
+        shipping_cents = quote.total_cents
+        insurance_cents = int(quote.insurance_cents or 0) if quote.insurance else 0
+        method = quote.shipping_speed
+    elif method == "pickup":
+        if not _is_event_pickup(db, piece):
+            raise AppError("This piece isn't collected at an event; choose shipping.", 400)
+        shipping_cents, insurance_cents = 0, 0
+    else:
+        if method not in SHIPPING_RATES_CENTS:
+            raise AppError(f"shippingMethod must be one of: {', '.join(SHIPPING_RATES_CENTS)}", 400)
+        shipping_cents, insurance_cents = SHIPPING_RATES_CENTS[method], 0
+    snapshot = addresses_dao.address_snapshot(address)
+    tax, calculation_id = tax_service.compute(artwork_cents=artwork_cents, shipping_cents=shipping_cents,
+                                              address=snapshot, reference=str(piece.id))
+    return {"method": method, "shipping_cents": shipping_cents, "insurance_cents": insurance_cents,
+            "tax_cents": tax, "tax_calculation_id": calculation_id, "quote": quote,
+            "snapshot": snapshot}
+
+
+def _is_event_pickup(db, piece) -> bool:
+    from src.shared.models.event import EVENT_PUBLISHED, Event, EventPiece
+
+    return db.execute(
+        select(EventPiece.id).join(Event, Event.id == EventPiece.event_id).where(
+            EventPiece.piece_id == piece.id, EventPiece.delivery_mode == "pickup",
+            Event.status == EVENT_PUBLISHED,
+        ).limit(1)
+    ).first() is not None
+
+
+def _stamp(order, priced: dict) -> None:
+    quote = priced["quote"]
+    order.insurance_cents = priced["insurance_cents"]
+    order.tax_calculation_id = priced["tax_calculation_id"]
+    if quote is not None:
+        order.shipping_quote_id = quote.id
+        order.delivery_type = quote.delivery_type
+
+
 def get_shipping_quote(piece_id: str):
     db = SessionLocal()
     try:
         piece = get_piece(db, uuid.UUID(piece_id))
         if not piece:
             raise AppError("Piece not found.", 404)
+        from src.modules.shipping import shipping_config
+        from src.shared.models.shipping import DELIVERY_TYPES, SHIPPING_SPEEDS
+
+        if shipping_config.enabled():
+            # Phase 8: live Convelio quotes — POST /pieces/:id/shipping-quotes with an address.
+            return {"methods": [], "live": True, "speeds": list(SHIPPING_SPEEDS),
+                    "deliveryTypes": list(DELIVERY_TYPES),
+                    "insuranceDefault": shipping_config.insurance_default()}, 200
         methods = [{"id": method, "cents": cents} for method, cents in SHIPPING_RATES_CENTS.items()]
-        return {"methods": methods}, 200
+        return {"methods": methods, "live": False}, 200
     finally:
         db.close()
 
@@ -56,11 +121,8 @@ def get_shipping_quote(piece_id: str):
 def collect(piece_id: str):
     body = request.get_json() or {}
     address_id = body.get("addressId")
-    shipping_method = (body.get("shippingMethod") or "").strip().lower()
     if not address_id:
         raise AppError("addressId is required.", 400)
-    if shipping_method not in SHIPPING_RATES_CENTS:
-        raise AppError(f"shippingMethod must be one of: {', '.join(SHIPPING_RATES_CENTS)}", 400)
     db = SessionLocal()
     try:
         buyer = get_user_by_id(db, uuid.UUID(g.user["id"]))
@@ -83,8 +145,9 @@ def collect(piece_id: str):
             raise AppError("Address not found.", 404)
 
         artwork_cents = piece.price_cents
-        shipping_cents = SHIPPING_RATES_CENTS[shipping_method]
-        tax_cents = compute_tax_cents(artwork_cents)
+        priced = _price_shipping(db, body, buyer=buyer, piece=piece, address=address,
+                                 artwork_cents=artwork_cents)
+        shipping_cents, tax_cents = priced["shipping_cents"], priced["tax_cents"]
         total_cents = artwork_cents + shipping_cents + tax_cents
 
         order = orders_dao.create_order(
@@ -92,13 +155,15 @@ def collect(piece_id: str):
             buyer_id=buyer.id,
             seller_id=piece.user_id,
             piece=piece,
-            shipping_method=shipping_method,
-            address_snapshot=addresses_dao.address_snapshot(address),
+            shipping_method=priced["method"],
+            address_snapshot=priced["snapshot"],
             artwork_cents=artwork_cents,
             shipping_cents=shipping_cents,
             tax_cents=tax_cents,
             total_cents=total_cents,
         )
+        _stamp(order, priced)  # Phase 8: quote, delivery type, insurance, tax calculation
+        db.commit()
         # The client secret comes from POST /orders/<id>/create-payment-intent, not from
         # here. This response used to carry a permanently null clientSecret with a comment
         # claiming payments were unbuilt, which read as though checkout was a stub.
@@ -123,11 +188,8 @@ def auction_checkout(piece_id: str):
     """
     body = request.get_json() or {}
     address_id = body.get("addressId")
-    shipping_method = (body.get("shippingMethod") or "").strip().lower()
     if not address_id:
         raise AppError("addressId is required.", 400)
-    if shipping_method not in SHIPPING_RATES_CENTS:
-        raise AppError(f"shippingMethod must be one of: {', '.join(SHIPPING_RATES_CENTS)}", 400)
     db = SessionLocal()
     try:
         buyer = get_user_by_id(db, uuid.UUID(g.user["id"]))
@@ -157,8 +219,9 @@ def auction_checkout(piece_id: str):
             raise AppError("Address not found.", 404)
 
         artwork_cents = winning.amount_cents
-        shipping_cents = SHIPPING_RATES_CENTS[shipping_method]
-        tax_cents = compute_tax_cents(artwork_cents)
+        priced = _price_shipping(db, body, buyer=buyer, piece=piece, address=address,
+                                 artwork_cents=artwork_cents)
+        shipping_cents, tax_cents = priced["shipping_cents"], priced["tax_cents"]
         total_cents = artwork_cents + shipping_cents + tax_cents
 
         # What the close already collected. Read from the hold rather than assumed to be the
@@ -178,8 +241,8 @@ def auction_checkout(piece_id: str):
             seller_id=piece.user_id,
             piece=piece,
             winning_bid_id=winning.id,
-            shipping_method=shipping_method,
-            address_snapshot=addresses_dao.address_snapshot(address),
+            shipping_method=priced["method"],
+            address_snapshot=priced["snapshot"],
             artwork_cents=artwork_cents,
             shipping_cents=shipping_cents,
             tax_cents=tax_cents,
@@ -188,6 +251,7 @@ def auction_checkout(piece_id: str):
             prepaid_fee_cents=prepaid_fee_cents,
             prepaid_reference=prepaid_reference,
         )
+        _stamp(order, priced)  # Phase 8: quote, delivery type, insurance, tax calculation
 
         # PAY-3: the auction stays `awaiting_winner` until this order is paid (the webhook
         # marks it sold). Marking it sold here meant an abandoned checkout stranded the winner:
@@ -228,6 +292,9 @@ def confirm(order_id: str):
         # order lifecycle (inventory lock, history, notifications) is testable today.
         orders_dao.transition_order(db, order, "paid", commit=False)
         auction_dao.mark_sold_for_order(db, order)  # PAY-3: sold only once paid
+        from src.modules.shipping import booking_service
+
+        booking_service.queue_after_payment(db, order)  # Phase 8 (D-5)
         items = orders_dao.list_items(db, order.id)
         for item in items:
             piece = get_piece(db, item.piece_id)

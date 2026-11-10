@@ -73,6 +73,13 @@ class Order(Base):
     # the payout Transfer, which lets Stripe release funds as the charge settles instead of
     # failing with balance_insufficient.
     stripe_charge_id = Column(String(255), nullable=True)
+    # Phase 8 (Convelio): the quote this order was bought on, its delivery type and
+    # insurance (part of shipping_cents' companion total), and the Stripe Tax calculation.
+    shipping_quote_id = Column(UUID(as_uuid=True), ForeignKey("shipping_quotes.id", ondelete="SET NULL"),
+                               nullable=True)
+    delivery_type = Column(String(32), nullable=True)
+    insurance_cents = Column(Integer, default=0, server_default="0", nullable=False)
+    tax_calculation_id = Column(String(255), nullable=True)
     # Collector's delivery confirmation — the trigger for artist payout release.
     received = Column(Boolean, default=False, nullable=False)
     received_at = Column(DateTime(timezone=True), nullable=True)

@@ -259,6 +259,12 @@ def _on_payment_succeeded(db: Session, intent) -> None:
         from src.modules.bids import auction_dao
 
         auction_dao.mark_sold_for_order(db, order)  # PAY-3: sold only once paid
+        # Phase 8: book the courier once this commits (D-5), and record Stripe Tax.
+        from src.modules.shipping import booking_service
+        from src.shared.config import tax_service
+
+        booking_service.queue_after_payment(db, order)
+        tax_service.record_paid(order)
         for item in orders_dao.list_items(db, order.id):
             piece = db.get(Piece, item.piece_id)
             if piece:

@@ -164,4 +164,35 @@
     </tbody>
   </table>
 </div>
+<div class="panel table-scroll">
+  <h2 style="font-size:15px;margin-top:0;">Shipments that need a look ({{ shipments|length }})</h2>
+  <p class="muted" style="margin-top:0;">
+    Convelio bookings that failed or whose result we never heard back about, and shipments on
+    hold or cancelled. An unknown booking may exist at Convelio: check their dashboard before
+    booking again. A cancelled one usually means a refund from the order page.
+  </p>
+  <table>
+    <thead><tr><th>Order</th><th>Booking</th><th>Convelio status</th><th>Error</th><th></th></tr></thead>
+    <tbody>
+      {% for s in shipments %}
+      <tr>
+        <td class="mono"><a href="{{ url_for('admin.order_detail', order_id=s.order_id) }}">{{ s.order_id.hex[:8] }}</a></td>
+        <td>{{ s.booking_state or '—' }}</td>
+        <td>{{ s.provider_status or '—' }}</td>
+        <td style="color:var(--danger);">{{ (s.booking_error or '')[:160] }}</td>
+        <td>
+          {% if s.booking_state == 'failed' %}
+          <form method="post" action="{{ url_for('admin.retry_booking', order_id=s.order_id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit">Book again</button>
+          </form>
+          {% elif s.dashboard_link %}<a href="{{ s.dashboard_link }}" target="_blank" rel="noopener">Convelio</a>{% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">None.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
 {% endblock %}

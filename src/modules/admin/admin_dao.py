@@ -147,6 +147,19 @@ def list_event_payouts_needing_attention(db: Session) -> list:
     ).scalars())
 
 
+def list_shipments_needing_attention(db: Session) -> list:
+    """Phase 8: Convelio bookings that failed or whose outcome is unknown, and shipments
+    Convelio put on hold or cancelled."""
+    from src.shared.models.shipment import Shipment
+
+    return list(db.execute(
+        select(Shipment).where(
+            (Shipment.booking_state.in_(("failed", "unknown", "canceled")))
+            | (Shipment.provider_status == "on_hold")
+        ).order_by(Shipment.updated_at.desc())
+    ).scalars())
+
+
 def list_open_host_debts(db: Session) -> list:
     from src.shared.models.ticketing import DEBT_OPEN, HostFeeDebt
 

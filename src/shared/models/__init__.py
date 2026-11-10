@@ -34,6 +34,7 @@ from src.shared.models.ticketing import (
     WalletAppleRegistration,
 )
 from src.shared.models.shipment import Shipment
+from src.shared.models.shipping import ProviderWebhookEvent, ShipmentDocument, ShippingQuote
 from src.shared.models.dispute import Dispute
 from src.shared.models.webhook_event import StripeWebhookEvent
 from src.shared.models.audit import AuditEvent
@@ -103,4 +104,7 @@ __all__ = [
     "AuctionOffer",
     "Hold",
     "Bid",
+    "ShippingQuote",
+    "ShipmentDocument",
+    "ProviderWebhookEvent",
 ]

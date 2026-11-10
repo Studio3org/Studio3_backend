@@ -109,6 +109,14 @@ celery_app.conf.update(
             "task": "events.archive_past",
             "schedule": crontab(minute=0),
         },
+        "auto-complete-delivered": {
+            "task": "orders.auto_complete_delivered",
+            "schedule": crontab(hour=5, minute=0),
+        },
+        "stale-shipments": {
+            "task": "shipping.flag_stale_shipments",
+            "schedule": crontab(hour=6, minute=0),
+        },
         "reconcile-ledger": {
             "task": "ledger.reconcile",
             "schedule": crontab(hour=4, minute=0),

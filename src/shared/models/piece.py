@@ -70,6 +70,11 @@ class Piece(Base):
     package_width_cm = Column(Float, nullable=True)
     package_height_cm = Column(Float, nullable=True)
     declared_value_cents = Column(Integer, nullable=True)
+    # Phase 8 (Convelio): item type (fine_art.painting …), packing (not_packed / wood_crated)
+    # and materials (framed_glass, unframed, pastel …), as Convelio names them.
+    shipping_item_type = Column(String(32), nullable=True)
+    shipping_packing = Column(String(16), nullable=True)
+    shipping_materials = Column(JSONB, nullable=True)
     location = Column(String(255), nullable=True)
     media_aspect_ratio = Column(String(8), nullable=True)
     year_created = Column(Integer, nullable=True)

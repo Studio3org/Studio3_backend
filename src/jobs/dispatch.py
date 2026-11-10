@@ -47,10 +47,32 @@ def enqueue_after_commit(db, path: str, *args) -> None:
     Work that reads what the caller just wrote must not start until it is committed: inline it
     would read the old rows, and a fast worker could too. Wallet pass updates hit exactly this:
     queued mid-transaction, they pushed "ACTIVE" for a ticket being voided.
+
+    A SAVEPOINT committing (ledger_service.get_seller_account uses one) is not the commit:
+    the caller's rows and locks are still open, and running then deadlocked a courier booking
+    on the order's own row lock. Jobs wait in `db.info` for the outermost commit.
     """
     from sqlalchemy import event
 
-    def _run(_session):
+    db.info.setdefault(_PENDING, []).append((path, args))
+    if db.info.get(_HOOKED):
+        return
+    db.info[_HOOKED] = True
+    event.listen(db, "after_commit", _run_pending)
+    event.listen(db, "after_soft_rollback", _drop_pending)
+
+
+_PENDING = "_after_commit_jobs"
+_HOOKED = "_after_commit_hooked"
+
+
+def _run_pending(session) -> None:
+    if session.in_nested_transaction():
+        return
+    for path, args in session.info.pop(_PENDING, []):
         enqueue(path, *args)
 
-    event.listen(db, "after_commit", _run, once=True)
+
+def _drop_pending(session, previous_transaction) -> None:
+    if previous_transaction.parent is None and not previous_transaction.nested:
+        session.info.pop(_PENDING, None)

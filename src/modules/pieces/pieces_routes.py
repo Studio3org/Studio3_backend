@@ -162,3 +162,24 @@ def decline_auction_offer(piece_id):
     from src.modules.bids import auction_controller
     data, status = auction_controller.respond_to_offer(piece_id, False)
     return _ok("Offer declined.", data, status)
+
+
+
+# --- Phase 8: Convelio shipping --------------------------------------------------------------
+
+@pieces_bp.post("/<piece_id>/shipping-quotes")
+@onboarding_required
+@async_handler
+def create_shipping_quote(piece_id):
+    from src.modules.shipping import shipping_controller
+    data, status = shipping_controller.create_quote(piece_id)
+    return _ok("OK", data, status)
+
+
+@pieces_bp.get("/<piece_id>/shipping-estimate")
+@optional_auth
+@async_handler
+def shipping_estimate(piece_id):
+    from src.modules.shipping import shipping_controller
+    data, status = shipping_controller.estimate(piece_id)
+    return _ok("OK", data, status)

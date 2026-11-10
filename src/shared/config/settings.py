@@ -101,6 +101,20 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "Commission on event tickets, in basis points (800 = 8%).", default="800"),
     EnvVar("SALES_TAX_RATE_BPS",
            "Flat sales tax on art and tickets, in basis points (825 = 8.25%).", default="825"),
+    # --- shipping (Phase 8, Convelio) -------------------------------------------------------
+    EnvVar("CONVELIO_ENABLED",
+           "Live Convelio shipping at checkout. Off: the flat rates (installed apps keep working).",
+           default="false"),
+    EnvVar("CONVELIO_API_KEY", "Convelio API key (sk_test_ sandbox / sk_live_ production). Also "
+           "verifies their webhook signatures.", secret=True),
+    EnvVar("CONVELIO_BASE_URL", "Override the Convelio API URL (defaults from the key's prefix)."),
+    EnvVar("SHIPPING_QUOTE_VALID_HOURS", "Hours a shipping quote can be bought on.", default="24"),
+    EnvVar("SHIPPING_INSURANCE_DEFAULT", "Shipping insurance pre-ticked at checkout.", default="true"),
+    EnvVar("ORDER_AUTO_COMPLETE_DAYS",
+           "Days after delivery before an unconfirmed order completes and the artist is paid.",
+           default="7"),
+    EnvVar("SALES_TAX_PROVIDER", "flat (SALES_TAX_RATE_BPS on the artwork) or stripe (Stripe Tax "
+           "by delivery address).", default="flat"),
     EnvVar("AUCTION_PAYMENT_FIX_HOURS",
            "Hours an auction winner has to fix a card that couldn't be charged (Phase 7a).",
            default="12"),

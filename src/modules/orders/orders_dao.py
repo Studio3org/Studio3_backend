@@ -410,12 +410,10 @@ def order_to_dict(
         # True for an auction win (the hammer price was collected before checkout), so a
         # row can say AUCTION rather than SOLD (B34).
         "fromAuction": (order.prepaid_cents or 0) > 0,
-        "shipment": {
-            "courier": shipment.courier,
-            "trackingNumber": shipment.tracking_number,
-            "status": shipment.status,
-            "shipmentDate": shipment.shipment_date.isoformat() if shipment.shipment_date else None,
-        } if shipment else None,
+        "shipment": shipment_view(shipment),
+        # Phase 8: insurance is part of shippingCents; the delivery type chosen at checkout.
+        "insuranceCents": order.insurance_cents or 0,
+        "deliveryType": order.delivery_type,
         "payoutStatus": payout.status if payout else None,
         "dispute": {
             "status": dispute.status,
@@ -424,4 +422,39 @@ def order_to_dict(
         } if dispute else None,
         "createdAt": order.created_at.isoformat(),
         "updatedAt": order.updated_at.isoformat(),
+    }
+
+
+
+# The tracker the app draws (B32), in order. A Convelio status maps onto the step it's in.
+TRACKER_STEPS = ("booked", "picked_up", "in_transit", "out_for_delivery", "delivered")
+_STEP_OF = {
+    "shipment_created": "booked", "picked_up": "picked_up", "packing_in_progress": "in_transit",
+    "export_in_progress": "in_transit", "freight_in_transit": "in_transit",
+    "import_in_progress": "in_transit", "out_for_delivery": "out_for_delivery",
+    "shipment_completed": "delivered",
+}
+_STEP_OF_MANUAL = {"label_created": "booked", "picked_up": "picked_up", "in_transit": "in_transit",
+                   "delivered": "delivered"}
+
+
+def shipment_view(shipment) -> Optional[dict]:
+    """The order's shipment: the old fields, plus Convelio's (Phase 8, B32)."""
+    if shipment is None:
+        return None
+    step = _STEP_OF.get(shipment.provider_status or "") or _STEP_OF_MANUAL.get(shipment.status, "booked")
+    reached = TRACKER_STEPS.index(step)
+    return {
+        "courier": shipment.courier or ("Convelio" if shipment.provider == "convelio" else None),
+        "trackingNumber": shipment.tracking_number or shipment.provider_order_ref,
+        "status": shipment.status,
+        "shipmentDate": shipment.shipment_date.isoformat() if shipment.shipment_date else None,
+        "provider": shipment.provider,
+        "providerStatus": shipment.provider_status,
+        "trackingUrl": shipment.tracking_link,
+        "reference": shipment.provider_order_ref,
+        "deliveredAt": shipment.delivered_at.isoformat() if shipment.delivered_at else None,
+        "onHold": shipment.provider_status == "on_hold",
+        "cancelled": shipment.provider_status == "canceled",
+        "steps": [{"key": key, "done": i <= reached} for i, key in enumerate(TRACKER_STEPS)],
     }

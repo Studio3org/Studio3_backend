@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, String, Boolean, Text, Float, Integer
+from sqlalchemy import Column, DateTime, String, Boolean, Text, Float, Integer, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 
@@ -44,6 +44,11 @@ class User(Base):
     # ensure_customer raised AttributeError on the first real bid — invisible until now only
     # because the hold tests run in dev mode, which skips Stripe entirely.
     stripe_customer_id = Column(String(255), nullable=True, unique=True)
+    # Phase 8 (B31): the studio Convelio collects sold work from. Private to the artist.
+    pickup_address_id = Column(UUID(as_uuid=True),
+                               ForeignKey("addresses.id", ondelete="SET NULL", use_alter=True,
+                                          name="users_pickup_address_id_fkey"),
+                               nullable=True)
     # Reduced commission for a specific artist, in basis points. Null = the standard
     # platform rate; set only for the client's named lower-rate tier.
     commission_bps_override = Column(Integer, nullable=True)

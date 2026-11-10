@@ -78,6 +78,12 @@ def retry_refund(order_id):
     return admin_controller.retry_refund(order_id)
 
 
+@admin_bp.post("/orders/<order_id>/retry-booking")
+@admin_session_required
+def retry_booking(order_id):
+    return admin_controller.retry_booking(order_id)
+
+
 @admin_bp.post("/ticket-refunds/<refund_id>/retry")
 @admin_session_required
 def retry_ticket_refund(refund_id):
