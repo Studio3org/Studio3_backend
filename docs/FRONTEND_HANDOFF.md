@@ -13,13 +13,13 @@ Responses keep the usual envelope `{success, message, data}`. Errors are `{succe
 | 2A. Quick fixes | Done, on `development` (`f0e5c8a`) | Use the piece on order rows; logout-all message; founding-rate end date |
 | 3. Ticketing core | Done, on `development` (`25460a1`) | Host ticket-type screens; free tickets through `/orders`; checkout polling; tickets screen already works |
 | 3A. Google Wallet and Apple Wallet | Done, on `development` (`25af41f`) | "Add to Google Wallet" / "Add to Apple Wallet" buttons on the confirmation and ticket screens |
-| 4. Ticket refunds, waitlist, check-in, host cancel and reschedule, host payouts | Done (not yet committed) | Refund button; waitlist screens already built; scanner and guest list; reschedule and cancel-preview screens |
-| 5. Co-host and artist invites, piece approvals, bidding end | Done (not yet committed) | Invite inbox and accept/decline; piece request screen; "Waiting for" in Lineup; bidding end picker; Exhibited on piece pages |
-| 6. Account and settings (going public, selling off, deletion check, hide from collection) | Done (not yet committed) | Drop the one-by-one approvals; new turn-off message; Delete account reads the check; Hide from my Collection; fees from seller-terms |
+| 4. Ticket refunds, waitlist, check-in, host cancel and reschedule, host payouts | Done, on `development` (`5063d2f`) | Refund button; waitlist screens already built; scanner and guest list; reschedule and cancel-preview screens |
+| 5. Co-host and artist invites, piece approvals, bidding end | Done, on `development` (`5063d2f`) | Invite inbox and accept/decline; piece request screen; "Waiting for" in Lineup; bidding end picker; Exhibited on piece pages |
+| 6. Account and settings (going public, selling off, deletion check, hide from collection) | Done, on `development` (`5063d2f`) | Drop the one-by-one approvals; new turn-off message; Delete account reads the check; Hide from my Collection; fees from seller-terms |
 | 7. Auctions v2 (charge at close, 12-hour fix window, second-chance offer) | Not started | — |
 | 8. Convelio shipping and checkout pricing | Not started | — |
 
-The shared dev database (Aiven) is at migration `055_wallet_passes`, so a build pointed at it can use everything through Phase 3A.
+The shared dev database (Aiven) is at migration `058_collection_hidden`, so a build pointed at it can use everything through Phase 6.
 
 ---
 
