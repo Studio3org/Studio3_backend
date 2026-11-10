@@ -49,6 +49,7 @@ source "$CONFIG"
 : "${DEPLOY_SSH_KEY:?}"
 : "${JWT_SECRET:=}"
 : "${SECRET_KEY:=}"
+: "${TICKET_SIGNING_KEY:=}"
 
 # Everything src/shared/config/settings.py marks required in production. Checked here so a
 # missing value costs a one-line error instead of a synced deploy that crash-loops on boot.
@@ -118,6 +119,12 @@ fi
 if [[ -z "${SECRET_KEY}" ]]; then
   SECRET_KEY=$(openssl rand -hex 32)
 fi
+# Signs every ticket's QR code (src/shared/ticketing/ticket_codes.py): a base64 32-byte
+# Ed25519 seed. Pinned like the two above — a new one would make every issued ticket fail
+# at the door.
+if [[ -z "${TICKET_SIGNING_KEY}" ]]; then
+  TICKET_SIGNING_KEY=$(openssl rand -base64 32)
+fi
 
 FRONTEND_URL="${FRONTEND_URL:-https://${DOMAIN:-localhost}}"
 BACKEND_URL="${BACKEND_URL:-https://${DOMAIN:-$EC2_HOST}}"
@@ -136,18 +143,23 @@ REDIS_URL=${REDIS_URL}
 
 JWT_SECRET=${JWT_SECRET}
 SECRET_KEY=${SECRET_KEY}
+TICKET_SIGNING_KEY=${TICKET_SIGNING_KEY}
 JWT_ACCESS_EXPIRY_MINUTES=${JWT_ACCESS_EXPIRY_MINUTES:-15}
 SALT_ROUNDS=${SALT_ROUNDS:-10}
 
 FRONTEND_URL=${FRONTEND_URL}
 CORS_ORIGINS='${CORS_ORIGINS:-}'
 BACKEND_URL=${BACKEND_URL}
+# Proxies in front of the app: nginx, so 1. The client IP is read from that many
+# X-Forwarded-For entries (rate limits, session records).
+TRUSTED_PROXY_HOPS=${TRUSTED_PROXY_HOPS:-1}
 
 STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
 STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
 PLATFORM_CURRENCY=${PLATFORM_CURRENCY:-usd}
 PLATFORM_COMMISSION_BPS=${PLATFORM_COMMISSION_BPS}
 PLATFORM_TICKET_COMMISSION_BPS=${PLATFORM_TICKET_COMMISSION_BPS:-800}
+SALES_TAX_RATE_BPS=${SALES_TAX_RATE_BPS:-825}
 CONNECT_ACCOUNT_COUNTRY=${CONNECT_ACCOUNT_COUNTRY:-US}
 CONNECT_ONBOARDING_BASE_URL=${CONNECT_ONBOARDING_BASE_URL:-https://studio-3.co/connect}
 
@@ -163,6 +175,17 @@ SES_FROM_EMAIL=${SES_FROM_EMAIL:-}
 # unquoted value in a systemd EnvironmentFile can truncate at the first one — which
 # would break push notifications with nothing in the logs to say why.
 FIREBASE_SERVICE_ACCOUNT_JSON='${FIREBASE_SERVICE_ACCOUNT_JSON:-}'
+
+# Wallet passes for event tickets (Phase 3A). Each wallet is off until its values are set.
+# The service-account JSON and the .p12 password are single-quoted for the same reason as
+# FIREBASE_SERVICE_ACCOUNT_JSON above: spaces or symbols would truncate them.
+GOOGLE_WALLET_ISSUER_ID=${GOOGLE_WALLET_ISSUER_ID:-}
+GOOGLE_WALLET_SERVICE_ACCOUNT_JSON='${GOOGLE_WALLET_SERVICE_ACCOUNT_JSON:-}'
+APPLE_PASS_TYPE_ID=${APPLE_PASS_TYPE_ID:-}
+APPLE_TEAM_ID=${APPLE_TEAM_ID:-}
+APPLE_PASS_CERT_P12=${APPLE_PASS_CERT_P12:-}
+APPLE_PASS_CERT_PASSWORD='${APPLE_PASS_CERT_PASSWORD:-}'
+APPLE_WWDR_CERT=${APPLE_WWDR_CERT:-}
 
 CELERY_BROKER_URL=${CELERY_BROKER_URL:-}
 CELERY_REDIS_DB=${CELERY_REDIS_DB:-1}
@@ -201,6 +224,7 @@ upsert_config() {
 }
 upsert_config JWT_SECRET "$JWT_SECRET"
 upsert_config SECRET_KEY "$SECRET_KEY"
+upsert_config TICKET_SIGNING_KEY "$TICKET_SIGNING_KEY"
 
 echo "==> Install deps + systemd units + restart api, worker, beat"
 "${SSH[@]}" bash -s <<'REMOTE'

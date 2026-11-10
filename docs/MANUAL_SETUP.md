@@ -404,6 +404,24 @@ Firebase sends iOS push *through* APNs and needs a key to do it.
 
 Without this, iOS devices register for push and simply never receive any.
 
+### 5.6 Apple Wallet: event tickets
+
+Tickets can be added to Apple Wallet (Phase 3A). This needs a Pass Type ID and its certificate, which only the account holder can create. Without them the server reports Apple Wallet as unavailable, and nothing else changes.
+
+1. Developer account → Certificates, Identifiers & Profiles → Identifiers → **+** → **Pass Type IDs**. Description "Studio 3 tickets", identifier **`pass.co.studio-3.ticket`**.
+2. Select it → **Create Certificate**. Make a CSR in Keychain Access (Certificate Assistant → Request a Certificate From a Certificate Authority, saved to disk), upload it, and download `pass.cer`.
+3. Double-click `pass.cer` to add it to Keychain. In **My Certificates**, find "Pass Type ID: pass.co.studio-3.ticket", expand it so the private key shows, right-click both → **Export 2 items** → `pass.p12`, with a password.
+4. Download Apple's **WWDR G4** intermediate certificate (`AppleWWDRCAG4.cer`) from apple.com/certificateauthority.
+5. Encode both for the environment:
+   ```bash
+   base64 -i pass.p12 | tr -d '\n'           # → APPLE_PASS_CERT_P12
+   base64 -i AppleWWDRCAG4.cer | tr -d '\n'  # → APPLE_WWDR_CERT
+   ```
+
+→ Render and AWS: **`APPLE_PASS_TYPE_ID`** (`pass.co.studio-3.ticket`), **`APPLE_TEAM_ID`** (5.1), **`APPLE_PASS_CERT_P12`**, **`APPLE_PASS_CERT_PASSWORD`**, **`APPLE_WWDR_CERT`**.
+
+Pass updates (a moved event, a refunded ticket) reach phones only when **`BACKEND_URL`** is `https://`. Apple calls `BACKEND_URL/api/wallet/apple/v1/…` and pushes with the same certificate, so no extra key is needed. The certificate expires after a year; renew it before then, or new passes stop being issued.
+
 ### 5.5 App Store listing
 
 When you are ready to leave TestFlight: App Store Connect → new app → the usual metadata,
@@ -499,6 +517,20 @@ STRIPE_PUBLISHABLE_KEY=pk_live_…
 The publishable key is safe to ship — it is what lets the Stripe SDK take card details
 directly, so card data never touches our server. **Never put the secret key here.**
 
+### 6.6 Google Wallet: event tickets (the client's requirement)
+
+Tickets can be added to Google Wallet (Phase 3A). Google reviews the issuer before passes work for everyone, which takes days, so start this early.
+
+1. **pay.google.com/business/console** → Google Wallet API → create the **issuer account** for Studio 3. Note the **Issuer ID** (a long number).
+2. Google Cloud console (any project; the Firebase project is fine) → APIs & Services → enable **Google Wallet API**.
+3. IAM → Service accounts → create **`studio3-wallet`** → Keys → Add key → JSON. Keep the file safe.
+4. Back in the Wallet console → **Users** → invite the service account's email with the **Developer** role.
+5. Wallet console → **Request publishing access**. Until Google approves it, passes save only for accounts listed as test users in the console.
+
+→ Render and AWS: **`GOOGLE_WALLET_ISSUER_ID`**, and **`GOOGLE_WALLET_SERVICE_ACCOUNT_JSON`** (the whole JSON file as one line).
+
+The pass logo is fetched by Google from `BACKEND_URL/api/wallet/assets/logo.png`, so `BACKEND_URL` must be the public `https://` address.
+
 ### 6.5 Play Store listing
 
 Play Console → create app → store listing, content rating, data safety, release.
@@ -590,6 +622,13 @@ Work down it. Each line is something that silently does not work if skipped.
 - [ ] **Worker running** — an auction closed on its own
 - [ ] **Beat running** — exactly one instance
 - [ ] `/health` returns `ok`
+
+### Wallet (event tickets)
+- [ ] Google Wallet issuer created, service account added as Developer, **publishing access approved**
+- [ ] `GOOGLE_WALLET_ISSUER_ID` and `GOOGLE_WALLET_SERVICE_ACCOUNT_JSON` set
+- [ ] Apple Pass Type ID certificate exported; all five `APPLE_*` variables set
+- [ ] `BACKEND_URL` is the public `https://` address
+- [ ] A real ticket added to Google Wallet on an Android phone and to Apple Wallet on an iPhone, and the door scanner reads the pass's QR code
 
 ### Push
 - [ ] Firebase service account JSON on Render

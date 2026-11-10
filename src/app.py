@@ -79,6 +79,7 @@ def create_app(config_overrides: dict | None = None):
     # Blueprints
     from src.modules.auth.auth_routes import auth_bp
     from src.modules.user.user_routes import user_bp, media_bp
+    from src.modules.wallet.wallet_routes import wallet_bp
     from src.modules.user.users_content_routes import users_bp
     from src.modules.pieces.pieces_routes import pieces_bp
     from src.modules.posts.posts_routes import posts_bp
@@ -107,6 +108,7 @@ def create_app(config_overrides: dict | None = None):
     app.register_blueprint(user_bp, url_prefix="/api/user")
     app.register_blueprint(users_bp, url_prefix="/api/users")
     app.register_blueprint(media_bp, url_prefix="/api/media")
+    app.register_blueprint(wallet_bp, url_prefix="/api/wallet")
     app.register_blueprint(pieces_bp, url_prefix="/api/pieces")
     app.register_blueprint(posts_bp, url_prefix="/api/posts")
     app.register_blueprint(social_bp, url_prefix="/api")

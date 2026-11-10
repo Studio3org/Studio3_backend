@@ -38,3 +38,19 @@ def enqueue(path: str, *args) -> None:
         run_job.delay(path, *[str(a) for a in args])
     except Exception:
         logger.exception("Background job %s failed to run or queue", path)
+
+
+def enqueue_after_commit(db, path: str, *args) -> None:
+    """enqueue(path, *args) once `db`'s transaction commits — never before, and not at all if
+    it rolls back.
+
+    Work that reads what the caller just wrote must not start until it is committed: inline it
+    would read the old rows, and a fast worker could too. Wallet pass updates hit exactly this:
+    queued mid-transaction, they pushed "ACTIVE" for a ticket being voided.
+    """
+    from sqlalchemy import event
+
+    def _run(_session):
+        enqueue(path, *args)
+
+    event.listen(db, "after_commit", _run, once=True)

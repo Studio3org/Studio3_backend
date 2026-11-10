@@ -226,3 +226,17 @@ def place_ticket_order(event_id):
 def get_ticket_order(event_id, order_id):
     data, status = events_controller.get_ticket_order(event_id, order_id)
     return _ok("OK", data, status)
+
+
+@events_bp.get("/<event_id>/orders/<order_id>/wallet-pass")
+@auth_required
+@async_handler
+def wallet_pass(event_id, order_id):
+    """B25. `?platform=google` → {"saveUrl"}; Apple (default) → the pass file itself."""
+    from flask import Response
+
+    result = events_controller.wallet_pass(event_id, order_id)
+    if "saveUrl" in result:
+        return _ok("OK", result, 200)
+    return Response(result["body"], mimetype=result["mimetype"], headers={
+        "Content-Disposition": f'attachment; filename="{result["filename"]}"'})

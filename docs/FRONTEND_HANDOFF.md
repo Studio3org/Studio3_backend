@@ -12,6 +12,7 @@ Responses keep the usual envelope `{success, message, data}`. Errors are `{succe
 | 2. Refunds and cancellation | Done on branch `phase2` | Order detail: cancel buttons, artist cancel confirmation, buyer "Report an issue" |
 | 2A. Quick fixes | Done on branch `phase2` | Use the piece on order rows; logout-all message; founding-rate end date |
 | 3. Ticketing core | Done (not yet committed) | Host ticket-type screens; free tickets through `/orders`; checkout polling; tickets screen already works |
+| 3A. Google Wallet and Apple Wallet | Done (not yet committed) | "Add to Google Wallet" / "Add to Apple Wallet" buttons on the confirmation and ticket screens |
 | 4. Ticket refunds, waitlist, check-in | Not started | — |
 | 5. Event invites and approvals | Not started | — |
 | 6. Auction winner deadline | Not started | — |
@@ -268,3 +269,63 @@ The server sends the tickets and the receipt by email (spec: "the app, not Strip
 - **Tax:** sales tax is now whole-cent arithmetic for art and tickets (`SALES_TAX_RATE_BPS`, default 8.25%).
 - **QR codes:** signed with Ed25519 (`TICKET_SIGNING_KEY`). In Phase 4, door scanners will check them offline with only the public key.
 - **Deploy:** migration `054_event_ticketing`, and Celery beat must be restarted to pick up the new job.
+
+---
+
+## Phase 3A: Google Wallet and Apple Wallet (B25)
+
+The client's requirement: after booking, the buyer can put their tickets in **Google Wallet**, and **Apple Wallet** on iPhone. The pass shows the same QR code as the app's ticket screen, and the door scanner checks it the same way, so a ticket is still one admission whichever app shows it.
+
+### 3A.1 Is a wallet available?
+
+`GET /api/user/me/tickets` (each ticket) and `GET /api/events/:id/orders/:orderId` now carry:
+
+```json
+"walletPassAvailable": true,
+"walletPasses": {"apple": true, "google": true}
+```
+
+- `walletPassAvailable` is B25's single flag: true if either wallet works.
+- `walletPasses` says which.
+- A wallet is `false` until its credentials are set on the server (see `docs/MANUAL_SETUP.md` 5.6 and 6.6). **Only show a button when its flag is true.**
+
+### 3A.2 Getting the pass
+
+`GET /api/events/:id/orders/:orderId/wallet-pass` (buyer only; anyone else gets 404):
+
+| Query | Response |
+|---|---|
+| `?platform=google` | `200` `{"data": {"saveUrl": "https://pay.google.com/gp/v/save/…"}}`. Open this URL (it shows Google's own "Save to Google Wallet" screen). One link holds every ticket in the order |
+| none (Apple) | `200` raw bytes. With one ticket it's `application/vnd.apple.pkpass`; with several it's `application/vnd.apple.pkpasses` (a bundle, iOS 15+) |
+| Apple, `&ticketId=<id>` | Just that ticket's `.pkpass` |
+| Order refunded or cancelled, or no valid tickets left | `410` "These tickets are no longer valid." |
+| Not paid yet | `409` "The tickets haven't been issued yet." Wait for `status: "paid"` (3.3) |
+| That wallet isn't set up on the server | `503` |
+
+**App changes:**
+- [ ] `EventConfirmedPage` and `EventTicketPage`: show **"Add to Apple Wallet"** on iOS when `walletPasses.apple`, and **"Add to Google Wallet"** on Android when `walletPasses.google`. Use the official badge artwork from Apple and Google.
+- [ ] **Google:** call `…/wallet-pass?platform=google`, then open `saveUrl` with `url_launcher` in an external browser or app.
+- [ ] **Apple:** download `…/wallet-pass` (with the bearer token) and hand the bytes to PassKit. A Flutter package such as `flutter_wallet_card` or `pass_flutter` can present the "Add" sheet from bytes, or save the file and open it.
+
+### 3A.3 Passes stay up to date
+
+- **Voided or refunded ticket:** the pass becomes **void** in Apple Wallet and **inactive** in Google Wallet within a few seconds. Today that happens when someone taps "not going" on a free ticket; refunds and cancellations join in Phase 4.
+- **Moved event:** passes update (Phase 4).
+
+No app change is needed for this; Apple and Google handle it.
+
+### 3A.4 The email
+
+The ticket confirmation email now has "Add to Apple Wallet" and "Add to Google Wallet" buttons when they're set up. The Apple link works without logging in (it's signed and lasts 30 days), so buyers can add tickets from a computer or another device.
+
+### 3A.5 Server-side only (for awareness)
+
+- **Signing:**
+    - Apple passes are signed with the Pass Type ID certificate plus Apple's WWDR certificate (PKCS#7). The tests check the signature with OpenSSL, the way Apple does.
+    - Google links are JWTs signed with the Wallet service account.
+- **Apple's pass web service** lives under `/api/wallet/apple/v1/` (register, unregister, what changed, latest pass, log). Updates are pushed through Apple's push service with the pass certificate, after the change is committed.
+- **Configuration:** new settings, all optional:
+    - `GOOGLE_WALLET_ISSUER_ID`, `GOOGLE_WALLET_SERVICE_ACCOUNT_JSON`
+    - `APPLE_PASS_TYPE_ID`, `APPLE_TEAM_ID`, `APPLE_PASS_CERT_P12`, `APPLE_PASS_CERT_PASSWORD`, `APPLE_WWDR_CERT`
+- **`BACKEND_URL` must be `https://`** for Apple pass updates and the Google pass logo.
+- **Deploy:** migration `055_wallet_passes`.

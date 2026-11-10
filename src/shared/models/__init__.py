@@ -20,7 +20,13 @@ from src.shared.models.chat import Conversation, ChatMessage
 from src.shared.models.ledger import LedgerAccount, LedgerTransaction, LedgerEntry
 from src.shared.models.payout import Payout
 from src.shared.models.refund import Refund
-from src.shared.models.ticketing import Ticket, TicketOrder, TicketOrderItem, TicketType
+from src.shared.models.ticketing import (
+    Ticket,
+    TicketOrder,
+    TicketOrderItem,
+    TicketType,
+    WalletAppleRegistration,
+)
 from src.shared.models.shipment import Shipment
 from src.shared.models.dispute import Dispute
 from src.shared.models.webhook_event import StripeWebhookEvent
@@ -70,6 +76,7 @@ __all__ = [
     "TicketOrder",
     "TicketOrderItem",
     "TicketType",
+    "WalletAppleRegistration",
     "Shipment",
     "Dispute",
     "StripeWebhookEvent",

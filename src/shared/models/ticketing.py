@@ -134,3 +134,20 @@ class Ticket(Base):
     checked_in_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"),
                               nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    # When the ticket's wallet pass last changed (Apple asks "what changed since X").
+    pass_updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, index=True)
+
+
+class WalletAppleRegistration(Base):
+    """A device holding a ticket's Apple Wallet pass, registered through the pass web service.
+    Pushed (with its token) whenever that ticket's pass changes."""
+
+    __tablename__ = "wallet_apple_registrations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_library_id = Column(String(255), nullable=False, index=True)
+    push_token = Column(String(255), nullable=False)
+    pass_type_id = Column(String(255), nullable=False)
+    ticket_id = Column(UUID(as_uuid=True), ForeignKey("event_tickets.id", ondelete="CASCADE"),
+                       nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)

@@ -509,7 +509,15 @@ def order_to_dict(db: Session, order: TicketOrder) -> dict:
         "paidAt": order.paid_at.isoformat() if order.paid_at else None,
         "ticketCount": sum(1 for t in tickets if t.status in LIVE_TICKET_STATUSES),
         "createdAt": order.created_at.isoformat(),
+        **_wallet_flags(),
     }
+
+
+def _wallet_flags() -> dict:
+    """`walletPassAvailable` (B25) and `walletPasses: {apple, google}` (Phase 3A)."""
+    from src.modules.wallet import wallet_service
+
+    return wallet_service.availability()
 
 
 # --- issuing tickets ---------------------------------------------------------------------------
@@ -737,6 +745,11 @@ def release(db: Session, event: Event, user: User) -> None:
     ).scalars().all()
     for ticket in free_tickets:
         ticket.status = TICKET_VOID
+    if free_tickets:
+        from src.modules.wallet import wallet_service
+
+        # A pass for a voided ticket shows as void in Apple Wallet and inactive in Google's.
+        wallet_service.tickets_changed(db, [t.id for t in free_tickets])
     db.flush()
     if viewer_ticket_count(db, event.id, user.id):
         db.commit()
@@ -764,6 +777,7 @@ def my_tickets(db: Session, user_id: uuid.UUID, event_id: Optional[uuid.UUID]) -
         stmt = stmt.where(Ticket.event_id == event_id)
     rows = db.execute(stmt.order_by(Ticket.created_at, Ticket.number)).all()
     live = [(t, n) for t, n in rows if t.status in LIVE_TICKET_STATUSES]
+    flags = _wallet_flags()
     return [
         {
             "id": str(ticket.id),
@@ -775,6 +789,7 @@ def my_tickets(db: Session, user_id: uuid.UUID, event_id: Optional[uuid.UUID]) -
             "number": ticket.number,
             "status": ticket.status,
             "scannedAt": ticket.checked_in_at.isoformat() if ticket.checked_in_at else None,
+            **flags,
         }
         for ticket, name in live
     ]
@@ -798,7 +813,10 @@ def send_confirmation(order_id: str) -> None:
         tickets = my_tickets(db, order.buyer_id, order.event_id)
         tickets = [t for t in tickets if t["orderId"] == str(order.id)]
         subject = f"Your tickets: {event.title}" if order.total_cents else f"You're going: {event.title}"
-        send_email(order.email, subject, ticket_email_html(event, order, tickets))
+        from src.modules.wallet import wallet_service
+
+        links = wallet_service.email_links(db, order)
+        send_email(order.email, subject, ticket_email_html(event, order, tickets, wallet=links))
     finally:
         db.close()
 

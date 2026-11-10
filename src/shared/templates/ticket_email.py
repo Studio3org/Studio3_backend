@@ -4,7 +4,7 @@ from html import escape
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
-def _local_time(event) -> str:
+def local_time_label(event) -> str:
     """"Sat, Nov 21 · 8:00 PM CST" in the event's own zone (spec: every time shows its zone)."""
     starts = event.starts_at
     zone_label = ""
@@ -22,7 +22,7 @@ def _money(cents: int) -> str:
     return f"${cents / 100:,.2f}"
 
 
-def ticket_email_html(event, order, tickets: list[dict]) -> str:
+def ticket_email_html(event, order, tickets: list[dict], wallet: dict | None = None) -> str:
     rows = "".join(
         f"<tr><td style='padding:6px 0;'>{escape(t['ticketTypeName'])}</td>"
         f"<td style='padding:6px 0;font-family:monospace;text-align:right;'>{escape(t['number'])}</td></tr>"
@@ -38,6 +38,16 @@ def ticket_email_html(event, order, tickets: list[dict]) -> str:
           <tr><td>Sales tax</td><td style="text-align:right;">{_money(order.tax_cents)}</td></tr>
           <tr><td><strong>Total</strong></td><td style="text-align:right;"><strong>{_money(order.total_cents)}</strong></td></tr>
         </table>"""
+    buttons = ""
+    wallet = wallet or {}
+    style = ("display:inline-block;margin:0 8px 8px 0;padding:10px 16px;background:#111;"
+             "color:#fff;border-radius:8px;text-decoration:none;")
+    if wallet.get("apple"):
+        buttons += f'<a href="{escape(wallet["apple"])}" style="{style}">Add to Apple Wallet</a>'
+    if wallet.get("google"):
+        buttons += f'<a href="{escape(wallet["google"])}" style="{style}">Add to Google Wallet</a>'
+    if buttons:
+        buttons = f"<p style='margin:16px 0;'>{buttons}</p>"
     age = ""
     if getattr(event, "age_limit", "all") in ("18", "21"):
         age = f"<p><strong>{event.age_limit}+ event.</strong> Bring your ID.</p>"
@@ -47,9 +57,10 @@ def ticket_email_html(event, order, tickets: list[dict]) -> str:
     <head><meta charset="utf-8"><title>Your tickets</title></head>
     <body style="font-family: sans-serif; padding: 20px; color: #1a1a1a;">
         <h2 style="margin:0 0 4px;">{escape(event.title)}</h2>
-        <p style="margin:0 0 16px;color:#555;">{_local_time(event)}{' · ' + where if where else ''}</p>
+        <p style="margin:0 0 16px;color:#555;">{local_time_label(event)}{' · ' + where if where else ''}</p>
         {age}
         <table style="width:100%;border-collapse:collapse;">{rows}</table>
+        {buttons}
         <p style="color:#555;">Open your tickets in the Studio 3 app to show the QR code at the door.
         Each ticket can be checked in once.</p>
         {receipt}

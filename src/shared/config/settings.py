@@ -105,6 +105,18 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "Base64 32-byte Ed25519 seed that signs ticket QR codes. Derived from SECRET_KEY "
            "when unset; set it in production so rotating SECRET_KEY keeps tickets valid.",
            secret=True),
+    # --- wallet passes (Phase 3A) -----------------------------------------------------------
+    EnvVar("GOOGLE_WALLET_ISSUER_ID", "Google Pay & Wallet Console issuer id. Unset = no "
+           "Google Wallet passes."),
+    EnvVar("GOOGLE_WALLET_SERVICE_ACCOUNT_JSON", "Service account key (JSON text) with access "
+           "to the Wallet issuer; signs the Add to Google Wallet links.", secret=True),
+    EnvVar("APPLE_PASS_TYPE_ID", "Pass Type ID, e.g. pass.co.studio-3.ticket. Unset = no Apple "
+           "Wallet passes."),
+    EnvVar("APPLE_TEAM_ID", "Apple Developer team id the Pass Type ID belongs to."),
+    EnvVar("APPLE_PASS_CERT_P12", "The Pass Type ID certificate and key, as base64 of the .p12.",
+           secret=True),
+    EnvVar("APPLE_PASS_CERT_PASSWORD", "Password of that .p12 (empty if none).", secret=True),
+    EnvVar("APPLE_WWDR_CERT", "Apple's WWDR G4 intermediate certificate, base64 of the .cer."),
     EnvVar("CONNECT_ACCOUNT_COUNTRY", "Country for new Stripe Connect Express accounts.",
            default="US"),
     EnvVar("CONNECT_ONBOARDING_BASE_URL", "Base for Connect return/refresh redirects.",

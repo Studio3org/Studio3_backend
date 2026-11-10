@@ -978,3 +978,27 @@ def my_tickets():
         return {"tickets": ticketing_service.my_tickets(db, _viewer_id(), event_id)}, 200
     finally:
         db.close()
+
+
+def wallet_pass(event_id: str, order_id: str):
+    """B25: Google returns {"saveUrl"}; Apple (default) returns the .pkpass / .pkpasses bytes.
+    Returns (data, status, binary) where binary is set for Apple."""
+    from src.modules.wallet import wallet_service
+    from src.shared.models.ticketing import TicketOrder
+
+    platform = (request.args.get("platform") or "apple").strip().lower()
+    if platform not in ("apple", "google"):
+        raise AppError("platform must be apple or google.", 400)
+    raw_ticket = request.args.get("ticketId")
+    db = SessionLocal()
+    try:
+        order = db.get(TicketOrder, _uuid(order_id, "order"))
+        if not order or str(order.event_id) != event_id or order.buyer_id != _viewer_id():
+            raise AppError("Order not found.", 404)
+        result = wallet_service.order_passes(
+            db, order, platform=platform,
+            ticket_id=_uuid(raw_ticket, "ticket") if raw_ticket else None,
+        )
+        return result
+    finally:
+        db.close()
