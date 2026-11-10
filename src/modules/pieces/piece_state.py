@@ -134,6 +134,11 @@ def release_target_status(db: Session, piece: Piece) -> str:
         return LIVE
     from src.modules.bids import auction_dao, bid_dao
 
+    # PAY-3: a closed auction still settling (its winner's checkout was cancelled or swept)
+    # goes back to the winner, who can check out again. A sold or refunded one is delisted.
+    settling = auction_dao.get_settling_auction(db, piece.id)
+    if settling is not None and settling.winning_bid_id is not None:
+        return AUCTION_WON
     auction = auction_dao.get_running_auction(db, piece.id)
     if auction is None:
         return DELISTED

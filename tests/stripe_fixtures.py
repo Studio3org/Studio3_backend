@@ -97,6 +97,9 @@ class StripeStub:
         # cascade test can decline one bidder's card and let the next one through, which is
         # the whole behaviour under test.
         self.capture_failures: set[str] = set()
+        # Phase 7a: cards that decline an off-session charge, and every charge made.
+        self.declined_methods: set[str] = set()
+        self.charged: list[dict] = []
         # What Stripe "charges" on a capture, so the ledger's fee leg has something real.
         self.capture_fee_cents: int = 0
 
@@ -232,6 +235,23 @@ class StripeStub:
         # the branch holds_service treats as a failure — so getting this right is what makes
         # the hold tests exercise the real path.
         manual = kwargs.get("capture_method") == "manual" and kwargs.get("confirm")
+        # Phase 7a: an auction winner's saved card charged off-session at close. Succeeds
+        # (with a real charge and fee) unless the test declined that card.
+        if kwargs.get("confirm") and kwargs.get("off_session") and not manual:
+            method = kwargs.get("payment_method")
+            if method in self.declined_methods:
+                raise real_stripe.error.CardError(  # type: ignore[attr-defined]
+                    "Your card was declined.", param=None, code="card_declined"
+                )
+            charge = self.add_charge(f"ch_{uuid.uuid4().hex[:24]}", fee_cents=self.capture_fee_cents,
+                                     amount_cents=kwargs.get("amount") or 0)
+            intent = {"id": f"pi_{uuid.uuid4().hex[:24]}", "amount": kwargs.get("amount"),
+                      "status": "succeeded", "latest_charge": charge,
+                      "metadata": kwargs.get("metadata", {}), "payment_method": method}
+            self.payment_intents[intent["id"]] = intent
+            self.charged.append({"payment_method": method, "amount": kwargs.get("amount"),
+                                 "metadata": kwargs.get("metadata", {})})
+            return intent
         intent = {
             "id": f"pi_{uuid.uuid4().hex[:24]}",
             "client_secret": f"pi_secret_{uuid.uuid4().hex[:16]}",

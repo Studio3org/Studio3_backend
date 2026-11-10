@@ -141,3 +141,24 @@ def retry_auction_payment(piece_id):
     from src.modules.bids import auction_controller
     data, status = auction_controller.retry_winner_payment(piece_id)
     return _ok("Payment completed.", data, status)
+
+
+
+# --- Phase 7a: second chance -------------------------------------------------------------------
+
+@pieces_bp.post("/<piece_id>/auction/offer/accept")
+@onboarding_required
+@async_handler
+def accept_auction_offer(piece_id):
+    from src.modules.bids import auction_controller
+    data, status = auction_controller.respond_to_offer(piece_id, True)
+    return _ok("Offer accepted.", data, status)
+
+
+@pieces_bp.post("/<piece_id>/auction/offer/decline")
+@onboarding_required
+@async_handler
+def decline_auction_offer(piece_id):
+    from src.modules.bids import auction_controller
+    data, status = auction_controller.respond_to_offer(piece_id, False)
+    return _ok("Offer declined.", data, status)

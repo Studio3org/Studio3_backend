@@ -16,7 +16,8 @@ Responses keep the usual envelope `{success, message, data}`. Errors are `{succe
 | 4. Ticket refunds, waitlist, check-in, host cancel and reschedule, host payouts | Done, on `development` (`5063d2f`) | Refund button; waitlist screens already built; scanner and guest list; reschedule and cancel-preview screens |
 | 5. Co-host and artist invites, piece approvals, bidding end | Done, on `development` (`5063d2f`) | Invite inbox and accept/decline; piece request screen; "Waiting for" in Lineup; bidding end picker; Exhibited on piece pages |
 | 6. Account and settings (going public, selling off, deletion check, hide from collection) | Done, on `development` (`5063d2f`) | Drop the one-by-one approvals; new turn-off message; Delete account reads the check; Hide from my Collection; fees from seller-terms |
-| 7. Auctions v2 (charge at close, 12-hour fix window, second-chance offer) | Not started | — |
+| 7a. Auctions v2 (charge at close, 12-hour fix window, second-chance offer) | Done (not yet committed) | Card check and Ship to at the first bid; new increments; no extensions; payment-failed and second-chance screens |
+| 7b. Shipping, insurance and tax in the charge at close | After Phase 8 | Remove the auction checkout |
 | 8. Convelio shipping and checkout pricing | Not started | — |
 
 The shared dev database (Aiven) is at migration `058_collection_hidden`, so a build pointed at it can use everything through Phase 6.
@@ -786,3 +787,109 @@ The Terms page itself doesn't list fees. Adding them is legal text for the clien
 
 - **Deploy:** migration `058_collection_hidden`.
 - **No new settings.**
+
+---
+
+## Phase 7a: Auctions v2, the 9 Nov design (B20)
+
+Built to the canvas update of 9 Nov (`HandoffBidding`, `NoteBidVerify`, `NoteBidSheet`, `NoteBidPaymentFailed`, `NoteBidSecondChance`).
+
+Two things are unchanged:
+- **Money is held until delivery.** Every charge lands on Studio 3's account and the artist is paid after delivery, as before. There are no destination charges (decision A2).
+- **Shipping, insurance and tax are still paid at `auction-checkout`** after a win, for now. Phase 7b (after Convelio shipping, Phase 8) folds them into the charge at close and the checkout goes away.
+
+### 7a.1 Bidding: a card check, not a hold
+
+`POST /api/pieces/:id/bids` keeps its request, plus an optional `addressId` (the design's Ship to row):
+
+```json
+{"amountCents": 32500, "paymentMethodId": "pm_…", "addressId": "…"}
+```
+
+- **No money is held any more.** The first bid only checks that `paymentMethodId` is a card saved to this account. Save it first with the existing `POST /api/payments/setup-intent` and PaymentSheet, where the bank verifies it.
+  - A card that isn't saved to them gets `400` "Save this card first…".
+  - Nothing is charged unless they win.
+- Raising your own bid reuses the card and address. Send new ones to change them.
+- `addressId` must be one of the bidder's addresses (`404` otherwise). It's stored now for Phase 7b.
+- **Increments are the design's.** The step is based on the current high bid:
+
+  | Current high bid | Step |
+  |---|---|
+  | Under $500 | $25 |
+  | $500 to $999 | $50 |
+  | $1,000 to $4,999 | $100 |
+  | $5,000 to $9,999 | $250 |
+  | $10,000 and up | $500 |
+
+  `minNextBidCents` and `bidIncrementCents` in the summary already reflect these.
+- **Fixed end time:** no extensions. A late bid no longer pushes the end. The summary carries `fixedEndTime: true`. (Auctions that started before this release keep their old setting.)
+- The outbid notification now says "Nothing is charged unless you win", not "your hold still stands".
+
+**App changes:**
+- [ ] First bid (`NoteBidVerify`): use PaymentSheet with Apple Pay through a SetupIntent, and add the Ship to address row. Send `paymentMethodId` and `addressId`.
+- [ ] Remove any "hold" wording.
+- [ ] Use the server's `minNextBidCents`. Quick picks step by the table above.
+- [ ] Don't show "extends if someone bids late".
+
+### 7a.2 When the auction ends: the saved card is charged
+
+At the close, the winner's saved card is charged **off-session** for the hammer price.
+- The winner gets `auction_won`: "You won … and your card has been charged. Confirm your delivery details to finish."
+- The auction goes to `awaiting_winner`, the same state the app already handles for checkout.
+
+### 7a.3 Card fails: 12 hours to fix it (`NoteBidPaymentFailed`)
+
+If the charge fails (a bank verification request counts as a failure, because nobody is there to answer it):
+- The auction goes to `awaiting_payment`.
+- The winner gets `auction_payment_failed` with `payload.deadlineAt`, and the seller gets `auction_winner_payment_failed`.
+
+The winner then has **12 hours**. The summary shows them:
+- `awaitingPayment: true`;
+- `winnerDeadlineAt`, the end of the window, which **never moves** however many cards are tried (BE-4);
+- `paymentRetryAt`, the next automatic retry (at 1, 4 and 8 hours), or `null`.
+
+`POST /api/pieces/:id/auction/retry-payment` with `{"paymentMethodId"}` charges a new card straight away:
+- `200` means paid.
+- `402` means that card was declined too; they can try another until the deadline.
+
+**App changes:**
+- [ ] Payment-failed screen: a countdown to `winnerDeadlineAt`, "We'll try again at `paymentRetryAt`", and "Use another card", which saves a card and then calls `retry-payment`.
+
+### 7a.4 Second chance (`NoteBidSecondChance`)
+
+When the 12 hours run out, the winner forfeits (notification `auction_forfeited`, nothing charged). The **next bidder whose top bid met the reserve** is offered the piece at that bid:
+
+- The auction status becomes **`second_chance`**, which is new.
+- The bidder gets `auction_second_chance` (also by email), with `payload: {amountCents, expiresAt, offerId}`. The seller gets `auction_second_chance_sent`.
+- The offered bidder's summary carries `secondChanceOffer: {amountCents, expiresAt, lastError}`. It's `null` for everyone else.
+
+| Method | Path | Body | Result |
+|---|---|---|---|
+| POST | `/api/pieces/:id/auction/offer/accept` | optional `{"paymentMethodId"}` | Charges their saved card (or this one) at once. `200` with the summary: they're the winner (`isWinner`, `awaiting_winner`). `402` if declined: the offer stays open until it expires, and `lastError` says why |
+| POST | `/api/pieces/:id/auction/offer/decline` | — | `200`. The offer passes to the next bidder |
+
+- An offer lasts **24 hours**. Unanswered, it passes on, and that bidder gets `auction_second_chance_expired`.
+- If nobody is left, or the next bid is under the reserve, the auction goes to `needs_seller_action`. The seller gets `auction_needs_action`, and the piece comes off sale, as before.
+- Nobody is ever charged without saying yes. The old automatic charging of the runner-up is gone, except for auctions still on holds from before this release.
+
+**App changes:**
+- [ ] The Second chance screen: the amount, a countdown to `expiresAt`, and "Accept and pay" (call accept, then open the collected screen). Handle `402` with "Use another card".
+- [ ] Handle `auction_second_chance` and `auction_second_chance_expired`: open the piece.
+- [ ] Treat the `second_chance` status as "not available" on the piece page for everyone else.
+
+### 7a.5 Abandoned auction checkout (PAY-3)
+
+`POST /api/pieces/:id/auction-checkout` no longer marks the auction sold. It becomes `closed_sold` only when the checkout order is paid.
+
+If the winner abandons the checkout (the 15-minute sweep cancels the order), the piece goes back to them as `auction_won`, and they can check out again. Before this fix it was delisted and their hammer price was stuck.
+
+**No app change.**
+
+### 7a.6 Server-side only (for awareness)
+
+- **Deploy:**
+  - migration `059_auctions_v2`;
+  - two new optional settings: `AUCTION_PAYMENT_FIX_HOURS` (default 12) and `AUCTION_SECOND_CHANCE_HOURS` (default 24).
+- **Event auctions now get the same 12 hours.** The old rule was 10 minutes at an event.
+- **Auctions already running** when this deploys keep their holds: their winner is captured from the hold, and their runners-up cascade as before.
+- **Local development (no Stripe):** the card id `pm_card_chargeDeclined` declines, as it does in Stripe's test mode, so the failure flows can be tried.

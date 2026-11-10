@@ -13,7 +13,6 @@ from sqlalchemy import select
 from src.shared.config.database import SessionLocal
 from src.shared.models.auction import (
     AUCTION_AWAITING_PAYMENT,
-    AUCTION_CLOSED_SOLD,
     HOLD_CAPTURED,
 )
 from src.shared.models.dispute import Dispute, DISPUTE_OPEN
@@ -190,8 +189,9 @@ def auction_checkout(piece_id: str):
             prepaid_reference=prepaid_reference,
         )
 
-        # The auction's job is done — the order is now what tracks this sale.
-        auction.status = AUCTION_CLOSED_SOLD
+        # PAY-3: the auction stays `awaiting_winner` until this order is paid (the webhook
+        # marks it sold). Marking it sold here meant an abandoned checkout stranded the winner:
+        # the order was swept, the piece delisted, and their captured hammer price stuck.
         db.commit()
 
         result = orders_dao.order_to_dict(db, order)
@@ -227,6 +227,7 @@ def confirm(order_id: str):
         # Dev mode: no payment provider configured — auto-succeed so the rest of the
         # order lifecycle (inventory lock, history, notifications) is testable today.
         orders_dao.transition_order(db, order, "paid", commit=False)
+        auction_dao.mark_sold_for_order(db, order)  # PAY-3: sold only once paid
         items = orders_dao.list_items(db, order.id)
         for item in items:
             piece = get_piece(db, item.piece_id)

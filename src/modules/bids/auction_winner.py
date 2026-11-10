@@ -36,13 +36,19 @@ from src.shared.models.auction import (
     AUCTION_AWAITING_PAYMENT,
     AUCTION_AWAITING_WINNER,
     AUCTION_NEEDS_SELLER_ACTION,
+    AUCTION_SECOND_CHANCE,
+    HOLD_LIVE_STATUSES,
+    OFFER_ACCEPTED,
+    OFFER_DECLINED,
+    OFFER_EXPIRED,
     Auction,
+    AuctionOffer,
 )
 from src.shared.models.audit import AUDIT_AUCTION_SETTLED, AUDIT_WINNER_CASCADED
 from src.shared.models.bid import BID_FORFEITED, BID_LOST, BID_WON, Bid
 from src.shared.models.piece import Piece
 from src.shared.utils.logger import get_logger
-from src.modules.bids import bid_dao, holds_service
+from src.modules.bids import auction_payments, bid_dao, holds_service
 from src.modules.payments import money
 from src.modules.pieces import piece_state
 
@@ -63,10 +69,16 @@ MAX_CASCADE_DEPTH = 3
 SETTLED = "settled"
 PAYMENT_FAILED = "payment_failed"
 EXHAUSTED = "exhausted"
+# Phase 7a: the next bidder has been offered the piece (second chance).
+OFFERED = "offered"
 
 
 def retry_window(auction: Auction) -> timedelta:
-    return RETRY_WINDOW_EVENT if auction.is_event_auction else RETRY_WINDOW_STANDALONE
+    """Phase 7a (the 9 Nov design): 12 hours to fix a card, for every auction (a setting,
+    AUCTION_PAYMENT_FIX_HOURS). The old 48-hour / 10-minute windows are kept as names only."""
+    from src.shared.config import auction_config
+
+    return timedelta(hours=auction_config.payment_fix_hours())
 
 
 def winning_bid(db: Session, auction: Auction) -> Optional[Bid]:
@@ -81,6 +93,11 @@ def winning_bid(db: Session, auction: Auction) -> Optional[Bid]:
     return db.get(Bid, auction.winning_bid_id)
 
 
+def _is_legacy(hold) -> bool:
+    """An auction from before Phase 7a: this bid has a live authorisation to capture."""
+    return hold is not None and hold.status in HOLD_LIVE_STATUSES
+
+
 def settle_on(
     db: Session,
     auction: Auction,
@@ -88,46 +105,37 @@ def settle_on(
     bid: Bid,
     *,
     commit: bool = False,
+    payment_method_id: Optional[str] = None,
 ) -> str:
     """Try to settle this auction on one bidder. Returns SETTLED or PAYMENT_FAILED.
 
-    Never raises on a declined card: a decline is an expected outcome of an auction, not an
-    error, and the caller has to keep going either way.
+    Phase 7a: the bidder's saved card is charged now (the 9 Nov design). A bid placed before
+    then still has a hold, which is captured as before. Never raises on a declined card: a
+    decline is an expected outcome of an auction, not an error.
     """
     now = datetime.now(timezone.utc)
     auction.winning_bid_id = bid.id
     hold = bid_dao.hold_for_bid(db, bid.id)
 
-    if hold is None:
-        # A bid with no hold cannot be settled on. Treated as a failed payment rather than a
-        # crash so the cascade carries on to someone who can pay.
-        logger.error("Bid %s on auction %s has no hold", bid.id, auction.id)
-        return _park_for_payment(db, auction, piece, bid, now, commit=commit)
+    if _is_legacy(hold) and payment_method_id is None:
+        try:
+            holds_service.capture_hold(db, hold, commit=False)
+        except Exception as exc:
+            logger.warning(
+                "Capture failed settling auction %s on bid %s: %s", auction.id, bid.id, exc
+            )
+            return _park_for_payment(db, auction, piece, bid, now, commit=commit)
+        # The money is real. Book it before anything else can fail: a capture that reached
+        # Stripe but never reached the ledger is money the platform holds and cannot account for.
+        money.book_auction_captured(db, auction, hold, hold.capture_fee_cents or 0, commit=False)
+    else:
+        if payment_method_id:
+            bid.payment_method_id = payment_method_id
+        paid, _error = auction_payments.charge_bid(db, auction, bid)
+        if not paid:
+            return _park_for_payment(db, auction, piece, bid, now, commit=commit)
 
-    try:
-        holds_service.capture_hold(db, hold, commit=False)
-    except Exception as exc:
-        logger.warning(
-            "Capture failed settling auction %s on bid %s: %s", auction.id, bid.id, exc
-        )
-        return _park_for_payment(db, auction, piece, bid, now, commit=commit)
-
-    # The money is real. Book it before anything else can fail: a capture that reached Stripe
-    # but never reached the ledger is money the platform holds and cannot account for.
-    money.book_auction_captured(db, auction, hold, hold.capture_fee_cents or 0, commit=False)
-
-    bid.status = BID_WON
-    db.flush()  # autoflush is off; the read below must see this.
-    # Only now, with the winner's money actually taken, is it safe to let the fallbacks go.
-    _release_runners_up(db, auction, keep_bid_id=bid.id)
-
-    auction.status = AUCTION_AWAITING_WINNER
-    auction.closed_at = auction.closed_at or now
-    # No deadline: the sale is settled and the money is in. What remains is delivery details,
-    # and there is no honest way to "expire" a sale we have already taken payment for.
-    auction.winner_deadline_at = None
-    _move_piece_off_market(db, auction, piece)
-
+    _finish_win(db, auction, piece, bid, now)
     if commit:
         db.commit()
     logger.info("Auction %s settled on bid %s (%d cents)", auction.id, bid.id, bid.amount_cents)
@@ -137,6 +145,21 @@ def settle_on(
          "cascadeDepth": auction.cascade_depth or 0},
     )
     return SETTLED
+
+
+def _finish_win(db: Session, auction: Auction, piece: Optional[Piece], bid: Bid, now) -> None:
+    auction.winning_bid_id = bid.id
+    bid.status = BID_WON
+    db.flush()  # autoflush is off; the read below must see this.
+    # Only now, with the winner's money actually taken, is it safe to let the others go.
+    _release_runners_up(db, auction, keep_bid_id=bid.id)
+    auction.status = AUCTION_AWAITING_WINNER
+    auction.closed_at = auction.closed_at or now
+    # No deadline: the sale is settled and the money is in. What remains is delivery details,
+    # and there is no honest way to "expire" a sale we have already taken payment for.
+    auction.winner_deadline_at = None
+    auction.next_payment_retry_at = None
+    _move_piece_off_market(db, auction, piece)
 
 
 def _park_for_payment(
@@ -155,7 +178,8 @@ def _park_for_payment(
     """
     auction.status = AUCTION_AWAITING_PAYMENT
     auction.closed_at = auction.closed_at or now
-    auction.winner_deadline_at = now + retry_window(auction)
+    # Phase 7a / BE-4: the window starts at the first failure and a retry never moves it.
+    auction_payments.park_failed(auction, now)
     _move_piece_off_market(db, auction, piece)
     if commit:
         db.commit()
@@ -247,6 +271,10 @@ def cascade(
     nxt = bid_dao.get_highest_bid(db, auction.id)
     if nxt is None:
         return _give_up(db, auction, piece, "no_remaining_bidders", commit=commit)
+    if not _is_legacy(bid_dao.hold_for_bid(db, nxt.id)):
+        # Phase 7a: nobody is charged without saying yes. The next bidder whose top bid met
+        # the reserve is offered the piece (second chance).
+        return offer_next(db, auction, piece, commit=commit)
 
     logger.info(
         "Auction %s cascading to bid %s (attempt %d)", auction.id, nxt.id, auction.cascade_depth
@@ -296,3 +324,53 @@ def _record(db: Session, action: str, auction: Auction, detail: dict) -> None:
     audit_service.system(
         db, action, subject_type="auction", subject_id=auction.id, detail=detail, commit=False
     )
+
+
+
+# --- second chance (Phase 7a) ----------------------------------------------------------------
+
+def offer_next(db: Session, auction: Auction, piece: Optional[Piece], *, commit: bool = False) -> str:
+    """Offer the piece to the next bidder in line at their top bid, or give up."""
+    candidate = auction_payments.next_candidate(db, auction)
+    if candidate is None:
+        return _give_up(db, auction, piece, "no_second_chance_bidder", commit=commit)
+    auction_payments.make_offer(db, auction, candidate)
+    auction.status = AUCTION_SECOND_CHANCE
+    auction.winning_bid_id = None
+    auction.winner_deadline_at = None
+    auction.next_payment_retry_at = None
+    _move_piece_off_market(db, auction, piece)
+    if commit:
+        db.commit()
+    return OFFERED
+
+
+def accept_offer(db: Session, auction: Auction, piece: Optional[Piece], offer: AuctionOffer,
+                 payment_method_id: Optional[str]) -> str:
+    """"Accept and pay": the saved card (or the one they pick) is charged right away. Returns
+    SETTLED, or PAYMENT_FAILED with the offer still open until it expires."""
+    bid = db.get(Bid, offer.bid_id)
+    if payment_method_id:
+        bid.payment_method_id = payment_method_id
+    paid, error = auction_payments.charge_bid(db, auction, bid,
+                                             attempt=100 + (auction.payment_attempts or 0))
+    if not paid:
+        offer.last_error = error
+        auction.payment_attempts = (auction.payment_attempts or 0) + 1
+        return PAYMENT_FAILED
+    auction_payments.close_offer(offer, OFFER_ACCEPTED)
+    _finish_win(db, auction, piece, bid, datetime.now(timezone.utc))
+    _record(db, AUDIT_AUCTION_SETTLED, auction,
+            {"winningBidId": str(bid.id), "amountCents": bid.amount_cents, "secondChance": True})
+    return SETTLED
+
+
+def pass_offer(db: Session, auction: Auction, piece: Optional[Piece], offer: AuctionOffer,
+               *, expired: bool) -> str:
+    """Declined, or let lapse: that bidder is out, and the next one is offered it."""
+    auction_payments.close_offer(offer, OFFER_EXPIRED if expired else OFFER_DECLINED)
+    bid = db.get(Bid, offer.bid_id)
+    if bid is not None:
+        bid.status = BID_LOST
+    db.flush()
+    return offer_next(db, auction, piece)

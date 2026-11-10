@@ -271,9 +271,13 @@ def test_the_winner_can_fix_a_declined_card_inside_their_window(
     auction_closer.close_expired_auctions()
     db.expire_all()
 
+    from src.modules.bids import holds_service
+
+    another = stripe_enabled.add_card(holds_service.ensure_customer(db, winner))
+    db.commit()
     response = client.post(
         f"/api/pieces/{piece.id}/auction/retry-payment",
-        json={"paymentMethodId": "pm_test_another_card"},
+        json={"paymentMethodId": another["id"]},
         headers=auth_headers(winner),
     )
 

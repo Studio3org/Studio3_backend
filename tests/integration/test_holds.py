@@ -1,9 +1,9 @@
-"""Authorization holds — the money committed to a bid.
+"""Bidding since Phase 7a (the 9 Nov design): a checked card, no hold — and the holds that
+auctions from before then still carry, which keep settling the old way.
 
-The property that matters most here is the ordering on a re-bid: the new hold is placed and
-confirmed *before* the old one is released, so a card that refuses the higher amount leaves
-the bidder exactly where they were rather than dropping them out of an auction they were
-winning.
+The property that matters for bidders: nothing is taken or reserved until they win. For the
+old holds: release is idempotent, a released hold can't be captured, and capture is a no-op
+the second time.
 """
 import pytest
 
@@ -16,7 +16,7 @@ from src.shared.models.auction import (
 )
 from src.shared.models.bid import BID_ACTIVE, BID_OUTBID, Bid
 from src.shared.utils.app_error import AppError
-from tests.factories import make_auction, make_event, make_piece, make_user
+from tests.factories import make_auction, make_bid, make_event, make_piece, make_user
 
 
 def _auction(db, seller, *, starting=200_00, **kw):
@@ -30,18 +30,16 @@ def _place(db, auction, bidder, amount, pm="pm_test_card"):
 
 # --- placing ----------------------------------------------------------------------------
 
-def test_a_bid_authorises_the_bid_amount_only(db):
-    """Per the product decision: the hold covers the bid. Shipping and tax are taken at
-    confirmation after the win, against this same saved card."""
+def test_a_bid_holds_no_money_and_keeps_the_card(db):
+    """The 9 Nov design: the first bid checks a card; only the winner is ever charged."""
     seller, bidder = make_user(db, seller=True), make_user(db)
     auction = _auction(db, seller)
 
     bid = _place(db, auction, bidder, 200_00)
 
-    hold = bid_dao.hold_for_bid(db, bid.id)
-    assert hold.amount_cents == 200_00
-    assert hold.status == HOLD_HELD
-    assert hold.bidder_id == bidder.id
+    assert bid_dao.hold_for_bid(db, bid.id) is None
+    assert bid.payment_method_id == "pm_test_card"
+    assert db.query(Hold).count() == 0
 
 
 def test_the_first_bid_may_land_on_the_starting_bid(db):
@@ -52,14 +50,14 @@ def test_the_first_bid_may_land_on_the_starting_bid(db):
     assert _place(db, auction, bidder, 200_00).amount_cents == 200_00
 
 
-def test_a_bid_below_the_minimum_is_refused_and_authorises_nothing(db):
+def test_a_bid_below_the_minimum_is_refused(db):
     seller, bidder = make_user(db, seller=True), make_user(db)
     auction = _auction(db, seller, starting=200_00)
 
     with pytest.raises(AppError):
         _place(db, auction, bidder, 199_99)
 
-    assert db.query(Hold).count() == 0, "a refused bid must not leave money held"
+    assert db.query(Bid).count() == 0
 
 
 def test_a_seller_cannot_bid_on_their_own_auction(db):
@@ -69,50 +67,31 @@ def test_a_seller_cannot_bid_on_their_own_auction(db):
         _place(db, auction, seller, 300_00)
 
 
-# --- the ordering guarantee --------------------------------------------------------------
-
-def test_raising_your_own_bid_moves_the_hold(db):
+def test_raising_your_own_bid_reuses_the_card(db):
     seller, bidder = make_user(db, seller=True), make_user(db)
     auction = _auction(db, seller, starting=200_00)
 
     first = _place(db, auction, bidder, 200_00)
-    second = _place(db, auction, bidder, 250_00)
+    second = bid_dao.place_bid(db, auction.id, bidder, 225_00)  # no card given
 
     db.expire_all()
     assert db.get(Bid, first.id).status == BID_OUTBID
     assert db.get(Bid, second.id).status == BID_ACTIVE
-    assert bid_dao.hold_for_bid(db, first.id).status == HOLD_RELEASED
-    assert bid_dao.hold_for_bid(db, second.id).status == HOLD_HELD
-    # Exactly one live hold for this bidder, at the new amount.
-    live = holds_service.live_hold_for_bidder(db, auction.id, bidder.id)
-    assert live.amount_cents == 250_00
+    assert db.get(Bid, second.id).payment_method_id == "pm_test_card"
 
 
-def test_a_failed_new_hold_leaves_the_previous_one_standing(db, monkeypatch):
-    """The whole reason for the ordering. Releasing first would drop a bidder out of an
-    auction they were winning the moment their bank declined a higher amount."""
-    seller, bidder = make_user(db, seller=True), make_user(db)
-    auction = _auction(db, seller, starting=200_00)
-    first = _place(db, auction, bidder, 200_00)
+def test_a_card_that_isnt_saved_to_the_bidder_is_refused(db, stripe_enabled):
+    """Charging it off-session at close would fail too late to tell them."""
+    seller, bidder, other = make_user(db, seller=True), make_user(db), make_user(db)
+    auction = _auction(db, seller)
+    someone_elses = stripe_enabled.add_card(holds_service.ensure_customer(db, other))
+    db.commit()
 
-    def _decline(*args, **kwargs):
-        raise holds_service.HoldError("card declined", 402)
-
-    monkeypatch.setattr(holds_service, "place_hold", _decline)
-
-    with pytest.raises(holds_service.HoldError):
-        _place(db, auction, bidder, 250_00)
-
-    db.rollback()
-    db.expire_all()
-    assert db.get(Bid, first.id).status == BID_ACTIVE, "the original bid was dropped"
-    assert bid_dao.hold_for_bid(db, first.id).status == HOLD_HELD, "the original hold was released"
-    assert bid_dao.get_highest_bid(db, auction.id).id == first.id
+    with pytest.raises(AppError, match="Save this card first"):
+        _place(db, auction, bidder, 200_00, pm=someone_elses["id"])
 
 
-def test_being_outbid_by_someone_else_does_not_release_your_hold(db):
-    """Money stays committed until close: a losing bidder is still in the running if the
-    higher bid falls through, which is exactly what the winner cascade depends on."""
+def test_being_outbid_charges_and_reserves_nothing(db):
     seller = make_user(db, seller=True)
     first, second = make_user(db), make_user(db)
     auction = _auction(db, seller, starting=200_00)
@@ -121,18 +100,17 @@ def test_being_outbid_by_someone_else_does_not_release_your_hold(db):
     _place(db, auction, second, 225_00)
 
     db.expire_all()
-    assert db.get(Bid, first_bid.id).status == BID_ACTIVE
-    assert bid_dao.hold_for_bid(db, first_bid.id).status == HOLD_HELD
+    assert db.get(Bid, first_bid.id).status == BID_ACTIVE, "still in line for a second chance"
+    assert db.query(Hold).count() == 0
     assert bid_dao.count_active_bids(db, auction.id) == 2
 
 
-# --- releasing and capturing ---------------------------------------------------------------
+# --- the holds of auctions from before Phase 7a ----------------------------------------------
 
 def test_releasing_is_idempotent(db):
     seller, bidder = make_user(db, seller=True), make_user(db)
     auction = _auction(db, seller)
-    bid = _place(db, auction, bidder, 200_00)
-    hold = bid_dao.hold_for_bid(db, bid.id)
+    hold = bid_dao.hold_for_bid(db, make_bid(db, auction, bidder, 200_00).id)
 
     holds_service.release_hold(db, hold, "test", commit=True)
     released_at = hold.released_at
@@ -145,8 +123,7 @@ def test_releasing_is_idempotent(db):
 def test_a_released_hold_cannot_be_captured(db):
     seller, bidder = make_user(db, seller=True), make_user(db)
     auction = _auction(db, seller)
-    bid = _place(db, auction, bidder, 200_00)
-    hold = bid_dao.hold_for_bid(db, bid.id)
+    hold = bid_dao.hold_for_bid(db, make_bid(db, auction, bidder, 200_00).id)
     holds_service.release_hold(db, hold, "outbid", commit=True)
 
     with pytest.raises(AppError, match="Cannot capture"):
@@ -156,8 +133,7 @@ def test_a_released_hold_cannot_be_captured(db):
 def test_capturing_twice_is_a_noop(db):
     seller, bidder = make_user(db, seller=True), make_user(db)
     auction = _auction(db, seller)
-    bid = _place(db, auction, bidder, 200_00)
-    hold = bid_dao.hold_for_bid(db, bid.id)
+    hold = bid_dao.hold_for_bid(db, make_bid(db, auction, bidder, 200_00).id)
 
     holds_service.capture_hold(db, hold, commit=True)
     captured_at = hold.captured_at
@@ -167,12 +143,13 @@ def test_capturing_twice_is_a_noop(db):
     assert hold.captured_at == captured_at
 
 
-def test_cancelling_an_auction_releases_every_hold(db):
+def test_cancelling_an_auction_releases_every_old_hold(db):
     seller = make_user(db, seller=True)
     first, second = make_user(db), make_user(db)
     auction = _auction(db, seller, starting=200_00)
-    _place(db, auction, first, 200_00)
-    _place(db, auction, second, 225_00)
+    make_bid(db, auction, first, 200_00)
+    make_bid(db, auction, second, 225_00)
+    db.commit()
 
     bid_dao.cancel_active_bids(db, auction.id, reason="seller_cancelled")
 
@@ -180,6 +157,7 @@ def test_cancelling_an_auction_releases_every_hold(db):
     holds = db.query(Hold).all()
     assert len(holds) == 2
     assert all(h.status == HOLD_RELEASED for h in holds), "money stayed held on a cancelled auction"
+    assert all(h.status != HOLD_HELD for h in holds)
 
 
 # --- the reserve stays hidden ---------------------------------------------------------------
@@ -262,24 +240,17 @@ def test_one_running_auction_per_piece(db):
         )
 
 def test_an_authorisation_never_asks_to_save_the_card_again(db, stripe_enabled):
-    """The regression that broke every bid in production.
-
-    `_authorize` set both `off_session=True` and `setup_future_usage`, which Stripe refuses
-    outright — so every bid on every card came back "your card wouldn't authorise that
-    amount", and the suite stayed green because the stub was more permissive than the API.
-
-    The card is already attached to the Customer by the SetupIntent behind the saved-card
-    picker, which is what makes a re-authorisation weeks later possible. Asking again here
-    bought nothing and cost the whole feature.
-    """
+    """The regression that broke every bid in production: `off_session=True` with
+    `setup_future_usage` is refused by Stripe. Still guarded for the hold path that a winner's
+    old-style authorisation (and its re-authorisation) uses."""
     seller, bidder = make_user(db, seller=True), make_user(db)
     piece = make_piece(db, seller, price_cents=300_00, status="live", listing_type="auction")
     auction = make_auction(db, piece, seller, starting_bid_cents=300_00)
     card = stripe_enabled.add_card(holds_service.ensure_customer(db, bidder))
+    bid = make_bid(db, auction, bidder, 300_00, with_hold=False)
     db.commit()
 
-    bid = bid_dao.place_bid(db, auction.id, bidder, 300_00, card["id"])
+    hold = holds_service.place_hold(db, bid, bidder, 300_00, card["id"], commit=True)
 
-    hold = holds_service.live_hold_for_bidder(db, auction.id, bidder.id)
-    assert hold is not None and hold.status == HOLD_HELD, "the authorisation must succeed"
+    assert hold.status == HOLD_HELD, "the authorisation must succeed"
     assert bid.status == BID_ACTIVE

@@ -152,6 +152,7 @@ def make_bid(
     *,
     with_hold: bool = True,
     hold_status: str = HOLD_HELD,
+    payment_method_id: str | None = None,
 ) -> Bid:
     """A bid, with the money behind it by default.
 
@@ -164,6 +165,7 @@ def make_bid(
         bidder_id=bidder.id,
         amount_cents=amount_cents,
         status=BID_ACTIVE,
+        payment_method_id=payment_method_id,
     )
     db.add(bid)
     db.flush()

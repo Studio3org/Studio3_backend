@@ -87,7 +87,8 @@ def create_auction(
         reserve_cents=reserve_cents,
         duration_days=None if is_event else duration_days,
         # An event auction takes its window from the event and never extends: the room empties.
-        soft_close_enabled=not is_event,
+        # The 9 Nov design: a fixed end time, no extensions, for every auction.
+        soft_close_enabled=False,
         event_id=event_id,
         delivery_mode=delivery_mode,
         # Snapshotted now so the net figure the artist was shown at listing is the one they
@@ -194,3 +195,16 @@ def get_settling_auction(
     if lock:
         stmt = stmt.with_for_update()
     return db.execute(stmt.order_by(Auction.created_at.desc()).limit(1)).scalar_one_or_none()
+
+
+
+def mark_sold_for_order(db: Session, order) -> None:
+    """PAY-3: an auction becomes `closed_sold` only once its winner's checkout is paid. Caller
+    commits."""
+    from src.modules.orders import orders_dao
+    from src.shared.models.auction import AUCTION_AWAITING_WINNER, AUCTION_CLOSED_SOLD
+
+    for item in orders_dao.list_items(db, order.id):
+        auction = get_settling_auction(db, item.piece_id)
+        if auction is not None and auction.status == AUCTION_AWAITING_WINNER:
+            auction.status = AUCTION_CLOSED_SOLD

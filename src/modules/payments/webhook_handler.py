@@ -196,8 +196,17 @@ def _stripe_fee_for_charge(charge) -> int:
     return 0
 
 
+def _is_auction_intent(intent) -> bool:
+    metadata = intent.get("metadata") or {}
+    return metadata.get("kind") == "auction_charge" or bool(metadata.get("bid_id"))
+
+
 def _on_payment_succeeded(db: Session, intent) -> None:
     from src.modules.events import ticketing_service
+    if _is_auction_intent(intent):
+        # Auction charges and holds settle synchronously in the close sweep (auction_payments);
+        # Stripe's event is just the confirmation.
+        return
 
     if ticketing_service.owns_intent(intent):
         # Event tickets: their own order table, stock and hold (ticketing_service).
@@ -247,6 +256,9 @@ def _on_payment_succeeded(db: Session, intent) -> None:
         order.stripe_charge_id = charge_id
     if not already_paid:
         orders_dao.transition_order(db, order, "paid", commit=False)
+        from src.modules.bids import auction_dao
+
+        auction_dao.mark_sold_for_order(db, order)  # PAY-3: sold only once paid
         for item in orders_dao.list_items(db, order.id):
             piece = db.get(Piece, item.piece_id)
             if piece:
@@ -291,6 +303,10 @@ def _notify_paid(db: Session, order: Order) -> None:
 
 def _on_payment_failed(db: Session, intent) -> None:
     from src.modules.events import ticketing_service
+    if _is_auction_intent(intent):
+        # Auction charges and holds settle synchronously in the close sweep (auction_payments);
+        # Stripe's event is just the confirmation.
+        return
 
     if ticketing_service.owns_intent(intent):
         ticketing_service.on_payment_failed(db, intent)

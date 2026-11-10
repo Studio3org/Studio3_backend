@@ -242,9 +242,9 @@ def test_the_cascade_stops_after_a_bounded_number_of_attempts(db):
 
 # --- windows ------------------------------------------------------------------------------
 
-def test_an_event_auction_gets_the_short_window(db):
-    """The client was explicit: at an event the room empties, so a failed payment is retried
-    on the spot rather than two days later."""
+def test_every_auction_gets_the_12_hour_fix_window(db):
+    """The 9 Nov design: 12 hours to fix a card, standalone or at an event (it replaced the
+    old 48-hour / 10-minute windows). AUCTION_PAYMENT_FIX_HOURS changes it."""
     seller = make_user(db, seller=True)
     _, standalone = _closed_auction(db, seller=seller)
     # A real event row: auctions.event_id is a foreign key now, so an auction can only claim
@@ -253,9 +253,10 @@ def test_an_event_auction_gets_the_short_window(db):
         db, seller=seller, event_id=make_event(db, seller, status="published").id
     )
 
-    assert auction_winner.retry_window(standalone) == auction_winner.RETRY_WINDOW_STANDALONE
-    assert auction_winner.retry_window(event) == auction_winner.RETRY_WINDOW_EVENT
-    assert auction_winner.RETRY_WINDOW_EVENT < auction_winner.RETRY_WINDOW_STANDALONE
+    from datetime import timedelta as _td
+
+    assert auction_winner.retry_window(standalone) == _td(hours=12)
+    assert auction_winner.retry_window(event) == _td(hours=12)
 
 
 # --- no-sale paths still work -------------------------------------------------------------

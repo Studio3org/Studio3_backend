@@ -34,6 +34,11 @@ def place_bid(piece_id: str):
     body = request.get_json() or {}
     amount_cents = _amount_cents(body)
     payment_method_id = (body.get("paymentMethodId") or "").strip() or None
+    raw_address = body.get("addressId")
+    try:
+        address_id = uuid.UUID(str(raw_address)) if raw_address else None
+    except ValueError:
+        raise AppError("Invalid address id.", 400) from None
 
     db = SessionLocal()
     try:
@@ -49,7 +54,8 @@ def place_bid(piece_id: str):
         # Captured before the bid lands, so we know who to tell they have been overtaken.
         previous_highest = bid_dao.get_highest_bid(db, auction.id)
 
-        bid = bid_dao.place_bid(db, auction.id, bidder, amount_cents, payment_method_id)
+        bid = bid_dao.place_bid(db, auction.id, bidder, amount_cents, payment_method_id,
+                                address_id=address_id)
 
         db.refresh(auction)
         summary = bid_dao.bid_summary(db, auction, viewer_id=bidder.id)
@@ -96,8 +102,8 @@ def _notify(db, auction, piece, bidder, bid, previous_highest) -> None:
                 payload={"amountCents": bid.amount_cents},
                 title="You've been outbid",
                 # Deliberately does not name who: bidders never see each other's identities.
-                body=f'Someone bid higher on "{piece.title}". Your hold still stands — '
-                     "raise your bid to get back in front.",
+                body=f'Someone bid higher on "{piece.title}". Raise your bid to get back in '
+                     "front. Nothing is charged unless you win.",
             )
     except Exception:
         logger.exception("Bid notifications failed for bid %s", bid.id)

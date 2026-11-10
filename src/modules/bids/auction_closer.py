@@ -206,8 +206,8 @@ def _notify_close(db, auction, piece, winning, losing) -> None:
             target_id=auction.piece_id,
             payload={"amountCents": winning.amount_cents},
             title="You won the auction",
-            body=f'You won "{title}" for ${winning.amount_cents / 100:.2f}. '
-                 "Confirm your delivery details to finish.",
+            body=f'You won "{title}" for ${winning.amount_cents / 100:.2f}, and your card has '
+                 "been charged. Confirm your delivery details to finish.",
         )
         notifications_dao.create_and_push(
             db,
@@ -253,6 +253,122 @@ def _notify_seller_no_sale(db, seller, piece, kind: str, title: str, body: str) 
 
 # --- winner windows ---------------------------------------------------------------------
 
+def retry_failed_payments(db, now) -> int:
+    """Phase 7a: the automatic retries on a winner's saved card inside the fix window."""
+    due = db.execute(
+        select(Auction.id).where(
+            Auction.status == AUCTION_AWAITING_PAYMENT,
+            Auction.next_payment_retry_at.is_not(None),
+            Auction.next_payment_retry_at <= now,
+            Auction.winner_deadline_at > now,
+        )
+    ).scalars().all()
+    paid = 0
+    for auction_id in due:
+        try:
+            auction = db.execute(select(Auction).where(Auction.id == auction_id).with_for_update()).scalar_one_or_none()
+            if not auction or auction.status != AUCTION_AWAITING_PAYMENT:
+                db.rollback()
+                continue
+            piece = db.get(Piece, auction.piece_id)
+            winning = auction_winner.winning_bid(db, auction)
+            if winning is None:
+                db.rollback()
+                continue
+            outcome = auction_winner.settle_on(db, auction, piece, winning, commit=False)
+            db.commit()
+            if outcome == auction_winner.SETTLED:
+                paid += 1
+                _notify_close(db, auction, piece, winning, _bids_with_status(db, auction.id, BID_LOST))
+        except Exception:
+            db.rollback()
+            logger.exception("Payment retry failed for auction %s", auction_id)
+    return paid
+
+
+def expire_offers(db, now) -> int:
+    """Phase 7a: a second-chance offer nobody answered passes to the next bidder."""
+    from src.shared.models.auction import AUCTION_SECOND_CHANCE, OFFER_PENDING, AuctionOffer
+
+    due = db.execute(
+        select(AuctionOffer.auction_id).join(Auction, Auction.id == AuctionOffer.auction_id).where(
+            AuctionOffer.status == OFFER_PENDING, AuctionOffer.expires_at <= now,
+            Auction.status == AUCTION_SECOND_CHANCE,
+        )
+    ).scalars().all()
+    moved = 0
+    for auction_id in due:
+        try:
+            auction = db.execute(select(Auction).where(Auction.id == auction_id).with_for_update()).scalar_one()
+            offer = db.execute(
+                select(AuctionOffer).where(AuctionOffer.auction_id == auction_id,
+                                           AuctionOffer.status == OFFER_PENDING).with_for_update()
+            ).scalars().first()
+            if offer is None or offer.expires_at > now:
+                db.rollback()
+                continue
+            piece = db.get(Piece, auction.piece_id)
+            lapsed = offer.bidder_id
+            outcome = auction_winner.pass_offer(db, auction, piece, offer, expired=True)
+            db.commit()
+            moved += 1
+            title = piece.title if piece else "a piece"
+            _safe_notify(db, user_id=lapsed, type="auction_second_chance_expired",
+                         target_id=auction.piece_id, title="Offer expired",
+                         body=f'The offer on "{title}" has passed to the next bidder.')
+            after_offer(db, auction, piece, outcome)
+        except Exception:
+            db.rollback()
+            logger.exception("Offer expiry failed for auction %s", auction_id)
+    return moved
+
+
+def after_offer(db, auction, piece, outcome) -> None:
+    """Tell the next bidder about their offer, or the seller that nobody is left."""
+    from src.modules.bids import auction_payments
+
+    title = piece.title if piece else "a piece"
+    if outcome == auction_winner.OFFERED:
+        offer = auction_payments.pending_offer(db, auction.id)
+        if offer is None:
+            return
+        _offer_notice(db, auction, piece, offer)
+        _safe_notify(db, user_id=auction.seller_id, type="auction_second_chance_sent",
+                     target_id=auction.piece_id, title="Offered to the next bidder",
+                     body=f"The winning bidder couldn't pay for \"{title}\", so we've offered it "
+                          f"to the next bidder at ${offer.amount_cents / 100:,.2f}.")
+    elif outcome == auction_winner.EXHAUSTED:
+        _safe_notify(
+            db, user_id=auction.seller_id, type="auction_needs_action",
+            target_id=auction.piece_id, title="Your auction needs a decision",
+            body=f'No bidder on "{title}" was able to complete payment. Nothing was charged '
+                 "to anyone — relist it or set a fixed price.",
+        )
+
+
+def _offer_notice(db, auction, piece, offer) -> None:
+    """`auction_second_chance`: push and email (the 9 Nov design, NoteBidSecondChance)."""
+    from src.shared.notification.email_service import send_email
+
+    title = piece.title if piece else "a piece"
+    amount = f"${offer.amount_cents / 100:,.2f}"
+    body = (f'"{title}" is yours for {amount}, your top bid, if you want it. Accept by '
+            f'{offer.expires_at.strftime("%-I:%M %p UTC on %b %-d")}.')
+    try:
+        notifications_dao.create_and_push(
+            db, user_id=offer.bidder_id, type="auction_second_chance", target_type="piece",
+            target_id=auction.piece_id, title="Second chance", body=body,
+            payload={"amountCents": offer.amount_cents, "expiresAt": offer.expires_at.isoformat(),
+                     "offerId": str(offer.id)},
+        )
+    except Exception:
+        logger.exception("Second-chance notification failed for %s", offer.bidder_id)
+    bidder = db.get(User, offer.bidder_id)
+    if bidder is not None and bidder.email:
+        send_email(bidder.email, f"Second chance: {title}",
+                   f"<p>{body}</p><p>Open Studio 3 to accept and pay with your saved card.</p>")
+
+
 def expire_winner_windows() -> None:
     """Pass a piece to the next bidder when the winner's window to fix payment has run out.
 
@@ -279,6 +395,9 @@ def expire_winner_windows() -> None:
             except Exception:
                 db.rollback()
                 logger.exception("Failed to expire winner window for auction %s", auction_id)
+        # Phase 7a: the automatic retries, and second-chance offers nobody answered.
+        retry_failed_payments(db, now)
+        expire_offers(db, now)
     finally:
         db.close()
 
@@ -318,6 +437,8 @@ def _expire_one(db, auction_id: uuid.UUID) -> None:
         new_winner = auction_winner.winning_bid(db, auction)
         if new_winner is not None:
             _notify_payment_failed(db, auction, piece, new_winner)
+    elif outcome == auction_winner.OFFERED:
+        after_offer(db, auction, piece, outcome)
     else:
         _safe_notify(
             db, user_id=auction.seller_id, type="auction_needs_action",

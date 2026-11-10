@@ -52,6 +52,11 @@ class Bid(Base):
     # Cancelled bids stay in the table: they are the dispute record for an auction that was
     # withdrawn, and deleting them would destroy the audit trail the spec requires.
     status = Column(String(16), default=BID_ACTIVE, server_default=BID_ACTIVE, nullable=False)
+    # Phase 7a: the card the bidder verified at their first bid (no hold). Only the winner's
+    # is charged, off-session, when the auction ends. `address_id` is their Ship to.
+    payment_method_id = Column(String(255), nullable=True)
+    address_id = Column(UUID(as_uuid=True), ForeignKey("addresses.id", ondelete="SET NULL"),
+                        nullable=True)
     cancelled_at = Column(DateTime(timezone=True), nullable=True)
     cancellation_reason = Column(String(64), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)

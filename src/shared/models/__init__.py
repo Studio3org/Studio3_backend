@@ -20,6 +20,8 @@ from src.shared.models.chat import Conversation, ChatMessage
 from src.shared.models.ledger import LedgerAccount, LedgerTransaction, LedgerEntry
 from src.shared.models.payout import Payout
 from src.shared.models.refund import Refund
+from src.shared.models.auction import Auction, AuctionOffer, Hold
+from src.shared.models.bid import Bid
 from src.shared.models.ticketing import (
     EventPayout,
     HostFeeDebt,
@@ -97,4 +99,8 @@ __all__ = [
     "WaitlistHold",
     "PieceExhibition",
     "CollectionHidden",
+    "Auction",
+    "AuctionOffer",
+    "Hold",
+    "Bid",
 ]

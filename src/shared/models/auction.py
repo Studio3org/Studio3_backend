@@ -54,17 +54,21 @@ AUCTION_CLOSED_NO_BIDS = "closed_no_bids"
 # decide, rather than auto-relisting or reverting to a fixed price.
 AUCTION_NEEDS_SELLER_ACTION = "needs_seller_action"
 AUCTION_CANCELLED = "cancelled"
+# Phase 7a: the winner's card couldn't be charged in the fix window, and the next bidder has
+# been offered the piece at their top bid (auction_offers).
+AUCTION_SECOND_CHANCE = "second_chance"
 
 AUCTION_STATUSES = (
     AUCTION_DRAFT, AUCTION_LIVE, AUCTION_CLOSING, AUCTION_AWAITING_PAYMENT,
     AUCTION_AWAITING_WINNER, AUCTION_CLOSED_SOLD, AUCTION_CLOSED_RESERVE_NOT_MET, AUCTION_CLOSED_NO_BIDS,
-    AUCTION_NEEDS_SELLER_ACTION, AUCTION_CANCELLED,
+    AUCTION_NEEDS_SELLER_ACTION, AUCTION_CANCELLED, AUCTION_SECOND_CHANCE,
 )
 # Statuses in which a piece may not start a second auction.
 AUCTION_RUNNING_STATUSES = (AUCTION_DRAFT, AUCTION_LIVE, AUCTION_CLOSING)
 # Closed, but not finished with: a winner is settled or being chased, and the auction is
 # still the one the piece's checkout reads from.
-AUCTION_SETTLING_STATUSES = (AUCTION_AWAITING_PAYMENT, AUCTION_AWAITING_WINNER)
+AUCTION_SETTLING_STATUSES = (AUCTION_AWAITING_PAYMENT, AUCTION_AWAITING_WINNER,
+                             AUCTION_SECOND_CHANCE)
 
 DELIVERY_SHIP = "ship"
 DELIVERY_PICKUP = "pickup"
@@ -76,7 +80,7 @@ class Auction(Base):
         CheckConstraint(
             "status IN ('draft','live','closing','awaiting_payment','awaiting_winner',"
             "'closed_sold','closed_reserve_not_met','closed_no_bids','needs_seller_action',"
-            "'cancelled')",
+            "'cancelled','second_chance')",
             name="ck_auctions_status",
         ),
         CheckConstraint("cascade_depth >= 0", name="ck_auctions_cascade_depth_positive"),
@@ -133,6 +137,10 @@ class Auction(Base):
     winner_deadline_at = Column(DateTime(timezone=True), nullable=True)
     # How many bidders have been passed over. Bounds the cascade and tells ops what happened.
     cascade_depth = Column(Integer, default=0, server_default="0", nullable=False)
+    # Phase 7a: charge attempts on the winner's saved card, and when the next automatic retry
+    # runs. The fix window (winner_deadline_at) is set once, at the first failure (BE-4).
+    payment_attempts = Column(Integer, default=0, server_default="0", nullable=False)
+    next_payment_retry_at = Column(DateTime(timezone=True), nullable=True)
     cancelled_reason = Column(String(64), nullable=True)
     closed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
@@ -201,5 +209,32 @@ class Hold(Base):
     last_error = Column(Text, nullable=True)
     captured_at = Column(DateTime(timezone=True), nullable=True)
     released_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+# --- second-chance offers (Phase 7a) ------------------------------------------------------
+OFFER_PENDING = "pending"
+OFFER_ACCEPTED = "accepted"
+OFFER_DECLINED = "declined"
+OFFER_EXPIRED = "expired"
+
+
+class AuctionOffer(Base):
+    """The piece offered to the next bidder at their top bid, after the winner's card couldn't
+    be charged in time (the 9 Nov design, "Second chance")."""
+
+    __tablename__ = "auction_offers"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    auction_id = Column(UUID(as_uuid=True), ForeignKey("auctions.id", ondelete="CASCADE"), nullable=False)
+    bid_id = Column(UUID(as_uuid=True), ForeignKey("bids.id", ondelete="CASCADE"), nullable=False,
+                    unique=True)
+    bidder_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    amount_cents = Column(Integer, nullable=False)
+    status = Column(String(12), nullable=False, default=OFFER_PENDING)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    responded_at = Column(DateTime(timezone=True), nullable=True)
+    last_error = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)

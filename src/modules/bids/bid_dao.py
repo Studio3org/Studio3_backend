@@ -4,7 +4,8 @@ Every read filters on active bids. A cancelled auction's bids stay in the table 
 dispute record the spec requires, and counting them would resurrect them on a relist.
 
 One thing worth being explicit about, because it is not obvious: **every bidder keeps their
-hold until the auction closes.** Being outbid by someone else does not release your money —
+hold until the auction closes (auctions from before Phase 7a; since then a bid holds no money,
+only a checked card).** Being outbid by someone else does not release your money —
 you are still in the running if the higher bid falls through. The only thing that releases a
 hold mid-auction is raising your *own* bid, which moves it to the new amount.
 """
@@ -175,7 +176,28 @@ def bid_summary(db: Session, auction: Optional[Auction], viewer_id: Optional[uui
             and bool(viewer_id and winner is not None and winner.bidder_id == viewer_id)
         ),
         "winningBidCents": winner.amount_cents if winner else None,
+        # Phase 7a: the next automatic retry on the winner's card (winner only), and a
+        # second-chance offer waiting for this viewer.
+        "paymentRetryAt": (
+            auction.next_payment_retry_at.isoformat()
+            if auction.next_payment_retry_at and auction.status == AUCTION_AWAITING_PAYMENT
+            and bool(viewer_id and winner is not None and winner.bidder_id == viewer_id) else None
+        ),
+        "secondChanceOffer": _offer_for(db, auction, viewer_id),
+        "fixedEndTime": not auction.soft_close_enabled,
     }
+
+
+def _offer_for(db: Session, auction: Auction, viewer_id) -> Optional[dict]:
+    if viewer_id is None:
+        return None
+    from src.modules.bids import auction_payments
+
+    offer = auction_payments.pending_offer(db, auction.id)
+    if offer is None or offer.bidder_id != viewer_id:
+        return None
+    return {"amountCents": offer.amount_cents, "expiresAt": offer.expires_at.isoformat(),
+            "lastError": offer.last_error}
 
 
 def place_bid(
@@ -184,6 +206,7 @@ def place_bid(
     bidder: User,
     amount_cents: int,
     payment_method_id: Optional[str] = None,
+    address_id: Optional[uuid.UUID] = None,
 ) -> Bid:
     """Place a bid and authorise the money behind it.
 
@@ -214,12 +237,31 @@ def place_bid(
     if amount_cents < minimum:
         raise AppError(f"Bid must be at least ${minimum / 100:.2f}.", 409)
 
+    # Phase 7a (the 9 Nov design): no hold. The first bid checks a saved card; raising your
+    # bid reuses it (and the Ship to address) unless you give another.
+    from src.modules.bids import auction_payments
+
     previous_hold = holds_service.live_hold_for_bidder(db, auction.id, bidder.id)
-    if payment_method_id is None and previous_hold is not None:
-        # Re-bidding: reuse the card already on this auction rather than asking again.
-        payment_method_id = previous_hold.stripe_payment_method_id
+    previous_bid = db.execute(
+        select(Bid).where(Bid.auction_id == auction.id, Bid.bidder_id == bidder.id)
+        .order_by(Bid.created_at.desc()).limit(1)
+    ).scalar_one_or_none()
+    if payment_method_id is None:
+        if previous_bid is not None and previous_bid.payment_method_id:
+            payment_method_id = previous_bid.payment_method_id
+        elif previous_hold is not None:
+            payment_method_id = previous_hold.stripe_payment_method_id
     if payment_method_id is None:
         raise AppError("A payment method is required to bid.", 400)
+    payment_method_id = auction_payments.check_card(db, bidder, payment_method_id)
+    if address_id is None and previous_bid is not None:
+        address_id = previous_bid.address_id
+    if address_id is not None:
+        from src.shared.models.address import Address
+
+        address = db.get(Address, address_id)
+        if address is None or address.user_id != bidder.id:
+            raise AppError("Address not found.", 404)
 
     bid = Bid(
         id=uuid.uuid4(),
@@ -227,17 +269,14 @@ def place_bid(
         bidder_id=bidder.id,
         amount_cents=amount_cents,
         status=BID_ACTIVE,
+        payment_method_id=payment_method_id,
+        address_id=address_id,
     )
     db.add(bid)
     db.flush()
 
-    # Place and confirm the new authorisation before touching the old one. If this raises,
-    # nothing above has been committed and the previous hold still stands.
-    holds_service.place_hold(
-        db, bid, bidder, amount_cents, payment_method_id, commit=False
-    )
-
     if previous_hold is not None:
+        # A bid from before Phase 7a still had a hold: it isn't needed any more.
         previous_bid = db.get(Bid, previous_hold.bid_id)
         if previous_bid is not None:
             previous_bid.status = BID_OUTBID

@@ -112,19 +112,19 @@ def test_second_bid_must_clear_the_banded_increment(db, client, auth_headers):
     piece = _auction(db, seller, price_cents=900_00)
     make_bid(db, _auction_row(db, piece), first, 900_00)
 
-    # $900 sits in the $500-1,999 band, so the step is $25.
-    assert bid_increment_cents(900_00) == 25_00
+    # $900 sits in the design's $500-999 band, so the step is $50.
+    assert bid_increment_cents(900_00) == 50_00
 
     too_low = client.post(
         f"/api/pieces/{piece.id}/bids",
-        json={"amountCents": 910_00, "paymentMethodId": "pm_test_card"},
+        json={"amountCents": 925_00, "paymentMethodId": "pm_test_card"},
         headers=auth_headers(second),
     )
     assert too_low.status_code == 409
 
     exact = client.post(
         f"/api/pieces/{piece.id}/bids",
-        json={"amountCents": 925_00, "paymentMethodId": "pm_test_card"},
+        json={"amountCents": 950_00, "paymentMethodId": "pm_test_card"},
         headers=auth_headers(second),
     )
     assert exact.status_code == 201

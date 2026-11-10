@@ -254,6 +254,8 @@ def stripe_stub(monkeypatch):
         # Holds are a separate Stripe code path (manual capture), and the auction lifecycle
         # is entirely built on it.
         "src.modules.bids.holds_service",
+        # Phase 7a: the card check at the first bid and the winner's charge at close.
+        "src.modules.bids.auction_payments",
         "src.modules.payments.payment_methods_controller",
         # Connect onboarding. Absent from this list until the Accounts v2 move, which is why
         # the entire onboarding surface had no tests.
@@ -290,6 +292,8 @@ def stripe_enabled(monkeypatch, stripe_stub):
         "src.modules.payments.payouts_service",
         "src.modules.payments.payments_controller",
         "src.modules.bids.holds_service",
+        # Phase 7a: the card check at the first bid and the winner's charge at close.
+        "src.modules.bids.auction_payments",
         "src.modules.payments.payment_methods_controller",
         "src.modules.connect.connect_controller",
         "src.modules.orders.stale_orders",

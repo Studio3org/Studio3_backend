@@ -7,6 +7,7 @@ auction_cancellation and auction_dao, so that a rule cannot be enforced in the e
 forgotten in the sweep that does the same thing.
 """
 import uuid
+from datetime import datetime, timezone
 
 from flask import g, request
 
@@ -26,7 +27,6 @@ from src.modules.bids import (
     auction_dao,
     auction_winner,
     bid_dao,
-    holds_service,
 )
 from src.modules.notifications import notifications_dao
 from src.modules.pieces import listing_rules, piece_state
@@ -252,21 +252,16 @@ def retry_winner_payment(piece_id: str):
         if not winning or winning.bidder_id != user_id:
             raise AppError("Only the winning bidder can do this.", 403)
 
-        hold = bid_dao.hold_for_bid(db, winning.id)
-        if hold is None:
-            raise AppError("This bid has no payment attached.", 409)
+        # Phase 7a: the new card is checked and charged straight away. The fix window does not
+        # move however many cards are tried (BE-4).
+        from src.modules.bids import auction_payments
 
-        # Authorise the new card first, then settle. reauthorize cancels the dead
-        # authorisation only once the replacement is confirmed.
-        holds_service.reauthorize(
-            db, hold, bidder, payment_method_id=payment_method_id, commit=False
-        )
-        outcome = auction_winner.settle_on(db, auction, piece, winning, commit=False)
+        payment_method_id = auction_payments.check_card(db, bidder, payment_method_id)
+        outcome = auction_winner.settle_on(db, auction, piece, winning, commit=False,
+                                           payment_method_id=payment_method_id)
         db.commit()
 
         if outcome != auction_winner.SETTLED:
-            # settle_on has already re-parked the auction with a fresh window rather than
-            # raising, so this is a reportable outcome and not an error.
             raise AppError(
                 "That card was declined too. Try another one before your time runs out.", 402
             )
@@ -310,3 +305,45 @@ def _notify_bidders(db, auction, piece, *, type: str, title: str, body: str) -> 
             )
         except Exception:
             logger.exception("Notification %s failed for bidder %s", type, bid.bidder_id)
+
+
+
+# --- Phase 7a: second chance --------------------------------------------------------------------
+
+def respond_to_offer(piece_id: str, accept: bool):
+    """The next bidder's answer to a second-chance offer. Accepting charges their saved card
+    (or `paymentMethodId`) at once; declining passes it to the next bidder."""
+    from src.modules.bids import auction_closer, auction_payments
+
+    body = request.get_json(silent=True) or {}
+    db = SessionLocal()
+    try:
+        user_id = uuid.UUID(g.user["id"])
+        bidder = get_user_by_id(db, user_id)
+        piece = get_piece(db, uuid.UUID(piece_id))
+        if not piece:
+            raise AppError("Piece not found.", 404)
+        auction = auction_dao.get_settling_auction(db, piece.id, lock=True)
+        offer = auction_payments.pending_offer(db, auction.id, lock=True) if auction else None
+        if offer is None or offer.bidder_id != user_id:
+            raise AppError("There's no offer waiting for you on this piece.", 404)
+        if offer.expires_at <= datetime.now(timezone.utc):
+            raise AppError("This offer has expired.", 409)
+        if not accept:
+            outcome = auction_winner.pass_offer(db, auction, piece, offer, expired=False)
+            db.commit()
+            auction_closer.after_offer(db, auction, piece, outcome)
+            return {"declined": True}, 200
+        method = (body.get("paymentMethodId") or "").strip() or None
+        if method:
+            method = auction_payments.check_card(db, bidder, method)
+        outcome = auction_winner.accept_offer(db, auction, piece, offer, method)
+        db.commit()
+        if outcome != auction_winner.SETTLED:
+            raise AppError(f"{offer.last_error or 'The card was declined.'} Try another card "
+                           "before the offer runs out.", 402)
+        winning = auction_winner.winning_bid(db, auction)
+        auction_closer._notify_close(db, auction, piece, winning, [])
+        return bid_dao.bid_summary(db, auction, viewer_id=user_id), 200
+    finally:
+        db.close()
