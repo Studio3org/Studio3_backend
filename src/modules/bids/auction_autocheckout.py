@@ -45,10 +45,27 @@ logger = get_logger(__name__)
 
 
 def queue(db, auction: Auction) -> None:
-    """Call inside the transaction that settled the auction on its winner."""
+    """Call inside the transaction that settled the auction on its winner.
+
+    The state is set here, in the same commit, so the winner never sees `null`: `manual`
+    when they'll check out themselves, otherwise `pending_quote` while the quote is fetched
+    (the job then moves it on to `charged`, `failed` or `manual`)."""
     from src.jobs.dispatch import enqueue_after_commit
 
+    bid = db.get(Bid, auction.winning_bid_id) if auction.winning_bid_id else None
+    if _eligible(db, auction, bid):
+        auction.auto_checkout_state = AUTO_MANUAL
+        return
+    auction.auto_checkout_state = AUTO_PENDING_QUOTE
     enqueue_after_commit(db, "src.modules.bids.auction_autocheckout.start", str(auction.id))
+
+
+def next_step(auction: Auction) -> str:
+    """The end of the winner's "you won" message."""
+    if auction.auto_checkout_state == AUTO_MANUAL or not auction.auto_checkout_state:
+        return "Confirm your delivery details to finish."
+    return ("We'll charge shipping, insurance and tax to the same card and book the courier "
+            "— nothing more to do.")
 
 
 def _eligible(db, auction: Auction, bid: Optional[Bid]) -> Optional[str]:
@@ -61,6 +78,24 @@ def _eligible(db, auction: Auction, bid: Optional[Bid]) -> Optional[str]:
         return "pickup"
     if bid is None or not bid.address_id:
         return "no_address"
+    # The same offline checks the quote makes, so a winner told "nothing more to do" isn't
+    # sent back to the checkout a moment later. Only Convelio itself can still refuse.
+    from src.modules.shipping import convelio_mapper, quote_service
+
+    piece = db.get(Piece, auction.piece_id)
+    artist = db.get(User, auction.seller_id)
+    winner = db.get(User, bid.bidder_id)
+    address = db.get(Address, bid.address_id)
+    pickup = quote_service.pickup_address(db, artist)
+    if piece is None or convelio_mapper.missing_for_piece(piece) or pickup is None:
+        return "piece_not_ready"
+    try:
+        convelio_mapper.address(address, who="The delivery")
+        convelio_mapper.address(pickup, who="The pickup")
+        convelio_mapper.contact(address, winner.email if winner else None, who="The buyer")
+        convelio_mapper.contact(pickup, artist.email if artist else None, who="The artist")
+    except AppError:
+        return "address_not_ready"
     return None
 
 
@@ -71,7 +106,9 @@ def start(auction_id: str) -> str:
     db = SessionLocal()
     try:
         auction = db.execute(select(Auction).where(Auction.id == uuid.UUID(auction_id)).with_for_update()).scalar_one_or_none()
-        if auction is None or auction.status != AUCTION_AWAITING_WINNER or auction.auto_checkout_state:
+        if (auction is None or auction.status != AUCTION_AWAITING_WINNER
+                or auction.auto_checkout_state not in (None, AUTO_PENDING_QUOTE)
+                or auction.shipping_quote_id is not None):
             return "skipped"
         bid = db.get(Bid, auction.winning_bid_id) if auction.winning_bid_id else None
         reason = _eligible(db, auction, bid)

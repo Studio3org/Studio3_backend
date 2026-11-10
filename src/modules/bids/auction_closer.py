@@ -118,7 +118,7 @@ def _close_without_sale(db, auction, piece, status: str, reason: str) -> None:
                 target_type="piece",
                 target_id=auction.piece_id,
                 title="Auction ended without a sale",
-                body="Nothing was charged to you, and your hold has been released.",
+                body="Nothing was charged to you.",
             )
         except Exception:
             logger.exception("No-sale notification failed for bidder %s", bid.bidder_id)
@@ -196,6 +196,8 @@ def _notify_payment_failed(db, auction, piece, winning) -> None:
 
 
 def _notify_close(db, auction, piece, winning, losing) -> None:
+    from src.modules.bids import auction_autocheckout
+
     title = piece.title if piece else "a piece"
     try:
         notifications_dao.create_and_push(
@@ -207,7 +209,7 @@ def _notify_close(db, auction, piece, winning, losing) -> None:
             payload={"amountCents": winning.amount_cents},
             title="You won the auction",
             body=f'You won "{title}" for ${winning.amount_cents / 100:.2f}, and your card has '
-                 "been charged. Confirm your delivery details to finish.",
+                 f"been charged. {auction_autocheckout.next_step(auction)}",
         )
         notifications_dao.create_and_push(
             db,

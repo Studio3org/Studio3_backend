@@ -81,7 +81,7 @@ def extend(piece_id: str):
             type="auction_extended",
             title="This auction now runs longer",
             body=f'The seller extended "{piece.title}" by {extra_days} day'
-                 f'{"s" if extra_days != 1 else ""}. Your bid and your hold still stand.',
+                 f'{"s" if extra_days != 1 else ""}. Your bid still stands.',
         )
         return bid_dao.bid_summary(db, auction, viewer_id=seller_id), 200
     finally:
@@ -273,10 +273,12 @@ def retry_winner_payment(piece_id: str):
 
 
 def _notify_payment_fixed(db, auction, piece, winning) -> None:
+    from src.modules.bids import auction_autocheckout
+
     title = piece.title if piece else "a piece"
     for user_id, kind, heading, body in (
         (winning.bidder_id, "auction_payment_fixed", "Payment received",
-         f'Your payment for "{title}" went through. Confirm your delivery details to finish.'),
+         f'Your payment for "{title}" went through. {auction_autocheckout.next_step(auction)}'),
         (auction.seller_id, "auction_sold", "Your auction sold",
          f'"{title}" sold for ${winning.amount_cents / 100:.2f}.'),
     ):

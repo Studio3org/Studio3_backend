@@ -28,6 +28,7 @@ from src.shared.models.ticketing import (
     LIVE_TICKET_STATUSES,
     ORDER_CANCELLED,
     ORDER_PAID,
+    ORDER_PARTLY_REFUNDED,
     ORDER_REFUNDED,
     RSVP_TICKET_NAME,
     Ticket,
@@ -77,7 +78,7 @@ def _checked_order(db: Session, order: Optional[TicketOrder]) -> TicketOrder:
         raise AppError("Order not found.", 404)
     if order.status in (ORDER_CANCELLED, ORDER_REFUNDED):
         raise AppError("These tickets are no longer valid.", 410)
-    if order.status != ORDER_PAID:
+    if order.status not in (ORDER_PAID, ORDER_PARTLY_REFUNDED):
         raise AppError("The tickets haven't been issued yet.", 409)
     return order
 

@@ -299,9 +299,10 @@ def reschedule(db: Session, event: Event, starts_at: datetime, ends_at: datetime
     event.ends_at = ends_at
     event.rescheduled_at = now
     event.reschedule_message = _clean_message(message)
-    # The day-before reminder goes out again for the new date.
+    # The day-before and 2-hour reminders go out again for the new date.
     for rsvp in db.execute(select(EventRsvp).where(EventRsvp.event_id == event.id)).scalars():
         rsvp.reminded_at = None
+        rsvp.reminded_soon_at = None
     live = db.execute(
         select(Ticket.id).where(Ticket.event_id == event.id, Ticket.status.in_(LIVE_TICKET_STATUSES))
     ).scalars().all()

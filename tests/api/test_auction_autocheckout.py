@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
-from src.modules.bids import auction_closer, holds_service
+from src.modules.bids import auction_autocheckout, auction_closer, holds_service
 from src.shared.models.auction import AUCTION_AWAITING_WINNER, AUCTION_CLOSED_SOLD, Auction
 from src.shared.models.notification import Notification
 from src.shared.models.order import Order
@@ -64,6 +64,7 @@ def test_an_instant_quote_charges_shipping_and_tax_and_books_the_courier_with_no
     assert db.get(Piece, piece.id).status == "sold"
     assert db.execute(select(Shipment.booking_state)).scalar() == "booked"
     assert len(_notes(db, winner, "auction_shipping_charged")) == 1
+    assert "nothing more to do" in auction_autocheckout.next_step(auction)
     assert_ledger_balanced(db)
 
 
@@ -113,6 +114,7 @@ def test_pickup_at_the_event_keeps_the_checkout(db, stripe_enabled, convelio):
     db.expire_all()
     assert db.get(Auction, auction.id).auto_checkout_state == "manual"
     assert convelio.quotes == [] and len(stripe_enabled.charged) == 1
+    assert "Confirm your delivery details" in auction_autocheckout.next_step(db.get(Auction, auction.id))
 
 
 def test_with_convelio_off_the_winner_checks_out_as_before(db, stripe_enabled, monkeypatch):
@@ -137,3 +139,32 @@ def test_a_piece_missing_its_shipping_details_falls_back_to_the_checkout(db, str
     assert db.get(Auction, auction.id).auto_checkout_state == "manual"
     assert json.dumps(convelio.quotes) == "[]"
     assert uuid.UUID(str(auction.id))
+
+
+def test_the_state_is_set_in_the_closing_commit_so_the_winner_never_sees_null(db, stripe_enabled, monkeypatch):
+    """With the job not yet run, the auction already says what happens next."""
+    monkeypatch.setattr(auction_autocheckout, "start", lambda auction_id: "not yet")
+    monkeypatch.setenv("CONVELIO_ENABLED", "true")
+    monkeypatch.setenv("CONVELIO_API_KEY", "test-key")
+    artist, piece, auction, winner = _won(db, stripe_enabled)
+
+    auction_closer.close_expired_auctions()
+
+    db.expire_all()
+    assert db.get(Auction, auction.id).auto_checkout_state == "pending_quote"
+
+
+def test_a_buyer_phone_the_courier_cannot_use_is_manual_from_the_start(db, stripe_enabled, convelio):
+    from src.shared.models.address import Address
+    from src.shared.models.bid import Bid
+
+    artist, piece, auction, winner = _won(db, stripe_enabled)
+    bid = db.execute(select(Bid).where(Bid.auction_id == auction.id)).scalar_one()
+    db.get(Address, bid.address_id).phone = "555-01"  # not a number Convelio takes
+    db.commit()
+
+    auction_closer.close_expired_auctions()
+
+    db.expire_all()
+    assert db.get(Auction, auction.id).auto_checkout_state == "manual"
+    assert convelio.quotes == []

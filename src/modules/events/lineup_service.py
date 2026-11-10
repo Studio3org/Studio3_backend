@@ -390,20 +390,32 @@ def record_exhibitions(db: Session, event: Event) -> int:
 
 
 def exhibitions_for_piece(db: Session, piece_id) -> list[dict]:
+    """`month` is in the event's own time zone, so a late-evening show isn't filed a month off."""
+    from zoneinfo import ZoneInfo
+
     from src.shared.models.event import PieceExhibition
 
     rows = db.execute(
-        select(PieceExhibition).where(PieceExhibition.piece_id == piece_id)
+        select(PieceExhibition, Event.timezone)
+        .outerjoin(Event, Event.id == PieceExhibition.event_id)
+        .where(PieceExhibition.piece_id == piece_id)
         .order_by(PieceExhibition.starts_at.desc())
-    ).scalars()
+    ).all()
+
+    def local(r, tz):
+        try:
+            return r.starts_at.astimezone(ZoneInfo(tz)) if tz else r.starts_at
+        except Exception:  # noqa: BLE001 — an unknown zone name falls back to UTC
+            return r.starts_at
+
     return [{
         "eventId": str(r.event_id) if r.event_id else None,
         "title": r.title,
         "venueName": r.venue_name,
         "city": r.city,
         "date": r.starts_at.isoformat(),
-        "month": r.starts_at.strftime("%B %Y"),
-    } for r in rows]
+        "month": local(r, tz).strftime("%B %Y"),
+    } for r, tz in rows]
 
 
 def cancel_lineup(db: Session, event: Event, reason: str, commit: bool = True) -> dict:

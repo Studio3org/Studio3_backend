@@ -135,8 +135,12 @@ def patch(event_id: str):
             event.cover_media_url = body.get("coverMediaUrl")
         if "category" in body:
             event.category = events_dao.validate_category(body.get("category"))
-        if "timezone" in body:
-            event.timezone = body.get("timezone")
+        if "timezone" in body and body.get("timezone"):
+            # Only a fallback: an event with a location keeps the location's zone (B28).
+            from src.shared.config.timezones import zone_for
+
+            located = zone_for(body.get("latitude", event.latitude), body.get("longitude", event.longitude))
+            event.timezone = located or body.get("timezone")
         if "venueName" in body:
             event.venue_name = (body.get("venueName") or "").strip() or None
         if "address" in body:
@@ -233,7 +237,7 @@ def _apply_ticketing_fields(db, event: Event, body: dict) -> bool:
     The refund policy is a promise to buyers, so it can't change once a paid ticket has sold:
     someone who bought under "up to 7 days before" keeps that."""
     from src.shared.models.event import AGE_LIMITS, REFUND_POLICIES, VISIBILITIES
-    from src.shared.models.ticketing import ORDER_PAID, TicketOrder
+    from src.shared.models.ticketing import ORDER_PAID, ORDER_PARTLY_REFUNDED, TicketOrder
 
     changed = False
     if "refundPolicy" in body:
@@ -243,7 +247,8 @@ def _apply_ticketing_fields(db, event: Event, body: dict) -> bool:
         if policy != event.refund_policy and event.id is not None:
             sold = db.execute(
                 select(TicketOrder.id).where(
-                    TicketOrder.event_id == event.id, TicketOrder.status == ORDER_PAID,
+                    TicketOrder.event_id == event.id,
+                    TicketOrder.status.in_((ORDER_PAID, ORDER_PARTLY_REFUNDED)),
                     TicketOrder.total_cents > 0,
                 ).limit(1)
             ).first()

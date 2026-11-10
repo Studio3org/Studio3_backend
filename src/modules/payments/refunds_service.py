@@ -220,6 +220,14 @@ def refund_paid_order(
     # --- step 2: Stripe, with no lock held ------------------------------------------------
     failures = [f for f in (_send(rid, order_id, charge_id) for rid in plan) if f]
     if failures:
+        logger.error("Refund for order %s failed at Stripe: %s", order_id, failures[0])
+        if actor_role == ROLE_SELLER:
+            # The artist can't open the admin console; support retries it from there.
+            raise AppError(
+                "We couldn't refund the buyer just now. The order is on hold and our team "
+                "will finish the refund — you don't need to do anything.",
+                502,
+            )
         raise AppError(
             "The refund didn't go through at Stripe. The artist's payout is on hold; "
             f"retry the refund from the admin console. ({failures[0]})",
