@@ -16,11 +16,11 @@ Responses keep the usual envelope `{success, message, data}`. Errors are `{succe
 | 4. Ticket refunds, waitlist, check-in, host cancel and reschedule, host payouts | Done, on `development` (`5063d2f`) | Refund button; waitlist screens already built; scanner and guest list; reschedule and cancel-preview screens |
 | 5. Co-host and artist invites, piece approvals, bidding end | Done, on `development` (`5063d2f`) | Invite inbox and accept/decline; piece request screen; "Waiting for" in Lineup; bidding end picker; Exhibited on piece pages |
 | 6. Account and settings (going public, selling off, deletion check, hide from collection) | Done, on `development` (`5063d2f`) | Drop the one-by-one approvals; new turn-off message; Delete account reads the check; Hide from my Collection; fees from seller-terms |
-| 7a. Auctions v2 (charge at close, 12-hour fix window, second-chance offer) | Done (not yet committed) | Card check and Ship to at the first bid; new increments; no extensions; payment-failed and second-chance screens |
+| 7a. Auctions v2 (charge at close, 12-hour fix window, second-chance offer) | Done, on `development` (`a655a20`) | Card check and Ship to at the first bid; new increments; no extensions; payment-failed and second-chance screens |
 | 7b. Shipping, insurance and tax in the charge at close | After Phase 8 | Remove the auction checkout |
 | 8. Convelio shipping and checkout pricing | Not started | — |
 
-The shared dev database (Aiven) is at migration `058_collection_hidden`, so a build pointed at it can use everything through Phase 6.
+The shared dev database (Aiven) is at migration `059_auctions_v2`, so a build pointed at it can use everything through Phase 7a.
 
 ---
 
