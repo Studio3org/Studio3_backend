@@ -73,6 +73,53 @@ services:
         sync: false
       - key: SENTRY_DSN
         sync: false # unset = Sentry is not initialised at all
+      # Proxies in front of the app (Render's router): the client IP is read from that many
+      # X-Forwarded-For entries.
+      - key: TRUSTED_PROXY_HOPS
+        value: "1"
+      # --- Tickets, wallets, auctions, shipping (Phases 3 to 8) --------------------------
+      # Keep these identical on the web service and the jobs worker: the worker sends ticket
+      # emails and wallet updates, settles auctions and books couriers.
+      - key: TICKET_SIGNING_KEY
+        sync: false # base64 32 bytes (openssl rand -base64 32); never change once tickets exist
+      - key: PLATFORM_TICKET_COMMISSION_BPS
+        value: "800"
+      - key: SALES_TAX_RATE_BPS
+        value: "825"
+      - key: SALES_TAX_PROVIDER
+        value: flat # "stripe" once the accountant agrees and Stripe Tax is switched on
+      - key: EVENT_PAYOUT_DELAY_HOURS
+        value: "24"
+      - key: AUCTION_PAYMENT_FIX_HOURS
+        value: "12"
+      - key: AUCTION_SECOND_CHANCE_HOURS
+        value: "24"
+      - key: GOOGLE_WALLET_ISSUER_ID
+        sync: false
+      - key: GOOGLE_WALLET_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: APPLE_PASS_TYPE_ID
+        sync: false
+      - key: APPLE_TEAM_ID
+        sync: false
+      - key: APPLE_PASS_CERT_P12
+        sync: false
+      - key: APPLE_PASS_CERT_PASSWORD
+        sync: false
+      - key: APPLE_WWDR_CERT
+        sync: false
+      # Convelio shipping. Off until the app with the new checkout ships; the sandbox
+      # (sk_test_) key is right for staging.
+      - key: CONVELIO_ENABLED
+        value: "false"
+      - key: CONVELIO_API_KEY
+        sync: false
+      - key: SHIPPING_QUOTE_VALID_HOURS
+        value: "24"
+      - key: SHIPPING_INSURANCE_DEFAULT
+        value: "true"
+      - key: ORDER_AUTO_COMPLETE_DAYS
+        value: "7"
 
   # Scheduled work runs here, not in the web process. Two services on purpose: the worker
   # can scale out, beat cannot — a second beat means every schedule fires twice.
@@ -106,6 +153,51 @@ services:
         value: "2000"
       - key: SENTRY_DSN
         sync: false
+      - key: BACKEND_URL
+        sync: false # the public URL: wallet links in ticket emails are built here
+      # --- Tickets, wallets, auctions, shipping (Phases 3 to 8) --------------------------
+      # Keep these identical on the web service and the jobs worker: the worker sends ticket
+      # emails and wallet updates, settles auctions and books couriers.
+      - key: TICKET_SIGNING_KEY
+        sync: false # base64 32 bytes (openssl rand -base64 32); never change once tickets exist
+      - key: PLATFORM_TICKET_COMMISSION_BPS
+        value: "800"
+      - key: SALES_TAX_RATE_BPS
+        value: "825"
+      - key: SALES_TAX_PROVIDER
+        value: flat # "stripe" once the accountant agrees and Stripe Tax is switched on
+      - key: EVENT_PAYOUT_DELAY_HOURS
+        value: "24"
+      - key: AUCTION_PAYMENT_FIX_HOURS
+        value: "12"
+      - key: AUCTION_SECOND_CHANCE_HOURS
+        value: "24"
+      - key: GOOGLE_WALLET_ISSUER_ID
+        sync: false
+      - key: GOOGLE_WALLET_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: APPLE_PASS_TYPE_ID
+        sync: false
+      - key: APPLE_TEAM_ID
+        sync: false
+      - key: APPLE_PASS_CERT_P12
+        sync: false
+      - key: APPLE_PASS_CERT_PASSWORD
+        sync: false
+      - key: APPLE_WWDR_CERT
+        sync: false
+      # Convelio shipping. Off until the app with the new checkout ships; the sandbox
+      # (sk_test_) key is right for staging.
+      - key: CONVELIO_ENABLED
+        value: "false"
+      - key: CONVELIO_API_KEY
+        sync: false
+      - key: SHIPPING_QUOTE_VALID_HOURS
+        value: "24"
+      - key: SHIPPING_INSURANCE_DEFAULT
+        value: "true"
+      - key: ORDER_AUTO_COMPLETE_DAYS
+        value: "7"
 
   - type: worker
     name: studio3-beat
