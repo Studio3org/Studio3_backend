@@ -8,15 +8,18 @@ Responses keep the usual envelope `{success, message, data}`. Errors are `{succe
 
 | Phase | Status | App work needed |
 |---|---|---|
-| 1. Security | Done on branch `phase2` | Small: error messages on sign-in and code screens |
-| 2. Refunds and cancellation | Done on branch `phase2` | Order detail: cancel buttons, artist cancel confirmation, buyer "Report an issue" |
-| 2A. Quick fixes | Done on branch `phase2` | Use the piece on order rows; logout-all message; founding-rate end date |
-| 3. Ticketing core | Done (not yet committed) | Host ticket-type screens; free tickets through `/orders`; checkout polling; tickets screen already works |
-| 3A. Google Wallet and Apple Wallet | Done (not yet committed) | "Add to Google Wallet" / "Add to Apple Wallet" buttons on the confirmation and ticket screens |
-| 4. Ticket refunds, waitlist, check-in | Not started | — |
-| 5. Event invites and approvals | Not started | — |
-| 6. Auction winner deadline | Not started | — |
-| 7. Convelio shipping | Not started | — |
+| 1. Security | Done, on `development` (`2b46cbd`) | Small: error messages on sign-in and code screens |
+| 2. Refunds and cancellation | Done, on `development` (`2b46cbd`) | Order detail: cancel buttons, artist cancel confirmation, buyer "Report an issue" |
+| 2A. Quick fixes | Done, on `development` (`f0e5c8a`) | Use the piece on order rows; logout-all message; founding-rate end date |
+| 3. Ticketing core | Done, on `development` (`25460a1`) | Host ticket-type screens; free tickets through `/orders`; checkout polling; tickets screen already works |
+| 3A. Google Wallet and Apple Wallet | Done, on `development` (`25af41f`) | "Add to Google Wallet" / "Add to Apple Wallet" buttons on the confirmation and ticket screens |
+| 4. Ticket refunds, waitlist, check-in, host cancel and reschedule, host payouts | Done (not yet committed) | Refund button; waitlist screens already built; scanner and guest list; reschedule and cancel-preview screens |
+| 5. Co-host and artist invites, piece approvals, bidding end | Done (not yet committed) | Invite inbox and accept/decline; piece request screen; "Waiting for" in Lineup; bidding end picker; Exhibited on piece pages |
+| 6. Account and settings (going public, selling off, deletion check, hide from collection) | Done (not yet committed) | Drop the one-by-one approvals; new turn-off message; Delete account reads the check; Hide from my Collection; fees from seller-terms |
+| 7. Auctions v2 (charge at close, 12-hour fix window, second-chance offer) | Not started | — |
+| 8. Convelio shipping and checkout pricing | Not started | — |
+
+The shared dev database (Aiven) is at migration `055_wallet_passes`, so a build pointed at it can use everything through Phase 3A.
 
 ---
 
@@ -177,7 +180,7 @@ Built to the ticketing spec of 25 Oct 2026. The endpoints the app already calls 
 | `refundPolicyText` | string | e.g. "Refunds up to 7 days before the event." |
 | `visibility` | `"public"` / `"link"` | Link-only events never appear in browse, search, feeds, Explore or profiles, but open from their link |
 
-`waitlist` is still not sent. It arrives in Phase 4, and B22 says to leave it out until then.
+`waitlist` arrives in Phase 4 (see 4.2).
 
 **Create and edit** (`POST /api/events`, `PATCH /api/events/:id`) accept:
 - `refundPolicy`, `ageLimit` and `visibility`, with the values above. Anything else returns 400.
@@ -253,7 +256,7 @@ After the PaymentSheet succeeds, the tickets are issued by the server when Strip
 | No ticket types | Issues one **General Admission** ticket with a QR code, capped by the event's `capacity` as before (409 when full) | Voids the free ticket |
 | Has a free ticket type | Issues one ticket of the first free type with stock left | Voids the viewer's free tickets |
 | Paid types only | `409` "This event needs a ticket. Choose tickets to continue." | — |
-| Viewer holds paid tickets | — | Free tickets are voided, then `409` "Your paid tickets are still valid…". Refunds come in Phase 4 |
+| Viewer holds paid tickets | — | Free tickets are voided, then `409` "Your paid tickets are still valid…". Paid tickets are refunded from the ticket (4.1) |
 
 Buying any ticket marks the buyer as going. `viewerIsGoing`, `rsvpCount`, `scope=going`, the guest list and the event reminders all include ticket holders.
 
@@ -309,8 +312,8 @@ The client's requirement: after booking, the buyer can put their tickets in **Go
 
 ### 3A.3 Passes stay up to date
 
-- **Voided or refunded ticket:** the pass becomes **void** in Apple Wallet and **inactive** in Google Wallet within a few seconds. Today that happens when someone taps "not going" on a free ticket; refunds and cancellations join in Phase 4.
-- **Moved event:** passes update (Phase 4).
+- **Voided or refunded ticket:** the pass becomes **void** in Apple Wallet and **inactive** in Google Wallet within a few seconds. This happens on "not going", a refund (4.1) and a cancelled event (4.5).
+- **Moved event:** passes show the new date (4.4).
 
 No app change is needed for this; Apple and Google handle it.
 
@@ -328,4 +331,458 @@ The ticket confirmation email now has "Add to Apple Wallet" and "Add to Google W
     - `GOOGLE_WALLET_ISSUER_ID`, `GOOGLE_WALLET_SERVICE_ACCOUNT_JSON`
     - `APPLE_PASS_TYPE_ID`, `APPLE_TEAM_ID`, `APPLE_PASS_CERT_P12`, `APPLE_PASS_CERT_PASSWORD`, `APPLE_WWDR_CERT`
 - **`BACKEND_URL` must be `https://`** for Apple pass updates and the Google pass logo.
-- **Deploy:** migration `055_wallet_passes`.
+- **Deploy:** migration `055_wallet_passes`. `deploy/deploy.sh` carries the wallet settings, the tax rate and `TICKET_SIGNING_KEY` into production. It generates the signing key on the first deploy and keeps it from then on.
+- **Until the client's Google and Apple credentials are in,** both flags in 3A.1 are `false` on staging and production, so test the buttons against a local server with test credentials, or wait for those.
+
+---
+
+## Phase 4: Refunds, waitlist, check-in, reschedule, cancel, host payouts (B22, B26, B28)
+
+Built to the ticketing spec of 25 Oct 2026. The waitlist uses the exact calls the app already makes (`lib/services/event_service.dart`, `EventWaitlist` in `studio_event.dart`), so those screens work as they are.
+
+### 4.1 Refunds by the buyer
+
+**Window (spec):** a refund is allowed only inside the event's refund window:
+
+| `refundPolicy` | Refunds close |
+|---|---|
+| `7d` | 7 days before the start |
+| `24h` | 24 hours before the start |
+| `none` | Never open |
+
+After a **reschedule**, anyone can get a full refund until the new start, whatever the policy said.
+
+**New fields:**
+- Each ticket in `GET /api/user/me/tickets` has `refundable: bool`. It's true only for a paid ticket that hasn't been checked in, inside the window. **Show the refund button only when it's true** (spec: "Outside the window: no refund button").
+- `GET /api/events/:id/orders/:orderId` adds `refundable`, `refundableUntil` (ISO or `null`) and `refundedCents`. Order `status` can now also be `partly_refunded` or `refunded`.
+- The event detail adds `refundableUntil`.
+
+**Endpoint:** `POST /api/events/:id/orders/:orderId/refund`, buyer only.
+
+| Body | Result |
+|---|---|
+| `{}` | Refunds every unused ticket in the order |
+| `{"ticketIds": ["…"]}` | Refunds just those tickets |
+
+`200` returns the order (as `GET …/orders/:orderId`) plus `refund: {status, amountCents, ticketIds}`. The amount is the tickets' price plus their tax; the last refund of an order returns exactly what's left.
+
+| Case | Status and message |
+|---|---|
+| Outside the window, or `none` | `409` "Refunds for this event have closed." |
+| A checked-in ticket | `409` "A ticket that's been checked in can't be refunded." |
+| Free tickets | `409`: use "Not going" (RSVP) instead |
+| Already going through | `409` |
+| Stripe failed | `502` with a message. Studio 3 retries it; the tickets stay valid until the money is back |
+| Someone else's order | `404` |
+
+After a refund, the tickets disappear from `GET /api/user/me/tickets`. Their QR codes no longer scan, the wallet pass turns void, and the tickets go to the waitlist first (4.2). When no tickets are left, the buyer is no longer `viewerIsGoing`.
+
+Notification: type `ticket_refunded`, target the event: "We've refunded $21.65 for your tickets to …".
+
+**App changes:**
+- [ ] `EventTicketPage`: show "Refund" when `refundable`, with a confirmation that names the amount from the quote (price plus tax). Use `ticketIds` to refund one ticket of several.
+- [ ] Show "Refunds closed" (or nothing) when it's false.
+
+### 4.2 Waitlist (`EvWaitlist*`, already built in the app)
+
+On the event detail, and on event cards in Your events when the viewer is in line:
+
+```json
+"waitlist": {
+  "open": true,
+  "wanted": [{"ticketTypeId": "…", "quantity": 2}],
+  "held": {"items": [{"ticketTypeId": "…", "quantity": 1}], "until": "2026-11-21T03:40:00+00:00"},
+  "waitingCount": 3,
+  "waitingByType": {"<ticketTypeId>": 3}
+}
+```
+
+- `open` is true while every ticket type on sale is sold out and the event hasn't started.
+- `held` is `null` when nothing is held.
+- `waitingCount` and `waitingByType` are for the host only.
+- `waitlist` is left out when there's nothing to show (B22).
+- The host's ticket types also carry `waiting`: how many people want that type.
+
+**Endpoints** (exactly the app's):
+
+| Method | Path | Body | Result |
+|---|---|---|---|
+| POST | `/api/events/:id/waitlist` | `{"items": [{ticketTypeId, quantity}]}` | `200` with `waitlist`. Changing what you want keeps your place |
+| DELETE | `/api/events/:id/waitlist` | — | `200` `{left: true}`. Anything held passes to the next person |
+| POST | `/api/events/:id/waitlist/hold/release` | — | `200` with `waitlist`: "Keep waiting for [other type]". The held type is dropped from `wanted`; the others keep their place |
+
+Joining is refused with `409` when a chosen type isn't sold out ("VIP isn't sold out. Choose tickets instead."), over its per-order limit, or the event has started.
+
+**Rules (spec):**
+- Places are first come, first served.
+- A freed ticket (from a refund, an unpaid checkout running out, someone leaving, or the host adding more) is held for the next person who asked for that type, up to the number they asked for. Any extra goes to the people after them at the same time. Only what the whole line doesn't want goes on sale.
+- **How long a hold lasts** depends on how soon the event starts:
+
+  | Event starts in | Hold lasts |
+  |---|---|
+  | More than 24 hours | 2 hours |
+  | 2 to 24 hours | 30 minutes |
+  | Less than 2 hours | 10 minutes |
+
+- While held, the person buys through the normal `POST …/orders`, or taps Reserve (`POST …/rsvp`) for a free type. Nobody else can buy those tickets (`409`).
+- A hold that runs out passes on, and that person is taken off the waitlist.
+- The waitlist closes quietly when the event starts or is cancelled.
+- An event with no ticket types (a plain capacity RSVP) has no waitlist. Add a free ticket type to get one.
+
+**Notifications** (target the event):
+
+| Type | When | Message |
+|---|---|---|
+| `waitlist_hold` | Tickets are held for them. Also sent by email | "2 tickets are held for you until 9:40 PM CST." `payload.heldUntil` is the ISO time |
+| `waitlist_hold_ended` | Their hold ran out | — |
+| `event_tickets_available` (B26) | A sold-out event has tickets on sale again. Sent to people who saved it and aren't going, once per reopening. Not sent when it reopens within 10 minutes of selling out, which is just a checkout running out | — |
+
+**App changes:**
+- [ ] A tap on `waitlist_hold` opens Choose tickets with `held.items` already picked and a countdown to `held.until`. This is already built; check the deep link.
+- [ ] Handle the `event_tickets_available` and `waitlist_hold_ended` notification types: open the event.
+
+### 4.3 Check-in at the door (`HostScanner`)
+
+Only the host and co-hosts can use these; anyone else gets `404`. Phase 5 limits co-hosts to those who accepted their invite.
+
+| Method | Path | Body | Notes |
+|---|---|---|---|
+| POST | `/api/events/:id/tickets/:code/check-in` | optional `{"scannedAt": ISO}` | `:code` is the QR value, the ticket number (`S3-T-8KQ2XM`, any case) or the ticket id (for the guest list's check-in by hand) |
+| POST | `/api/events/:id/check-in/sync` | `{"scans": [{"code", "scannedAt"}]}` | Offline scans, up to 500. Returns `results` in the same order |
+| GET | `/api/events/:id/guests?q=` | — | Guest list, searchable by name, username or ticket number |
+| GET | `/api/events/:id/check-in/manifest` | — | For offline use (below) |
+
+A scan always answers `200` with a `result` to show:
+
+```json
+{"result": "checked_in", "message": "Checked in: Ana Ruiz, VIP (1 of 2).",
+ "ticket": {"id", "number", "ticketTypeName", "holderName", "holderUsername", "holderAvatarUrl",
+            "position": 1, "of": 2, "status", "checkedInAt"},
+ "checkedIn": 48, "total": 62}
+```
+
+| `result` | `message` |
+|---|---|
+| `checked_in` | "Checked in: [name], [type] (1 of 2)." |
+| `already_checked_in` | "Already checked in at 8:14 PM CST." |
+| `invalid` | "Not a valid ticket." / "…it's for a different event." / "…it was refunded or cancelled." |
+
+- **Offline:** store each scan with its time and send them to `…/check-in/sync` when back online. The earliest scan of a ticket wins. If another device's earlier scan arrives later, this device's scan reads `already_checked_in` from then on.
+- **Manifest:** `GET …/check-in/manifest` returns:
+  - `publicKey` (Ed25519, base64) and `codePrefix` (`S3T1.`), so the app can check a QR's signature without the network;
+  - every ticket, with its state;
+  - `ageLimit` and the counts.
+- **Guest list:** returns `{guests: [...], checkedIn, total, ageLimit}`. Show the age limit as a reminder (spec).
+
+**App changes:**
+- [ ] Manage event: replace "Guest list" with "Check in guests" (B28).
+- [ ] The scanner shows the live count, the age limit and each scan result. It also needs Enter code and a guest list with search and check-in by hand.
+- [ ] Offline: download the manifest when the scanner opens, queue scans with their time, and sync them.
+
+### 4.4 Reschedule (`HostReschedule`)
+
+`POST /api/events/:id/reschedule` with `{"startsAt", "endsAt", "message"?}` (host only).
+
+- `200` returns the event, with `rescheduledAt`, `rescheduleMessage`, the new times and `refundableUntil` (the new start).
+- Every ticket holder is told once:
+  - notification `event_rescheduled` ("… has moved to Sat, Nov 28 · 8:00 PM CST. Your tickets still work.");
+  - an email with the host's message.
+- Tickets keep working, and refunds are open until the new start (4.1).
+- Wallet passes show the new date.
+- The day-before reminder goes out again for the new date.
+- An auction on the event moves with it. **If bidding has started, the reschedule is refused** (`409`).
+- `400` when the new start is in the past, the event is too short for its auction, or nothing changed.
+- `PATCH /api/events/:id` with new dates on a published event still answers `409`, now saying to use Reschedule.
+
+Event cards carry `rescheduledAt` too.
+
+**App changes:**
+- [ ] The Reschedule screen: new date and time, and an optional message.
+- [ ] Show "Rescheduled" with the message on the event page and the ticket.
+
+### 4.5 Host cancels
+
+**Preview first:** `GET /api/events/:id/cancel-preview`:
+
+```json
+{"ticketsToVoid": 62, "ordersToRefund": 40, "refundTotalCents": 154300,
+ "cardFeesCents": 4810, "waitlistCount": 7, "guestsToNotify": 41}
+```
+
+Show the host the tickets, the refund total and **the card fees they pay** (spec).
+
+**Confirm:** `POST /api/events/:id/cancel` with `{"message"?: "…"}`. The existing `reason` field still works.
+
+The response adds:
+- `ticketsVoided`
+- `ordersToRefund`
+- `refundTotalCents`
+- `cardFeesCents`
+- `waitlistCleared`
+
+On confirm:
+- every ticket stops working at once, and wallet passes turn void;
+- every paid order is refunded in full, in the background, within a minute;
+- unpaid checkouts are called off, and a payment that slips through anyway is refunded;
+- the waitlist is cleared;
+- tagged pieces come off sale (as before);
+- guests and everyone on the waitlist get the `event_cancelled` notification and an email with the message.
+
+**Deleting:** `DELETE /api/events/:id` on an event that has any tickets is refused with `409` "…Cancel it instead". Drafts and events with no tickets delete as before.
+
+**App changes:**
+- [ ] The cancel flow calls the preview, shows its numbers, and takes an optional message.
+
+### 4.6 Hosts get paid after the event (server-side, for awareness)
+
+- **Archiving:** an event moves to `archived` once it ends (hourly).
+- **Payout:** a day after it ends, the host's ticket money goes to their Stripe account in one transfer. That is the price less the 8% fee, less refunds, less any card fees they still owe from an event they cancelled.
+- **Failures:** a payout that fails (for example, the host's Stripe isn't set up) is retried hourly for four days, then listed for Studio 3 in the admin console.
+- **No app change needed.** The host sees the money in their Stripe Express dashboard.
+
+### 4.7 Server-side only (for awareness)
+
+- **Money:**
+  - refunds use the same three steps as art refunds: record the refund, then call Stripe with no lock held, then mark the tickets;
+  - a part refund and the final one together return exactly the order total;
+  - the ledger stays balanced.
+- **Concurrency:** two doors scanning one code at once let it in once (there's a test for it). Stock counts waitlist holds the same way as checkout holds.
+- **Admin console (Needs attention):**
+  - ticket refunds that failed, with Retry;
+  - host payouts that failed, with Retry;
+  - card fees hosts owe.
+
+  This also fixes an earlier bug where the failed-refunds panel was pasted into the page title.
+- **Jobs:** `events.expire_waitlist_offers` now runs every minute and does the real work. `events.archive_past` (hourly) archives events and pays hosts.
+- **Deploy:**
+  - migration `056_ticketing_phase4`;
+  - new optional setting `EVENT_PAYOUT_DELAY_HOURS` (default 24);
+  - restart Celery beat to pick up the new schedule.
+
+---
+
+## Phase 5: Invites, piece approval, bidding end, Exhibited, time zones (B26, B28)
+
+Built to the ticketing spec's "Lineup", "Art at events", "Notifications" and "Time".
+
+### 5.1 Co-host and featured-artist invites (`ArtistInvite`)
+
+`PUT /api/events/:id/people` keeps its request. What changed: **new people are invited**, and they appear on the event only once they accept. Everyone already on a bill before this release stays as they were (accepted).
+
+Event detail:
+- `cohosts` and `artists` list **accepted people only**.
+- `invites`: `[{username, name, avatarUrl, role, status}]` with `status` `invited`, `accepted` or `declined`. Only the host and accepted co-hosts get it. This is the host's Invited / Accepted view.
+- `viewerInvite`: `{roles, status}` when the viewer is on the bill.
+- `viewerCanEdit`: true for the host and accepted co-hosts.
+
+An invitee can open the event while it's still a draft, so they can see what they're saying yes to.
+
+| Method | Path | Body | Result |
+|---|---|---|---|
+| POST | `/api/events/:id/invite/accept` | optional `{"role": "cohost"\|"artist"}` | `200` with the event plus `invite: {status, roles}`. `404` if no invite is waiting |
+| POST | `/api/events/:id/invite/decline` | same | Same as accept |
+| GET | `/api/user/me/event-invites` | — | `{invites: [{role, invitedAt, event: <card>}]}`: invites waiting for an answer |
+
+Putting a declined person back on the list asks them again.
+
+**Accepted co-hosts can:**
+- edit the event (`PATCH`);
+- manage ticket types;
+- add and remove pieces;
+- see the guest list and the QR codes;
+- scan at the door.
+
+**Only the host can:** publish, cancel, reschedule, delete, and change who is on the bill. A co-host calling any of these gets `404`.
+
+**Notifications:**
+
+| Type | Who | When | Message |
+|---|---|---|---|
+| `event_invite` | The invitee (also by email) | They're invited | "Ana invited you to be a co-host at Night Market." `payload.role` |
+| `event_invite_response` | The host | The invitee answers | "Mira accepted your invite to be a featured artist." |
+
+**App changes:**
+- [ ] An invites list from `/me/event-invites`, plus the `event_invite` notification, each opening the event with Accept and Decline.
+- [ ] In Lineup and Manage, show `invites` with their status.
+
+### 5.2 Artist approval of tagged pieces (`ArtistPieceRequest`)
+
+A host (or co-host) can now tag **anyone's** piece in any mode (`featured`, `sale` or `bid`), with a price. Before, selling someone else's work was a `403`.
+
+- **Someone else's piece starts `waiting`.** Its own listing or auction is untouched until the artist approves, and it's hidden from the event page.
+- **Pieces the host owns**, or the person adding owns, are approved straight away, as before.
+
+Lineup entries now carry, for the host, co-hosts and the piece's artist:
+- `approvalStatus` (`waiting`, `approved` or `declined`);
+- `listingEnded` (whether approving ended the piece's own listing);
+- `respondedAt`.
+
+Everyone else sees approved pieces only.
+
+| Method | Path | Body | Result |
+|---|---|---|---|
+| POST | `/api/events/:id/pieces/:pieceId/approve` | optional `{"priceCents"}` (the artist's own price) | `200` with the lineup entry. For `sale` or `bid`, this **ends the piece's own listing or auction** (bidders are told it was withdrawn). On a published event the piece is listed for the event at once |
+| POST | `/api/events/:id/pieces/:pieceId/decline` | — | `200` |
+| GET | `/api/user/me/piece-requests` | — | `{requests: [<lineup entry> + preview: {endsAuction, endsFixedListing, activeBidCount}, event: <card>]}` |
+
+- Only the piece's artist can answer; anyone else gets `404`.
+- A request already answered gets `409`.
+
+**Rule (spec):** an event either sells pieces or auctions them, never both. Adding a `sale` piece to an event with `bid` pieces (or the other way round) gets `409` "An event either sells its pieces or auctions them, not both."
+
+**Notifications:**
+
+| Type | Who | Payload |
+|---|---|---|
+| `event_piece_request` | The artist (also by email) | `{pieceId, mode, priceCents, deliveryMode, endsAuction, endsFixedListing, activeBidCount}`, enough to show "approving ends your auction" |
+| `event_piece_response` | The host | `{pieceId, approved}` |
+
+**App changes:**
+- [ ] The artist's request screen:
+  - how the piece will be shown;
+  - delivery;
+  - an editable price;
+  - the listing-conflict warning from `preview`;
+  - Approve and Decline.
+- [ ] Lineup shows "Waiting for [artist]" for `waiting` entries, and "Approved by [artist]" once approved.
+
+### 5.3 When bidding ends
+
+`POST /api/events` and `PATCH /api/events/:id` take `auctionEndsAt` (ISO, or `null` for the default). Event detail returns `auctionEndsAt`, the effective end. The default is 30 minutes before the event ends.
+
+- **Limits:** it must be after the start and at least 30 minutes before the end, otherwise `400`.
+- **Published event:** running auctions move to the new end, unless someone has bid (`409`).
+- **Reschedule:** the bidding end moves with the event, keeping its distance from the end.
+
+**App changes:**
+- [ ] A "Bidding ends" picker in Details for auction events. Default it to 30 minutes before the end, and don't allow anything later.
+
+### 5.4 Exhibited (B26)
+
+When an event is over, every approved piece on its bill gets an Exhibited entry, once. This happens with the hourly archive. Piece detail (`GET /api/pieces/:id`) adds:
+
+```json
+"exhibitions": [{"eventId": "…", "title": "Night Market", "venueName": "Cedars Union",
+                 "city": "Austin", "date": "2026-11-21T02:00:00+00:00", "month": "November 2026"}]
+```
+
+The list is newest first, and `[]` for none. The entry stays even if the event is later deleted.
+
+**App changes:**
+- [ ] Show "Exhibited" on the piece page: event name, venue and month (spec).
+
+### 5.5 Reminders
+
+Ticket holders now get the spec's **two** reminders:
+- the day before;
+- **2 hours before**, which is new.
+
+Both are `event_reminder` and both also go by email. The day-before reminder covers 2 to 24 hours before; the 2-hour one covers 10 minutes to 2 hours. A person never gets both at once.
+
+### 5.6 Time zone from the location (B28)
+
+When an event has `latitude` and `longitude`, its `timezone` is worked out from them on create and on every location change. This is an offline lookup. The `timezone` the phone sends is used only when there's no location.
+
+**App changes:**
+- [ ] None required. Keep sending `timezone` as a fallback, and keep showing the times in the event's `timezone`.
+
+### 5.7 Server-side only (for awareness)
+
+- **Deploy:**
+  - migration `057_event_people_approvals`;
+  - one new Python dependency, `timezonefinder`, installed by `deploy.sh` from `requirements.txt`.
+- **No new settings.**
+
+---
+
+## Phase 6: Account and settings (B34, plus B32's Hide from my Collection)
+
+### 6.1 Going public approves everyone waiting (`SettingsFollowRequests`)
+
+`PATCH /api/user/me` with `{"profileVisibility": "public"}` on a private account now accepts **every** pending follow request in the same call. Each person gets the usual `follow` notification ("Your follow request was accepted"). Saving `public` again does nothing more.
+
+**App changes:**
+- [ ] `privacy_settings_page.dart`: remove the loop that approves requests one by one after going public. The server does it now.
+
+### 6.2 Turning off selling (`SettingsSelling`)
+
+`POST /api/user/me/seller/disable` no longer refuses because something is listed. Instead it:
+- takes down fixed-price listings and auctions with no bids (the pieces stay, marked not for sale);
+- answers `200` `{sellerEnabled: false, cancelledAuctions, delisted, skipped}`.
+
+It is refused with **`409`** (before: `400`) only while:
+
+| Situation | Message |
+|---|---|
+| An auction has bids | "An auction of yours has bids. Wait for it to close, or cancel it first." |
+| A sale is still going through | "A sale of yours is still going through. Finish it first." |
+
+**App changes:**
+- [ ] Before confirming, say "Your listings and auctions without bids will come down." Show the `409` message as it is.
+
+### 6.3 Deleting an account with work in progress (`SettingsDelete`)
+
+`GET /api/user/me/deletion-check`:
+
+```json
+{"canDelete": false,
+ "blockers": [{"kind": "hosted_event_tickets", "count": 1,
+               "message": "You're hosting an event with tickets sold. Cancel it first (everyone is refunded)."}]}
+```
+
+| `kind` | Meaning |
+|---|---|
+| `running_auction` | One of their auctions has bids |
+| `bidding` | They're bidding on an auction that hasn't finished |
+| `shipping_sale` | A piece they sold is still on its way (or its money is held) |
+| `shipping_purchase` | A piece they bought is still on its way |
+| `pending_payout` | Money is still on its way to them (an art payout, or a ticket payout for a finished event) |
+| `hosted_event_tickets` | An upcoming event they host has tickets sold |
+| `fee_debt` | They owe card fees from an event they cancelled. Also carries `amountCents` |
+
+`DELETE /api/user/me` (still with `{"password"}`) now refuses with **`409`** and the first blocker's message while the list isn't empty.
+
+Listings and auctions without bids no longer block deletion; they're taken down as part of deleting. Past events that had tickets are kept, under the anonymized host, because buyers' tickets and receipts point at them.
+
+**App changes:**
+- [ ] `delete_account_page.dart`: read the list from `/me/deletion-check` instead of building it from listings, sales and purchases. Disable Delete while `canDelete` is false, and show each `message`.
+- [ ] Confirming still takes the password. B34 asks whether typing DELETE should replace it; that's the client's decision.
+
+### 6.4 Hide from my Collection (B32)
+
+| Method | Path | Result |
+|---|---|---|
+| POST | `/api/collection/:pieceId/hide` | `200` `{pieceId, hidden: true}` |
+| DELETE | `/api/collection/:pieceId/hide` | `200` `{pieceId, hidden: false}` (undo) |
+
+- Only a piece the caller collected can be hidden; anything else gets `404`.
+- A hidden piece leaves `GET /api/users/:username/collection` for everyone, the owner too.
+- The owner can ask for `?includeHidden=1` to see everything. On the owner's own Collection, each item carries `hidden: bool`.
+- The purchase itself is untouched, and `collectedCount` still counts it.
+
+**App changes:**
+- [ ] `PieceCollectedOwner`: show "Hide from my Collection", with Undo.
+- [ ] Show the owner's hidden pieces with `?includeHidden=1` so they can bring one back.
+
+B32's other half, the delivery card (`viewerOrder`, `trackingUrl`), comes with Convelio shipping (Phase 8).
+
+### 6.5 Seller terms with the account's own rate
+
+`GET /api/user/me/seller-terms`:
+
+```json
+{"artCommissionBps": 1500, "artCommissionPercent": 15.0, "ticketFeeBps": 800,
+ "ticketFeePercent": 8.0, "reducedRate": true, "reducedRateUntil": "2027-06-01T00:00:00+00:00",
+ "buyersPayFees": false, "termsVersion": "…", "termsUrl": "/terms"}
+```
+
+**App changes:**
+- [ ] `SettingsSelling` "Includes fees": show the rates from here, and never hard-code them (spec).
+- [ ] Don't say "founding artist" (spec). `reducedRate` is there if the screen needs to know.
+
+The Terms page itself doesn't list fees. Adding them is legal text for the client to approve.
+
+### 6.6 Server-side only (for awareness)
+
+- **Deploy:** migration `058_collection_hidden`.
+- **No new settings.**

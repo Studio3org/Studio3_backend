@@ -77,8 +77,11 @@ def send_daily_summaries() -> None:
 
 @celery_app.task(name="events.expire_waitlist_offers")
 def expire_waitlist_offers() -> None:
-    """Pass an unclaimed waitlist spot to the next person. Placeholder until Phase 7."""
-    _run("waitlist-expiry", lambda: logger.debug("Waitlist expiry: not yet implemented."))
+    """Waitlist holds that ran out pass to the next person; waitlists of events that have
+    started close (ticketing spec)."""
+    from src.modules.events.waitlist_service import expire as run
+
+    _run("waitlist-expiry", run)
 
 
 @celery_app.task(name="events.send_reminders")
@@ -91,11 +94,11 @@ def send_event_reminders() -> None:
 
 @celery_app.task(name="events.archive_past")
 def archive_past_events() -> None:
-    """Archive events whose date has passed and release their held host payouts.
+    """Archive events whose date has passed and pay hosts their ticket money a day later
+    (host_payouts; decision T-1)."""
+    from src.modules.events.host_payouts import archive_and_pay as run
 
-    Placeholder until Phase 7.
-    """
-    _run("event-archive", lambda: logger.debug("Event archiving: not yet implemented."))
+    _run("event-archive", run)
 
 
 @celery_app.task(name="ledger.reconcile")

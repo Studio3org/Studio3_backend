@@ -18,6 +18,21 @@ def local_time_label(event) -> str:
     return f"{starts.strftime('%a, %b')} {starts.day} · {hour}:{starts.strftime('%M %p')}{zone_label}"
 
 
+def local_clock_label(event, moment) -> str:
+    """"9:40 PM CST" for any moment, in the event's own zone (waitlist holds, spec)."""
+    zone_label = ""
+    if event.timezone:
+        try:
+            moment = moment.astimezone(ZoneInfo(event.timezone))
+            zone_label = " " + moment.strftime("%Z")
+        except (ZoneInfoNotFoundError, ValueError):
+            pass
+    else:
+        zone_label = " UTC"
+    hour = moment.strftime("%I").lstrip("0") or "12"
+    return f"{hour}:{moment.strftime('%M %p')}{zone_label}"
+
+
 def _money(cents: int) -> str:
     return f"${cents / 100:,.2f}"
 

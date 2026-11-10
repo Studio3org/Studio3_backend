@@ -86,11 +86,23 @@ def test_everyone_going_is_reminded_once_the_day_before(db, client, auth_headers
 def test_too_soon_too_far_and_unpublished_events_wait(db, client, auth_headers, pushed):
     host = make_user(db, seller=True)
     collector = make_user(db)
-    soon = make_event(db, host, status="published", starts_in=timedelta(minutes=30))
+    too_soon = make_event(db, host, status="published", starts_in=timedelta(minutes=5))
     later = make_event(db, host, status="published", starts_in=timedelta(days=3))
-    for event in (soon, later):
+    for event in (too_soon, later):
         _going(client, auth_headers, event, collector)
     make_event(db, host, status="draft", starts_in=timedelta(hours=10))
 
     assert reminders.send_event_reminders(db) == 0
     assert _types(db, collector) == []
+
+
+def test_two_hours_before_comes_a_second_reminder_once(db, client, auth_headers, pushed):
+    """Ticketing spec, "Notifications": the day before *and* 2 hours before."""
+    host = make_user(db, seller=True)
+    collector = make_user(db)
+    event = make_event(db, host, status="published", starts_in=timedelta(minutes=90))
+    _going(client, auth_headers, event, collector)
+
+    assert reminders.send_event_reminders(db) == 1
+    assert reminders.send_event_reminders(db) == 0
+    assert _types(db, collector) == ["event_reminder"]

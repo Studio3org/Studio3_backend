@@ -96,8 +96,8 @@ celery_app.conf.update(
         },
         "expire-waitlist-offers": {
             "task": "events.expire_waitlist_offers",
-            "schedule": 300.0,
-            "options": {"expires": 290},
+            "schedule": 60.0,
+            "options": {"expires": 55},
         },
         "event-reminders": {
             "task": "events.send_reminders",

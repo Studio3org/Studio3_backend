@@ -65,6 +65,9 @@ def detail(monkeypatch):
     from src.modules.bids import my_bid
 
     monkeypatch.setattr(my_bid, "viewer_bid", lambda _db, _id, _viewer: {})
+    from src.modules.events import lineup_service
+
+    monkeypatch.setattr(lineup_service, "exhibitions_for_piece", lambda _db, _id: [])
     return lambda viewer: pieces_controller.enrich_piece_dict(None, piece, viewer)
 
 

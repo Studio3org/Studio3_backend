@@ -185,7 +185,14 @@ def patch_me():
             if theme not in ("light", "dark"):
                 raise AppError("themePreference must be 'light' or 'dark'.", 400)
             fields["theme_preference"] = theme
+        going_public = (fields.get("profile_visibility") == "public"
+                        and user.profile_visibility == "private")
         user = update_user_fields(db, user, **fields)
+        if going_public:
+            # B34: everyone waiting is accepted once and told (SettingsFollowRequests).
+            from src.modules.user import account_rules
+
+            account_rules.approve_waiting_followers(db, user)
         return user_to_dict(db, user, viewer_id=user.id), 200
     finally:
         db.close()
@@ -341,23 +348,17 @@ def seller_enable():
 
 
 def seller_disable():
-    from src.modules.orders import orders_dao
 
     db = SessionLocal()
     try:
         user = get_user_by_id(db, uuid.UUID(g.user["id"]))
-        # Block deactivation while anything is "in flight" — never auto-delist/abandon.
-        active_listings = list_user_pieces(db, user.id, for_sale_only=True)
-        if active_listings:
-            raise AppError(
-                "Remove your active listings before disabling seller mode.", 400
-            )
-        in_progress = orders_dao.count_seller_in_progress(db, user.id)
-        if in_progress:
-            raise AppError(
-                "You have in-progress sales — complete or cancel them before disabling seller mode.",
-                400,
-            )
+        # B34 (Phase 6): listings and auctions nobody has bid on come down (the pieces stay,
+        # not for sale); refused only while an auction has bids or a sale is going through.
+        from src.modules.user import account_rules
+
+        blockers = account_rules.selling_off_blockers(db, user)
+        if blockers:
+            raise AppError(blockers[0], 409)
         user = update_user_fields(db, user, seller_enabled=False)
         # Not the defensive no-op it was once assumed to be: the pre-check above only looks
         # at in-progress *orders*, so a live auction with bids reaches here. It has to be

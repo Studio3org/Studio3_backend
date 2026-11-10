@@ -71,7 +71,7 @@ def test_a_private_collection_lists_nothing_for_others(monkeypatch):
     monkeypatch.setattr(collected.social_dao, "can_view_content", lambda db, user, viewer: True)
     monkeypatch.setattr(collected.block_dao, "is_blocked_either_way", lambda db, a, b: False)
     bought = [SimpleNamespace(id=uuid.uuid4(), user_id=uuid.uuid4())]
-    monkeypatch.setattr(collected, "collected_pieces", lambda db, buyer: bought)
+    monkeypatch.setattr(collected, "collected_pieces", lambda db, buyer, **_: bought)
     monkeypatch.setattr(collected, "batch_list_piece_media", lambda db, ids: {})
     monkeypatch.setattr(collected, "to_item", lambda piece, media, author: {"id": str(piece.id)})
 

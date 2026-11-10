@@ -132,7 +132,11 @@ def test_due_events_are_published_and_between_an_hour_and_a_day_away():
     assert "events.starts_at > " in sql and "events.starts_at <= " in sql
     params = query.compile(dialect=postgresql.dialect()).params
     bounds = sorted(v for v in params.values() if isinstance(v, datetime))
-    assert bounds == [NOW + timedelta(hours=1), NOW + timedelta(hours=24)]
+    # The day-before window starts where the 2-hour reminder's ends (ticketing spec).
+    assert bounds == [NOW + timedelta(hours=2), NOW + timedelta(hours=24)]
+    soon = reminders.due_events_query(NOW, soon=True).compile(dialect=postgresql.dialect()).params
+    assert sorted(v for v in soon.values() if isinstance(v, datetime)) == [
+        NOW + timedelta(minutes=10), NOW + timedelta(hours=2)]
     assert "published" in params.values()
 
 
@@ -192,8 +196,10 @@ def test_remind_skips_deleted_accounts_and_survives_a_failure(monkeypatch):
 def test_a_run_reminds_each_due_event_once(monkeypatch):
     first, second = _event(), _event(title="Open Studio")
     db = SimpleNamespace(execute=lambda _q: SimpleNamespace(scalars=lambda: iter([first, second])))
+    monkeypatch.setattr(reminders, "_email", lambda *_a: None)
     claimed = {first.id: [uuid.uuid4(), uuid.uuid4()], second.id: []}
-    monkeypatch.setattr(reminders, "claim", lambda _db, event_id, _now: claimed[event_id])
+    monkeypatch.setattr(reminders, "claim",
+                        lambda _db, event_id, _now, soon=False: [] if soon else claimed[event_id])
     reminded = []
     monkeypatch.setattr(
         reminders, "remind",

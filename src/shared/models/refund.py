@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from src.shared.config.database import Base
 
@@ -27,11 +27,15 @@ REFUND_FAILED = "failed"
 LEG_CHARGE = "charge"
 LEG_PREPAID = "prepaid"
 LEG_LATE = "late"
+# Some or all of a ticket order: a buyer inside the refund window, or the host cancelling.
+LEG_TICKETS = "tickets"
 
 # Who started it. `system` is the webhook refunding a late payment.
 ROLE_ADMIN = "admin"
 ROLE_SELLER = "seller"
 ROLE_SYSTEM = "system"
+ROLE_BUYER = "buyer"
+ROLE_HOST = "host"
 
 
 class Refund(Base):
@@ -46,8 +50,12 @@ class Refund(Base):
         UUID(as_uuid=True), ForeignKey("event_ticket_orders.id", ondelete="CASCADE"),
         nullable=True, index=True,
     )
-    # One full refund per payment, ever — so this is also the duplicate guard.
-    payment_intent_id = Column(String(255), nullable=False, unique=True)
+    # The payment refunded. An art order has one full refund per payment; a ticket order can
+    # be refunded a ticket at a time, so the duplicate guard is `refund_key` (Phase 4).
+    payment_intent_id = Column(String(255), nullable=False, index=True)
+    refund_key = Column(String(255), nullable=True, unique=True)
+    # Which tickets a ticket refund paid back.
+    ticket_ids = Column(JSONB, nullable=True)
     leg = Column(String(16), nullable=False)
     amount_cents = Column(Integer, nullable=False)
     status = Column(String(16), default=REFUND_PENDING, nullable=False)

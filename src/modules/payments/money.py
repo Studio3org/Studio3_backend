@@ -13,6 +13,7 @@ from src.shared.ledger import ledger_service
 from src.shared.ledger.ledger_service import get_platform_account, get_seller_account
 from src.shared.models.ledger import (
     ACCOUNT_AUCTION_ESCROW,
+    ACCOUNT_HOST_RECEIVABLE,
     ACCOUNT_PLATFORM_BANK,
     ACCOUNT_PLATFORM_CLEARING,
     ACCOUNT_PLATFORM_REVENUE,
@@ -23,6 +24,8 @@ from src.shared.models.ledger import (
     DEBIT,
     TXN_AUCTION_CAPTURED,
     TXN_AUCTION_REFUNDED,
+    TXN_EVENT_PAYOUT,
+    TXN_HOST_FEE_DEBT,
     TXN_LATE_PAYMENT_REFUNDED,
     TXN_ORDER_PAID,
     TXN_PAYOUT_RELEASED,
@@ -30,6 +33,7 @@ from src.shared.models.ledger import (
     TXN_REFUND_ISSUED,
     TXN_SHIPPING_COST_RECORDED,
     TXN_TICKET_ORDER_PAID,
+    TXN_TICKET_REFUNDED,
     TXN_TRANSFER_REVERSED,
 )
 from src.shared.models.order import Order
@@ -361,5 +365,84 @@ def book_ticket_order_paid(db: Session, order, host_id, stripe_fee_cents: int, c
         idempotency_key=f"ticket_order_paid:{order.id}",
         order_id=None,
         description=f"Tickets paid for event {order.event_id} (ticket order {order.id})",
+        commit=commit,
+    )
+
+
+def book_ticket_refund(db: Session, order, host_id, refund_id, *, subtotal_cents: int,
+                       tax_cents: int, fee_cents: int, commit: bool = True):
+    """Some or all of a ticket order paid back: the reverse of book_ticket_order_paid for
+    that part.
+
+        debit  seller_payable      subtotal - fee   (the host no longer earns it)
+        debit  platform_revenue    fee              (nor does Studio 3)
+        debit  tax_payable         tax
+        credit platform_clearing   subtotal + tax   (it leaves the Stripe balance)
+
+    Stripe keeps its fee, so the stripe_fees debit booked at payment stands: the same
+    asymmetry as book_refund_issued (BE-1). Keyed on the refund, so a ticket order refunded a
+    ticket at a time books each part once.
+    """
+    currency = platform_currency().upper()
+    entries = [
+        (get_seller_account(db, host_id, currency), DEBIT, subtotal_cents - fee_cents),
+        (get_platform_account(db, ACCOUNT_PLATFORM_REVENUE, currency), DEBIT, fee_cents),
+        (get_platform_account(db, ACCOUNT_TAX_PAYABLE, currency), DEBIT, tax_cents),
+        (get_platform_account(db, ACCOUNT_PLATFORM_CLEARING, currency), CREDIT,
+         subtotal_cents + tax_cents),
+    ]
+    return ledger_service.post_transaction(
+        db,
+        txn_type=TXN_TICKET_REFUNDED,
+        entries=entries,
+        idempotency_key=f"ticket_refunded:{refund_id}",
+        order_id=None,
+        description=f"Tickets refunded on ticket order {order.id}",
+        commit=commit,
+    )
+
+
+def book_host_fee_debt(db: Session, debt, commit: bool = True):
+    """A host cancelled and owes the card fees Stripe kept on the refunded payments (spec:
+    "the host pays the card processing fees").
+
+        debit  host_receivable   fees   (the host owes them to us)
+        credit stripe_fees       fees   (so they are no longer the platform's expense)
+    """
+    currency = platform_currency().upper()
+    entries = [
+        (get_platform_account(db, ACCOUNT_HOST_RECEIVABLE, currency), DEBIT, debt.amount_cents),
+        (get_platform_account(db, ACCOUNT_STRIPE_FEES, currency), CREDIT, debt.amount_cents),
+    ]
+    return ledger_service.post_transaction(
+        db,
+        txn_type=TXN_HOST_FEE_DEBT,
+        entries=entries,
+        idempotency_key=f"host_fee_debt:{debt.event_id}",
+        description=f"Card fees owed by host {debt.host_id} for cancelled event {debt.event_id}",
+        commit=commit,
+    )
+
+
+def book_event_payout(db: Session, payout, commit: bool = True):
+    """The host's ticket money for one event leaving the platform.
+
+        debit  seller_payable      owed        (we no longer owe it)
+        credit platform_clearing   transferred (what went to their Stripe account)
+        credit host_receivable     recovered   (card fees they owed, kept back)
+    """
+    currency = platform_currency().upper()
+    entries = [
+        (get_seller_account(db, payout.host_id, currency), DEBIT, payout.owed_cents),
+        (get_platform_account(db, ACCOUNT_PLATFORM_CLEARING, currency), CREDIT, payout.amount_cents),
+        (get_platform_account(db, ACCOUNT_HOST_RECEIVABLE, currency), CREDIT,
+         payout.debt_recovered_cents),
+    ]
+    return ledger_service.post_transaction(
+        db,
+        txn_type=TXN_EVENT_PAYOUT,
+        entries=entries,
+        idempotency_key=f"event_payout:{payout.event_id}",
+        description=f"Ticket payout to host {payout.host_id} for event {payout.event_id}",
         commit=commit,
     )

@@ -156,6 +156,8 @@ def disputes_queue():
             rows=admin_dao.list_disputes(db, status=status),
             failed_payouts=admin_dao.list_failed_payouts(db),
             failed_refunds=admin_dao.list_failed_refunds(db),
+            event_payouts=admin_dao.list_event_payouts_needing_attention(db),
+            host_debts=admin_dao.list_open_host_debts(db),
             open_count=admin_dao.count_open_disputes(db),
             failed_count=admin_dao.count_failed_payouts(db),
             active_status=status,
@@ -519,3 +521,36 @@ def _audit(action: str, *, subject_id, subject_type: str = "order",
         )
     finally:
         db.close()
+
+
+def retry_ticket_refund(refund_id: str):
+    """Retry a ticket refund that failed at Stripe (Phase 4). Safe to press twice."""
+    from src.modules.events import ticket_refunds
+
+    rid = _parse_uuid(refund_id)
+    if not rid:
+        return redirect(url_for("admin.disputes_queue"))
+    try:
+        result = ticket_refunds.retry(rid, g.admin.id)
+        _audit(audit.AUDIT_REFUND_ISSUED, subject_id=rid, subject_type="refund",
+               detail={"amountCents": result.get("amountCents"), "retried": True, "tickets": True})
+    except AppError as e:
+        logger.warning("Ticket refund retry %s: %s", refund_id, e.message)
+    return redirect(url_for("admin.disputes_queue"))
+
+
+def retry_event_payout(event_id: str):
+    """Retry a host's ticket payout (Phase 4)."""
+    from src.modules.events import host_payouts
+
+    eid = _parse_uuid(event_id)
+    if not eid:
+        return redirect(url_for("admin.disputes_queue"))
+    try:
+        result = host_payouts.retry(eid)
+        _audit(audit.AUDIT_PAYOUT_RELEASED, subject_id=eid, subject_type="event",
+               detail={"amountCents": result.get("amountCents"), "event": True,
+                       "status": result.get("status")})
+    except AppError as e:
+        logger.warning("Event payout retry %s: %s", event_id, e.message)
+    return redirect(url_for("admin.disputes_queue"))

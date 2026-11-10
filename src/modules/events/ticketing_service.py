@@ -42,6 +42,7 @@ from src.shared.models.event import (
 )
 from src.shared.models.ticketing import (
     LIVE_TICKET_STATUSES,
+    ORDER_CANCELLED,
     ORDER_EXPIRED,
     ORDER_FAILED,
     ORDER_KIND_PURCHASE,
@@ -161,6 +162,10 @@ def create_type(db: Session, event: Event, body: dict) -> TicketType:
     if "sortOrder" not in body:
         ticket_type.sort_order = len(list_types(db, event.id, include_closed=True))
     db.add(ticket_type)
+    db.flush()
+    from src.modules.events import waitlist_service
+
+    waitlist_service.note_stock(db, event)
     db.commit()
     db.refresh(ticket_type)
     return ticket_type
@@ -188,6 +193,11 @@ def update_type(db: Session, event: Event, type_id: uuid.UUID, body: dict) -> Ti
         raise AppError(f"{sold} of these are already sold or held, so the quantity can't go "
                        "below that.", 409)
     _require_payable_host(db, event, ticket_type)
+    db.flush()
+    from src.modules.events import waitlist_service
+
+    # More tickets: the waitlist gets them first, the rest go on sale (spec).
+    waitlist_service.allocate(db, event, [ticket_type.id])
     db.commit()
     db.refresh(ticket_type)
     return ticket_type
@@ -210,8 +220,10 @@ def remove_type(db: Session, event: Event, type_id: uuid.UUID) -> str:
 
 # --- stock -------------------------------------------------------------------------------------
 
-def _taken(db: Session, type_ids) -> dict:
-    """{type id: tickets that still admit someone + tickets held in unpaid checkouts}."""
+def _taken(db: Session, type_ids, *, exclude_user: Optional[uuid.UUID] = None) -> dict:
+    """{type id: tickets that still admit someone + tickets held in unpaid checkouts + tickets
+    held for people on the waitlist}. `exclude_user`'s own waitlist holds don't count against
+    them: they're the one person those tickets are for."""
     ids = list(type_ids)
     if not ids:
         return {}
@@ -230,7 +242,11 @@ def _taken(db: Session, type_ids) -> dict:
         )
         .group_by(TicketOrderItem.ticket_type_id)
     ).all())
-    return {tid: int(issued.get(tid, 0)) + int(held.get(tid, 0)) for tid in ids}
+    from src.modules.events import waitlist_service
+
+    waiting = waitlist_service.held_counts(db, ids, exclude_user=exclude_user)
+    return {tid: int(issued.get(tid, 0)) + int(held.get(tid, 0)) + int(waiting.get(tid, 0))
+            for tid in ids}
 
 
 def _left(ticket_type: TicketType, taken: dict) -> Optional[int]:
@@ -251,7 +267,8 @@ def _on_sale(ticket_type: TicketType, now: datetime) -> bool:
 
 # --- what the event page shows -----------------------------------------------------------------
 
-def type_to_dict(db: Session, ticket_type: TicketType, taken: dict, *, host=None) -> dict:
+def type_to_dict(db: Session, ticket_type: TicketType, taken: dict, *, host=None,
+                 waiting: Optional[dict] = None) -> dict:
     left = _left(ticket_type, taken)
     data = {
         "id": str(ticket_type.id),
@@ -266,13 +283,15 @@ def type_to_dict(db: Session, ticket_type: TicketType, taken: dict, *, host=None
         "soldOut": left == 0,
     }
     if host is not None:
-        # The host's own view (spec: "Show the host what they receive per ticket").
+        # The host's own view (spec: "Show the host what they receive per ticket"), and how
+        # many people wait for this type (spec: "for which ticket types").
         bps = commission_policy.resolve_bps(host, commission_policy.SALE_TICKET)
         data.update({
             "quantity": ticket_type.quantity,
             "sold": taken.get(ticket_type.id, 0),
             "hostNetCents": commission_policy.net_cents(ticket_type.price_cents, bps),
             "closed": ticket_type.closed_at is not None,
+            "waiting": (waiting or {}).get(str(ticket_type.id), 0),
         })
     return data
 
@@ -283,8 +302,13 @@ def event_ticket_fields(db: Session, event: Event, viewer_id: Optional[uuid.UUID
     types = list_types(db, event.id, include_closed=is_host)
     taken = _taken(db, [t.id for t in types])
     host = db.get(User, event.host_id) if is_host else None
+    waiting = None
+    if is_host:
+        from src.modules.events import waitlist_service
+
+        waiting = waitlist_service.waiting_by_type(db, event.id)
     return {
-        "ticketTypes": [type_to_dict(db, t, taken, host=host) for t in types],
+        "ticketTypes": [type_to_dict(db, t, taken, host=host, waiting=waiting) for t in types],
         "isFree": not any(t.price_cents > 0 for t in types if t.closed_at is None),
         "ticketCount": viewer_ticket_count(db, event.id, viewer_id),
     }
@@ -353,7 +377,8 @@ def _require_open_event(event: Event, buyer_id: Optional[uuid.UUID]) -> None:
         raise AppError("You're hosting this one.", 400)
 
 
-def _priced(db: Session, event: Event, wanted: dict, *, lock: bool) -> list[tuple[TicketType, int]]:
+def _priced(db: Session, event: Event, wanted: dict, *, lock: bool,
+            buyer_id: Optional[uuid.UUID] = None) -> list[tuple[TicketType, int]]:
     """Check every chosen type can be sold now and return (type, quantity) pairs.
 
     With `lock`, the types are locked in id order (a fixed order, so two orders for the same
@@ -366,7 +391,7 @@ def _priced(db: Session, event: Event, wanted: dict, *, lock: bool) -> list[tupl
     types = {t.id: t for t in db.execute(stmt).scalars()}
     if len(types) != len(wanted):
         raise AppError("One of those tickets isn't available for this event.", 409)
-    taken = _taken(db, list(types))
+    taken = _taken(db, list(types), exclude_user=buyer_id)
     now = _now()
     picked = []
     for type_id, quantity in wanted.items():
@@ -391,7 +416,7 @@ def _priced(db: Session, event: Event, wanted: dict, *, lock: bool) -> list[tupl
 def quote(db: Session, event: Event, raw_items, viewer_id: Optional[uuid.UUID]) -> dict:
     """Totals for Checkout. No hold — stock is checked again when the order is placed."""
     _require_open_event(event, viewer_id)
-    picked = _priced(db, event, _parse_items(raw_items), lock=False)
+    picked = _priced(db, event, _parse_items(raw_items), lock=False, buyer_id=viewer_id)
     subtotal = sum(t.price_cents * q for t, q in picked)
     tax = tax_cents(subtotal)
     return {
@@ -418,7 +443,7 @@ def place_order(db: Session, event: Event, buyer: User, raw_items, email: Option
     host = db.get(User, event.host_id)
 
     # --- under the ticket-type locks: check stock and record the hold --------------------
-    picked = _priced(db, event, wanted, lock=True)
+    picked = _priced(db, event, wanted, lock=True, buyer_id=buyer.id)
     subtotal = sum(t.price_cents * q for t, q in picked)
     tax = tax_cents(subtotal)
     order = TicketOrder(
@@ -442,6 +467,11 @@ def place_order(db: Session, event: Event, buyer: User, raw_items, email: Option
             quantity=quantity, unit_price_cents=ticket_type.price_cents,
         ))
     db.flush()
+    from src.modules.events import waitlist_service
+
+    # Tickets the waitlist held for this buyer now ride on this checkout.
+    waitlist_service.attach_order(db, order)
+    waitlist_service.note_stock(db, event)
 
     if order.total_cents == 0 or not stripe_configured():
         # Free tickets, or development without Stripe: issue now, as an art order's dev-mode
@@ -472,6 +502,7 @@ def place_order(db: Session, event: Event, buyer: User, raw_items, email: Option
         logger.exception("Could not start payment for ticket order %s", order.id)
         order = db.get(TicketOrder, order.id)
         order.status = ORDER_FAILED
+        _release_order(db, order)
         db.commit()
         raise AppError("We couldn't start the payment. Please try again.", 502) from exc
 
@@ -509,8 +540,22 @@ def order_to_dict(db: Session, order: TicketOrder) -> dict:
         "paidAt": order.paid_at.isoformat() if order.paid_at else None,
         "ticketCount": sum(1 for t in tickets if t.status in LIVE_TICKET_STATUSES),
         "createdAt": order.created_at.isoformat(),
+        "refundedCents": order.refunded_cents,
+        **_refund_fields(db, order),
         **_wallet_flags(),
     }
+
+
+def _refund_fields(db: Session, order: TicketOrder) -> dict:
+    """Whether the buyer has a refund button, and until when (spec: none outside the window)."""
+    from src.modules.events import ticket_refunds
+
+    event = db.get(Event, order.event_id)
+    until = ticket_refunds.refundable_until(event) if event is not None else None
+    can = (event is not None and order.total_cents > 0
+           and order.status in ticket_refunds.REFUNDABLE_ORDER_STATUSES
+           and ticket_refunds.buyer_can_refund(event))
+    return {"refundable": bool(can), "refundableUntil": until.isoformat() if until else None}
 
 
 def _wallet_flags() -> dict:
@@ -556,9 +601,13 @@ def _issue(db: Session, order: TicketOrder, *, stripe_fee_cents: int, charge_id:
             db.flush()
     order.status = ORDER_PAID
     order.paid_at = _now()
+    order.stripe_fee_cents = stripe_fee_cents
     if charge_id:
         order.stripe_charge_id = charge_id
     _mark_going(db, order.event_id, order.buyer_id)
+    from src.modules.events import waitlist_service
+
+    waitlist_service.order_issued(db, order)
     if order.total_cents > 0:
         from src.modules.payments import money
 
@@ -602,6 +651,18 @@ def on_payment_succeeded(db: Session, intent: dict, *, stripe_fee_cents: int,
     if order.status == ORDER_PAID:
         return
     order.payment_reference = order.payment_reference or intent["id"]
+    event = db.get(Event, order.event_id)
+    if event is None or event.status != EVENT_PUBLISHED or event.ends_at <= _now():
+        # The event was cancelled (or is over) while this payment was going through. No
+        # tickets for an event that isn't happening: the money goes straight back.
+        from src.modules.payments import refunds_service
+
+        if order.status == ORDER_PENDING:
+            order.status = ORDER_CANCELLED
+            _release_order(db, order)
+        refunds_service.refund_late_ticket_payment(db, order, intent, stripe_fee_cents)
+        db.commit()
+        return
     if order.status != ORDER_PENDING:
         # The hold ran out (or the order failed) before the money arrived. If the tickets are
         # still there, the buyer gets them; if someone else has them now, the money goes back.
@@ -637,7 +698,23 @@ def on_payment_failed(db: Session, intent: dict) -> None:
     order = _order_for_intent(db, intent)
     if order is not None and order.status == ORDER_PENDING:
         order.status = ORDER_FAILED
+        _release_order(db, order)
         db.commit()
+
+
+def _release_order(db: Session, order: TicketOrder) -> None:
+    """An unpaid checkout ended: its waitlist holds come back (while they last) and the
+    tickets it held go to the next person in line, or back on sale."""
+    from src.modules.events import waitlist_service
+
+    freed = waitlist_service.order_released(db, order)
+    freed |= {i.ticket_type_id for i in db.execute(
+        select(TicketOrderItem).where(TicketOrderItem.order_id == order.id)
+    ).scalars() if i.ticket_type_id}
+    db.flush()
+    event = db.get(Event, order.event_id)
+    if event is not None:
+        waitlist_service.allocate(db, event, freed)
 
 
 # --- the hold sweep ------------------------------------------------------------------------
@@ -673,6 +750,7 @@ def expire_holds() -> int:
                     db.rollback()
                     continue
             order.status = ORDER_EXPIRED
+            _release_order(db, order)
             db.commit()
             released += 1
         return released
@@ -718,7 +796,7 @@ def reserve(db: Session, event: Event, user: User) -> None:
         picked = None
         for candidate in free:
             try:
-                picked = _priced(db, event, {candidate.id: 1}, lock=True)
+                picked = _priced(db, event, {candidate.id: 1}, lock=True, buyer_id=user.id)
                 break
             except AppError:
                 continue
@@ -729,7 +807,11 @@ def reserve(db: Session, event: Event, user: User) -> None:
         db.add(TicketOrderItem(id=uuid.uuid4(), order_id=order.id,
                                ticket_type_id=picked[0][0].id, quantity=1, unit_price_cents=0))
     db.flush()
+    from src.modules.events import waitlist_service
+
+    waitlist_service.attach_order(db, order)
     _issue(db, order, stripe_fee_cents=0)
+    waitlist_service.note_stock(db, event)
     db.commit()
     _after_issue(order.id)
 
@@ -746,10 +828,14 @@ def release(db: Session, event: Event, user: User) -> None:
     for ticket in free_tickets:
         ticket.status = TICKET_VOID
     if free_tickets:
+        from src.modules.events import waitlist_service
         from src.modules.wallet import wallet_service
 
         # A pass for a voided ticket shows as void in Apple Wallet and inactive in Google's.
         wallet_service.tickets_changed(db, [t.id for t in free_tickets])
+        db.flush()
+        # The place goes to the next person in line, or back to everyone (spec).
+        waitlist_service.allocate(db, event, {t.ticket_type_id for t in free_tickets})
     db.flush()
     if viewer_ticket_count(db, event.id, user.id):
         db.commit()
@@ -778,6 +864,14 @@ def my_tickets(db: Session, user_id: uuid.UUID, event_id: Optional[uuid.UUID]) -
     rows = db.execute(stmt.order_by(Ticket.created_at, Ticket.number)).all()
     live = [(t, n) for t, n in rows if t.status in LIVE_TICKET_STATUSES]
     flags = _wallet_flags()
+    from src.modules.events import ticket_refunds
+
+    orders = {o.id: o for o in db.execute(
+        select(TicketOrder).where(TicketOrder.id.in_({t.order_id for t, _ in live}))
+    ).scalars()} if live else {}
+    events = {e.id: e for e in db.execute(
+        select(Event).where(Event.id.in_({t.event_id for t, _ in live}))
+    ).scalars()} if live else {}
     return [
         {
             "id": str(ticket.id),
@@ -789,6 +883,8 @@ def my_tickets(db: Session, user_id: uuid.UUID, event_id: Optional[uuid.UUID]) -
             "number": ticket.number,
             "status": ticket.status,
             "scannedAt": ticket.checked_in_at.isoformat() if ticket.checked_in_at else None,
+            "refundable": ticket_refunds.ticket_refundable(
+                events[ticket.event_id], ticket, orders[ticket.order_id]),
             **flags,
         }
         for ticket, name in live

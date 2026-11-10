@@ -292,6 +292,10 @@ def enrich_piece_dict(db, piece, viewer_id: Optional[uuid.UUID]) -> dict:
     series = series_dao.get_series_for_piece(db, piece.id)
     base["series"] = series_dao.series_detail_dict(db, series) if series else None
     base["relatedPosts"] = [post_to_dict(p) for p in list_related_posts(db, piece.id)]
+    # B26: the shows it was in, newest first ("Exhibited: Night Market, Cedars Union, Nov 2026").
+    from src.modules.events.lineup_service import exhibitions_for_piece
+
+    base["exhibitions"] = exhibitions_for_piece(db, piece.id)
     # How many people saved it, for its owner only (BACKEND_CHANGES B17): never shown to anyone
     # else, so the field is left out rather than sent as null.
     if viewer_id is not None and viewer_id == piece.user_id:

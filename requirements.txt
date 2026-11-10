@@ -19,6 +19,7 @@ boto3>=1.34.0
 firebase-admin>=6.5.0,<7
 # HTTP/2 client for Apple's push service (Wallet pass updates). Also arrives with
 # firebase-admin; listed because the wallet module imports it directly.
+timezonefinder>=9,<10
 httpx[http2]>=0.27,<1
 flask-socketio>=5.3.0,<6
 gevent>=24.2.1,<26

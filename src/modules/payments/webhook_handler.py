@@ -337,6 +337,15 @@ def _on_charge_refunded(db: Session, charge) -> None:
         Order.__table__.select().where(Order.stripe_charge_id == charge["id"])
     ).first()
     if not row:
+        from src.shared.models.ticketing import TicketOrder
+
+        ticket = db.execute(select(TicketOrder.id).where(
+            (TicketOrder.stripe_charge_id == charge["id"])
+            | (TicketOrder.payment_reference == (charge.get("payment_intent") or "-"))
+        )).first()
+        if ticket:
+            # Event tickets: refunded through ticket_refunds, which books its own ledger.
+            return
         logger.warning("charge.refunded for unknown charge %s.", charge["id"])
         return
     order = orders_dao.get_order_for_update(db, row.id)

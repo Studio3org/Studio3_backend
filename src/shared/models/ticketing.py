@@ -18,7 +18,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from src.shared.config.database import Base
 
@@ -96,8 +96,20 @@ class TicketOrder(Base):
     stripe_charge_id = Column(String(255), nullable=True)
     hold_expires_at = Column(DateTime(timezone=True), nullable=True)
     paid_at = Column(DateTime(timezone=True), nullable=True)
+    # What Stripe kept on the payment. Not returned on a refund, so a host who cancels pays it
+    # (spec: "the host pays the card processing fees").
+    stripe_fee_cents = Column(Integer, nullable=True)
+    # How much has gone back, split the way the ledger booked it, so the last refund of an
+    # order returns exactly what is left (no cent lost to rounding a ticket at a time).
+    refunded_subtotal_cents = Column(Integer, nullable=False, default=0, server_default="0")
+    refunded_tax_cents = Column(Integer, nullable=False, default=0, server_default="0")
+    refunded_fee_cents = Column(Integer, nullable=False, default=0, server_default="0")
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    @property
+    def refunded_cents(self) -> int:
+        return (self.refunded_subtotal_cents or 0) + (self.refunded_tax_cents or 0)
 
 
 class TicketOrderItem(Base):
@@ -151,3 +163,126 @@ class WalletAppleRegistration(Base):
     ticket_id = Column(UUID(as_uuid=True), ForeignKey("event_tickets.id", ondelete="CASCADE"),
                        nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+
+# --- waitlist (spec "Waitlist") ----------------------------------------------------------------
+
+WAITLIST_WAITING = "waiting"
+WAITLIST_HELD = "held"
+WAITLIST_BOUGHT = "bought"
+WAITLIST_EXPIRED = "expired"
+WAITLIST_LEFT = "left"
+# The event started (or was cancelled) with them still in line: removed quietly.
+WAITLIST_CLOSED = "closed"
+WAITLIST_IN_LINE = (WAITLIST_WAITING, WAITLIST_HELD)
+
+HOLD_ACTIVE = "active"
+# Being paid for: the checkout's own 10-minute hold now covers these tickets.
+HOLD_CHECKOUT = "checkout"
+HOLD_USED = "used"
+HOLD_RELEASED = "released"
+HOLD_EXPIRED = "expired"
+HOLD_CANCELLED = "cancelled"
+# Holds that keep tickets away from everyone else.
+HOLDING_STATUSES = (HOLD_ACTIVE,)
+
+
+class WaitlistEntry(Base):
+    """Someone in line for a sold-out event, and how many of each type they want."""
+
+    __tablename__ = "event_waitlist_entries"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    event_id = Column(UUID(as_uuid=True), ForeignKey("events.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    status = Column(String(12), nullable=False, default=WAITLIST_WAITING)
+    # {ticket type id (str): count}. Read and written whole; a handful of keys at most.
+    wanted = Column(JSONB, nullable=False, default=dict)
+    # First come, first served by this. Reset when someone who left joins again.
+    joined_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+class WaitlistHold(Base):
+    """Tickets set aside for the next person in line, until `held_until` (spec: 2 hours, 30
+    minutes or 10 minutes depending on how soon the event starts)."""
+
+    __tablename__ = "event_waitlist_holds"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    entry_id = Column(UUID(as_uuid=True), ForeignKey("event_waitlist_entries.id", ondelete="CASCADE"),
+                      nullable=False)
+    event_id = Column(UUID(as_uuid=True), ForeignKey("events.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    ticket_type_id = Column(UUID(as_uuid=True), ForeignKey("event_ticket_types.id", ondelete="CASCADE"),
+                            nullable=False)
+    quantity = Column(Integer, nullable=False)
+    held_until = Column(DateTime(timezone=True), nullable=False)
+    status = Column(String(12), nullable=False, default=HOLD_ACTIVE)
+    order_id = Column(UUID(as_uuid=True), ForeignKey("event_ticket_orders.id", ondelete="SET NULL"),
+                      nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+# --- the host's money --------------------------------------------------------------------------
+
+EVENT_PAYOUT_PENDING = "pending"
+EVENT_PAYOUT_SENDING = "sending"
+EVENT_PAYOUT_RELEASED = "released"
+EVENT_PAYOUT_FAILED = "transfer_failed"
+# Nothing to send: every ticket was free or refunded, or card-fee debts ate it all.
+EVENT_PAYOUT_NOTHING = "nothing_owed"
+
+
+class EventPayout(Base):
+    """The host's ticket money for one event, transferred once the event is over (T-1)."""
+
+    __tablename__ = "event_payouts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    event_id = Column(UUID(as_uuid=True), ForeignKey("events.id", ondelete="RESTRICT"),
+                      nullable=False, unique=True)
+    host_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    owed_cents = Column(Integer, nullable=False)
+    debt_recovered_cents = Column(Integer, nullable=False, default=0)
+    amount_cents = Column(Integer, nullable=False)
+    status = Column(String(24), nullable=False, default=EVENT_PAYOUT_PENDING)
+    stripe_transfer_id = Column(String(255), nullable=True, unique=True)
+    idempotency_key = Column(String(255), nullable=False, unique=True)
+    ledger_transaction_id = Column(UUID(as_uuid=True), ForeignKey("ledger_transactions.id",
+                                                                  ondelete="RESTRICT"), nullable=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    failure_reason = Column(Text, nullable=True)
+    released_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+DEBT_OPEN = "open"
+DEBT_SETTLED = "settled"
+DEBT_WAIVED = "waived"
+
+
+class HostFeeDebt(Base):
+    """Card fees a host owes for refunding everyone when they cancelled (spec: "Take them from
+    the host's next payout, or charge the host if there is no payout")."""
+
+    __tablename__ = "host_fee_debts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    host_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    event_id = Column(UUID(as_uuid=True), ForeignKey("events.id", ondelete="RESTRICT"),
+                      nullable=False, unique=True)
+    amount_cents = Column(Integer, nullable=False)
+    recovered_cents = Column(Integer, nullable=False, default=0)
+    status = Column(String(12), nullable=False, default=DEBT_OPEN)
+    note = Column(Text, nullable=True)
+    settled_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    @property
+    def outstanding_cents(self) -> int:
+        return max(0, self.amount_cents - (self.recovered_cents or 0))

@@ -52,6 +52,18 @@ def _require_host(db, event_id: str) -> tuple[Event, uuid.UUID]:
     return event, viewer_id
 
 
+def _require_editor(db, event_id: str) -> tuple[Event, uuid.UUID]:
+    """The host or an accepted co-host (spec: co-hosts "can edit the event and scan
+    tickets"). Publishing, cancelling, rescheduling, deleting and the bill stay the host's."""
+    from src.modules.events import people_service
+
+    viewer_id = _viewer_id()
+    event = events_dao.get_event(db, _uuid(event_id, "event"))
+    if not event or not people_service.can_edit(db, event, viewer_id):
+        raise AppError("Event not found.", 404)
+    return event, viewer_id
+
+
 def _uuid(raw: str, what: str) -> uuid.UUID:
     try:
         return uuid.UUID(raw)
@@ -96,7 +108,11 @@ def create():
             capacity=body.get("capacity"),
             faqs=body.get("faqs"),
         )
-        if _apply_ticketing_fields(db, event, body):
+        changed = _apply_ticketing_fields(db, event, body)
+        if "auctionEndsAt" in body:
+            event.auction_ends_at = _auction_end(event, body.get("auctionEndsAt"))
+            changed = True
+        if changed:
             db.commit()
         return event_to_dict(db, event, viewer_id=host.id), 201
     finally:
@@ -107,7 +123,7 @@ def patch(event_id: str):
     body = request.get_json() or {}
     db = SessionLocal()
     try:
-        event, viewer_id = _require_host(db, event_id)
+        event, viewer_id = _require_editor(db, event_id)
         if event.status in event_state.TERMINAL_STATUSES:
             raise AppError("This event can no longer be edited.", 409)
 
@@ -130,8 +146,18 @@ def patch(event_id: str):
             event.latitude = body.get("latitude")
         if "longitude" in body:
             event.longitude = body.get("longitude")
+        if "latitude" in body or "longitude" in body:
+            # The location decides the zone (B28); what the phone sent is only a fallback.
+            from src.shared.config.timezones import zone_for
+
+            event.timezone = zone_for(event.latitude, event.longitude) or event.timezone
         if "capacity" in body:
             event.capacity = events_dao.validate_capacity(db, event, body.get("capacity"))
+            from src.modules.events import waitlist_service
+
+            # B26: a full event with more places tells its savers.
+            db.flush()
+            waitlist_service.note_stock(db, event)
         if "faqs" in body:
             event.faqs = events_dao.validate_faqs(body.get("faqs"))
         _apply_ticketing_fields(db, event, body)
@@ -144,24 +170,61 @@ def patch(event_id: str):
             ends_at = (
                 _parse_time(body["endsAt"], "endsAt") if "endsAt" in body else event.ends_at
             )
-            events_dao.validate_window(starts_at, ends_at)
             if event.status == EVENT_PUBLISHED:
                 # A published event's auctions take their window from these times, and they
                 # are already open with bids against them. Moving the clock under a running
                 # auction is a product decision nobody has made, so it is refused rather
                 # than half-applied.
                 raise AppError(
-                    "A published event's date can't be changed. Cancel it and create a new "
-                    "one if the date has moved.",
+                    "A published event's date can't be changed here. Use Reschedule, which "
+                    "tells everyone with a ticket.",
                     409,
                 )
+            events_dao.validate_window(starts_at, ends_at)
             event.starts_at = starts_at
             event.ends_at = ends_at
+        if "auctionEndsAt" in body:
+            _set_auction_end(db, event, body.get("auctionEndsAt"))
 
         db.commit()
         return event_to_dict(db, event, viewer_id=viewer_id), 200
     finally:
         db.close()
+
+
+def _auction_end(event: Event, raw) -> Optional[datetime]:
+    """The host's bidding end (spec: "at the latest 30 minutes before the event ends (that is
+    also the default)"). Null means the default."""
+    from src.modules.bids.auction_dao import EVENT_CLOSE_BUFFER
+
+    if raw in (None, ""):
+        return None
+    when = _parse_time(raw, "auctionEndsAt")
+    if when > event.ends_at - EVENT_CLOSE_BUFFER:
+        raise AppError("Bidding has to end at least 30 minutes before the event ends.", 400)
+    if when <= event.starts_at:
+        raise AppError("Bidding has to end after the event starts.", 400)
+    return when
+
+
+def _set_auction_end(db, event: Event, raw) -> None:
+    """On a published event the running auctions move too — unless someone has bid, when
+    the end is a promise to them."""
+    from src.modules.bids import auction_dao
+    from src.shared.models.bid import Bid
+    from src.shared.models.event import PIECE_BID
+
+    new_end = _auction_end(event, raw)
+    if event.status == EVENT_PUBLISHED:
+        for entry in db.query(EventPiece).filter_by(event_id=event.id, mode=PIECE_BID).all():
+            auction = auction_dao.get_running_auction(db, entry.piece_id, lock=True)
+            if auction is None:
+                continue
+            if db.execute(select(func.count(Bid.id)).where(Bid.auction_id == auction.id)).scalar_one():
+                raise AppError("Bidding has started, so its end time can't change.", 409)
+            event.auction_ends_at = new_end
+            auction.closes_at = lineup_service.event_auction_close(event)
+    event.auction_ends_at = new_end
 
 
 def _apply_ticketing_fields(db, event: Event, body: dict) -> bool:
@@ -222,6 +285,9 @@ def set_people(event_id: str):
     db = SessionLocal()
     try:
         event, viewer_id = _require_host(db, event_id)
+        from src.modules.events import people_service
+
+        invited: dict = {}
         for key, role in (("cohostUsernames", ROLE_COHOST), ("artistUsernames", ROLE_ARTIST)):
             if key not in body:
                 continue
@@ -239,10 +305,13 @@ def set_people(event_id: str):
             missing = [h for h in handles if h not in found]
             if missing:
                 raise AppError(f"No account found for @{missing[0]}.", 404)
-            events_dao.set_participants(
-                db, event, role=role, user_ids=[found[h] for h in handles], commit=False
+            # Phase 5: new people are invited and appear once they accept (spec "Lineup").
+            invited[role] = people_service.set_people(
+                db, event, role=role, user_ids=[found[h] for h in handles]
             )
         db.commit()
+        for role, user_ids in invited.items():
+            people_service.notify_invited(db, event, role, user_ids)
         return event_to_dict(db, event, viewer_id=viewer_id), 200
     finally:
         db.close()
@@ -288,27 +357,29 @@ def publish(event_id: str):
 
 def cancel(event_id: str):
     """Call the event off, and take down everything it listed."""
-    body = request.get_json() or {}
+    body = request.get_json(silent=True) or {}
     reason = (body.get("reason") or "").strip()[:200] or "Event cancelled"
     db = SessionLocal()
     try:
         event, viewer_id = _require_host(db, event_id)
+        from src.modules.events import event_changes
+
+        message = (body.get("message") or body.get("reason") or "").strip()[:500] or None
         event_state.transition_event(
             db, event, EVENT_CANCELLED, reason="host_cancelled", commit=False
         )
         event.cancellation_reason = reason
         undone = lineup_service.cancel_lineup(db, event, "event_cancelled", commit=False)
+        # Tickets (Phase 4): every admission stops working, unpaid checkouts end, the waitlist
+        # clears and the card fees are booked to the host — all in this transaction.
+        tickets = event_changes.cancel_tickets(db, event, message)
         db.commit()
 
-        # After the commit, and the reason this matters: cancelling used to take down the
-        # listings and tell the bidders, while the people who had arranged their evening
-        # around turning up heard nothing at all.
-        told = rsvp_service.notify_attendees(
-            db, event,
-            type="event_cancelled",
-            title="Event cancelled",
-            body=f'"{event.title}" has been cancelled. {reason}',
-        )
+        # After the commit: the refunds (one background job per paid order) and telling every
+        # guest and everyone on the waitlist, with the host's message.
+        told = len(tickets["_notify"])
+        event_changes.after_cancel(db, event, tickets)
+        undone.update(tickets)
 
         # Cancelling takes down listings, refunds bidders and stands people up. Worth a
         # durable record of who did it and what it cost.
@@ -343,6 +414,13 @@ def delete_event(event_id: str):
     db = SessionLocal()
     try:
         event, viewer_id = _require_host(db, event_id)
+        from src.shared.models.ticketing import TicketOrder
+
+        if db.execute(select(TicketOrder.id).where(TicketOrder.event_id == event.id).limit(1)).first():
+            raise AppError(
+                "This event has tickets, so it can't be deleted. Cancel it instead: everyone "
+                "is refunded and told.", 409,
+            )
         event_uuid = event.id
         event_title = event.title
         was_published = event.status == EVENT_PUBLISHED
@@ -396,13 +474,13 @@ def add_lineup_piece(event_id: str):
         if not piece:
             raise AppError("Piece not found.", 404)
 
-        # The host runs the bill; an artist may add their own work to an event they are on.
-        is_host = event.host_id == viewer_id
-        is_billed = any(
-            row.EventParticipant.user_id == viewer_id
-            for row in events_dao.list_participants(db, event.id)
-        )
-        if not is_host and not (is_billed and piece.user_id == viewer_id):
+        # The host (and accepted co-hosts) run the bill; an accepted artist may add their own
+        # work to an event they are on.
+        from src.modules.events import people_service
+
+        is_editor = people_service.can_edit(db, event, viewer_id)
+        is_billed = people_service.is_accepted(db, event.id, viewer_id, ROLE_ARTIST)
+        if not is_editor and not (is_billed and piece.user_id == viewer_id):
             raise AppError("Event not found.", 404)
 
         entry = lineup_service.add_piece(
@@ -412,7 +490,9 @@ def add_lineup_piece(event_id: str):
             delivery_mode=body.get("deliveryMode"),
             sort_order=body.get("sortOrder") or 0,
         )
-        return lineup_entry_to_dict(db, entry), 201
+        if not entry.is_approved:
+            _notify_piece_request(db, event, entry, piece, actor)
+        return lineup_entry_to_dict(db, entry, viewer_id=viewer_id, full=True), 201
     finally:
         db.close()
 
@@ -431,8 +511,12 @@ def remove_lineup_piece(event_id: str, piece_id: str):
             raise AppError("That piece isn't on this bill.", 404)
 
         piece = db.get(Piece, entry.piece_id)
-        # The host can take anything off the bill; an artist can withdraw their own work.
-        if event.host_id != viewer_id and (piece is None or piece.user_id != viewer_id):
+        # The host and co-hosts can take anything off the bill; an artist can withdraw their
+        # own work.
+        from src.modules.events import people_service
+
+        if not people_service.can_edit(db, event, viewer_id) and (
+                piece is None or piece.user_id != viewer_id):
             raise AppError("Event not found.", 404)
 
         lineup_service.remove_piece(db, event, entry)
@@ -553,8 +637,12 @@ def get_detail(event_id: str):
         event = events_dao.get_event(db, _uuid(event_id, "event"))
         if not event:
             raise AppError("Event not found.", 404)
-        # A draft is the host's private working copy.
-        if event.status == "draft" and event.host_id != viewer_id:
+        # A draft is the host's private working copy — and visible to the people invited onto
+        # it, who need to see what they're saying yes to.
+        from src.modules.events import people_service
+
+        if event.status == "draft" and not people_service.is_on_bill(db, event, viewer_id) \
+                and event.host_id != viewer_id:
             raise AppError("Event not found.", 404)
         return event_to_dict(db, event, viewer_id=viewer_id), 200
     finally:
@@ -649,7 +737,7 @@ def list_attendees(event_id: str):
     """Who is coming. Host-only: an attendee list is not public."""
     db = SessionLocal()
     try:
-        event, _ = _require_host(db, event_id)
+        event, _ = _require_editor(db, event_id)
         people = rsvp_service.list_attendees(db, event.id)
         return {
             "attendees": [_person(user) for user in people],
@@ -673,7 +761,7 @@ def qr_codes(event_id: str):
     """
     db = SessionLocal()
     try:
-        event, viewer_id = _require_host(db, event_id)
+        event, viewer_id = _require_editor(db, event_id)
         base = _share_base_url()
         entries = []
         for entry in lineup_service.list_lineup(db, event.id):
@@ -749,7 +837,17 @@ def event_card(db, event: Event, viewer_id: Optional[uuid.UUID]) -> dict:
         "isFull": rsvp_service.is_full(db, event),
         "viewerIsGoing": _viewer_going(db, event.id, viewer_id),
         "isHost": event.host_id == viewer_id,
+        "rescheduledAt": event.rescheduled_at.isoformat() if event.rescheduled_at else None,
+        **_card_waitlist(db, event, viewer_id),
     }
+
+
+def _card_waitlist(db, event: Event, viewer_id) -> dict:
+    """Your events shows a waitlist place (B22); left out for everyone not in line."""
+    from src.modules.events import waitlist_service
+
+    view = waitlist_service.card_view(db, event, viewer_id)
+    return {"waitlist": view} if view is not None else {}
 
 
 def event_to_dict(db, event: Event, viewer_id: Optional[uuid.UUID]) -> dict:
@@ -762,36 +860,64 @@ def event_to_dict(db, event: Event, viewer_id: Optional[uuid.UUID]) -> dict:
         "publishedAt": event.published_at.isoformat() if event.published_at else None,
         "cancellationReason": event.cancellation_reason,
         "saveCount": events_dao.count_saves(db, event.id),
-        "cohosts": [
-            _person(user) for row, user in
-            [(r.EventParticipant, r.User) for r in events_dao.list_participants(
-                db, event.id, ROLE_COHOST)]
-        ],
-        "artists": [
-            _person(user) for row, user in
-            [(r.EventParticipant, r.User) for r in events_dao.list_participants(
-                db, event.id, ROLE_ARTIST)]
-        ],
-        "lineup": [
-            lineup_entry_to_dict(db, entry, viewer_id=viewer_id)
-            for entry in lineup_service.list_lineup(db, event.id)
-        ],
+        # Accepted people only; `invites` (everyone, with status) for those who can edit.
+        **_people(db, event, viewer_id),
+        "lineup": _lineup(db, event, viewer_id),
+        "auctionEndsAt": lineup_service.event_auction_close(event).isoformat(),
         "faqs": [
             {"question": f.get("question") or "", "answer": f.get("answer") or ""}
             for f in (event.faqs or [])
             if isinstance(f, dict)
         ],
         # Ticketing (B22): the types on sale (all of them, with sales figures, for the host),
-        # whether any cost money, and how many the viewer holds. `waitlist` arrives with
-        # Phase 4 and is left out until then, as B22 asks.
+        # whether any cost money, and how many the viewer holds. `waitlist` is added below
+        # when there is one (B22: left out otherwise).
         **ticketing_service.event_ticket_fields(db, event, viewer_id),
         "refundPolicy": event.refund_policy,
         "refundPolicyText": ticketing_service.refund_policy_line(event),
+        "refundableUntil": _refundable_until(event),
         "visibility": event.visibility,
+        "rescheduleMessage": event.reschedule_message,
     })
+    from src.modules.events import waitlist_service
+
+    waitlist = waitlist_service.view(db, event, viewer_id)
+    if waitlist is not None:
+        base["waitlist"] = waitlist
     if viewer_id is not None:
         base.update(_host_follow(db, event, viewer_id))
     return base
+
+
+def _refundable_until(event: Event) -> Optional[str]:
+    from src.modules.events import ticket_refunds
+
+    until = ticket_refunds.refundable_until(event)
+    return until.isoformat() if until else None
+
+
+def _people(db, event: Event, viewer_id) -> dict:
+    from src.modules.events import people_service
+
+    return people_service.people_view(db, event, viewer_id)
+
+
+def _lineup(db, event: Event, viewer_id) -> list:
+    """Approved pieces for everyone (spec: a piece is "hidden from the event page until
+    approved"); waiting and declined ones too for the host and co-hosts, and an artist sees
+    their own requests."""
+    from src.modules.events import people_service
+
+    editor = people_service.can_edit(db, event, viewer_id)
+    out = []
+    for entry in lineup_service.list_lineup(db, event.id):
+        if entry.is_approved:
+            out.append(lineup_entry_to_dict(db, entry, viewer_id=viewer_id, full=editor))
+            continue
+        piece = db.get(Piece, entry.piece_id)
+        if editor or (piece is not None and piece.user_id == viewer_id):
+            out.append(lineup_entry_to_dict(db, entry, viewer_id=viewer_id, full=True))
+    return out
 
 
 def _host_follow(db, event: Event, viewer_id: uuid.UUID) -> dict:
@@ -808,7 +934,8 @@ def _host_follow(db, event: Event, viewer_id: uuid.UUID) -> dict:
     }
 
 
-def lineup_entry_to_dict(db, entry: EventPiece, viewer_id: Optional[uuid.UUID] = None) -> dict:
+def lineup_entry_to_dict(db, entry: EventPiece, viewer_id: Optional[uuid.UUID] = None,
+                         full: bool = False) -> dict:
     """One work on the bill.
 
     A `bid` entry carries its live auction state — what it is at, how many bids, whether the
@@ -834,6 +961,13 @@ def lineup_entry_to_dict(db, entry: EventPiece, viewer_id: Optional[uuid.UUID] =
         "artistName": artist.name if artist else None,
         "pieceStatus": piece.status if piece else None,
     }
+    if full or entry.approval_status != "approved":
+        # The host's view (spec: "Waiting for [artist]" / "Approved by"), and the artist's own.
+        result.update({
+            "approvalStatus": entry.approval_status,
+            "listingEnded": entry.listing_ended,
+            "respondedAt": entry.responded_at.isoformat() if entry.responded_at else None,
+        })
 
     if entry.mode == PIECE_BID and piece is not None:
         auction = auction_dao.get_running_auction(db, piece.id) or (
@@ -895,7 +1029,7 @@ def _host_types_response(db, event: Event, viewer_id) -> dict:
 def create_ticket_type(event_id: str):
     db = SessionLocal()
     try:
-        event, viewer_id = _require_host(db, event_id)
+        event, viewer_id = _require_editor(db, event_id)
         if event.status in event_state.TERMINAL_STATUSES:
             raise AppError("This event can no longer be edited.", 409)
         created = ticketing_service.create_type(db, event, request.get_json() or {})
@@ -909,7 +1043,7 @@ def create_ticket_type(event_id: str):
 def update_ticket_type(event_id: str, type_id: str):
     db = SessionLocal()
     try:
-        event, viewer_id = _require_host(db, event_id)
+        event, viewer_id = _require_editor(db, event_id)
         if event.status in event_state.TERMINAL_STATUSES:
             raise AppError("This event can no longer be edited.", 409)
         ticketing_service.update_type(db, event, _uuid(type_id, "ticket type"),
@@ -922,7 +1056,7 @@ def update_ticket_type(event_id: str, type_id: str):
 def delete_ticket_type(event_id: str, type_id: str):
     db = SessionLocal()
     try:
-        event, viewer_id = _require_host(db, event_id)
+        event, viewer_id = _require_editor(db, event_id)
         outcome = ticketing_service.remove_type(db, event, _uuid(type_id, "ticket type"))
         data = _host_types_response(db, event, viewer_id)
         data["result"] = outcome
@@ -1000,5 +1134,310 @@ def wallet_pass(event_id: str, order_id: str):
             ticket_id=_uuid(raw_ticket, "ticket") if raw_ticket else None,
         )
         return result
+    finally:
+        db.close()
+
+
+# --- Phase 4: refunds, reschedule, cancel preview -----------------------------------------------
+
+def refund_ticket_order(event_id: str, order_id: str):
+    """The buyer's refund, inside the event's window. `{"ticketIds": [...]}` for some of the
+    order's tickets; all of the unused ones without it."""
+    from src.modules.events import ticket_refunds
+    from src.shared.models.refund import ROLE_BUYER
+    from src.shared.models.ticketing import TicketOrder
+
+    body = request.get_json(silent=True) or {}
+    db = SessionLocal()
+    try:
+        order = db.get(TicketOrder, _uuid(order_id, "order"))
+        if not order or str(order.event_id) != event_id or order.buyer_id != _viewer_id():
+            raise AppError("Order not found.", 404)
+    finally:
+        db.close()
+    result = ticket_refunds.refund_tickets(
+        order.id, actor_id=_viewer_id(), role=ROLE_BUYER, ticket_ids=body.get("ticketIds"),
+        reason="Refunded by the buyer.",
+    )
+    db = SessionLocal()
+    try:
+        order = db.get(TicketOrder, order.id)
+        data = ticketing_service.order_to_dict(db, order)
+        data["refund"] = result
+        return data, 200
+    finally:
+        db.close()
+
+
+def reschedule(event_id: str):
+    from src.modules.events import event_changes
+
+    body = request.get_json(silent=True) or {}
+    db = SessionLocal()
+    try:
+        event, viewer_id = _require_host(db, event_id)
+        locked = events_dao.get_event_for_update(db, event.id)
+        outcome = event_changes.reschedule(
+            db, locked, _parse_time(body.get("startsAt"), "startsAt"),
+            _parse_time(body.get("endsAt"), "endsAt"), body.get("message"),
+        )
+        db.commit()
+        event_changes.after_reschedule(db, locked)
+        result = event_to_dict(db, locked, viewer_id=viewer_id)
+        result.update(outcome)
+        return result, 200
+    finally:
+        db.close()
+
+
+def cancel_preview(event_id: str):
+    from src.modules.events import event_changes
+
+    db = SessionLocal()
+    try:
+        event, _ = _require_host(db, event_id)
+        return event_changes.cancel_preview(db, event), 200
+    finally:
+        db.close()
+
+
+# --- Phase 4: the waitlist (the app's existing calls, event_service.dart) -------------------------
+
+def _buyer_and_event(db, event_id: str):
+    viewer = get_user_by_id(db, _viewer_id())
+    if viewer is None:
+        raise AppError("User not found.", 404)
+    return viewer, _published_or_host(db, event_id)
+
+
+def join_waitlist(event_id: str):
+    from src.modules.events import waitlist_service
+
+    body = request.get_json(silent=True) or {}
+    db = SessionLocal()
+    try:
+        viewer, event = _buyer_and_event(db, event_id)
+        return waitlist_service.join(db, event, viewer, body.get("items")), 200
+    finally:
+        db.close()
+
+
+def leave_waitlist(event_id: str):
+    from src.modules.events import waitlist_service
+
+    db = SessionLocal()
+    try:
+        viewer, event = _buyer_and_event(db, event_id)
+        waitlist_service.leave(db, event, viewer)
+        return {"left": True}, 200
+    finally:
+        db.close()
+
+
+def release_waitlist_hold(event_id: str):
+    from src.modules.events import waitlist_service
+
+    db = SessionLocal()
+    try:
+        viewer, event = _buyer_and_event(db, event_id)
+        return waitlist_service.release_hold(db, event, viewer), 200
+    finally:
+        db.close()
+
+
+# --- Phase 4: check-in at the door ---------------------------------------------------------------
+
+def _scanner_event(db, event_id: str) -> Event:
+    from src.modules.events import checkin_service
+
+    event = events_dao.get_event(db, _uuid(event_id, "event"))
+    if event is None:
+        raise AppError("Event not found.", 404)
+    checkin_service.require_scanner(db, event, _viewer_id())
+    return event
+
+
+def check_in(event_id: str, code: str):
+    from src.modules.events import checkin_service
+
+    body = request.get_json(silent=True) or {}
+    db = SessionLocal()
+    try:
+        event = _scanner_event(db, event_id)
+        result = checkin_service.check_in(
+            db, event, _viewer_id(), code, checkin_service._scan_time(body.get("scannedAt")),
+        )
+        db.commit()
+        result.update(checkin_service.counts(db, event.id))
+        return result, 200
+    finally:
+        db.close()
+
+
+def check_in_sync(event_id: str):
+    from src.modules.events import checkin_service
+
+    body = request.get_json(silent=True) or {}
+    db = SessionLocal()
+    try:
+        event = _scanner_event(db, event_id)
+        results = checkin_service.sync(db, event, _viewer_id(), body.get("scans"))
+        db.commit()
+        return {"results": results, **checkin_service.counts(db, event.id)}, 200
+    finally:
+        db.close()
+
+
+def guest_list(event_id: str):
+    from src.modules.events import checkin_service
+
+    db = SessionLocal()
+    try:
+        event = _scanner_event(db, event_id)
+        return checkin_service.guests(db, event, request.args.get("q") or "",
+                                      _int_arg("limit", 200)), 200
+    finally:
+        db.close()
+
+
+def check_in_manifest(event_id: str):
+    from src.modules.events import checkin_service
+
+    db = SessionLocal()
+    try:
+        event = _scanner_event(db, event_id)
+        return checkin_service.manifest(db, event), 200
+    finally:
+        db.close()
+
+
+# --- Phase 5: invites and piece requests -------------------------------------------------------
+
+def _notify_piece_request(db, event: Event, entry: EventPiece, piece: Piece, actor: User) -> None:
+    """Spec: "Piece request (host tagged your piece) — the artist — Email" (and a push). It
+    says how the piece will be shown, the delivery, the price, and whether approving ends its
+    current listing."""
+    from src.modules.notifications import notifications_dao
+    from src.shared.notification.email_service import send_email
+    from src.shared.templates.event_emails import simple_event_email
+
+    how = {"featured": "shown", "sale": "for sale", "bid": "auctioned"}.get(entry.mode, entry.mode)
+    ends = lineup_service.preview_tagging(db, piece)
+    line = f"{actor.name or '@' + actor.username} wants \"{piece.title}\" {how} at {event.title}."
+    details = []
+    if entry.price_cents:
+        details.append(f"Price: ${entry.price_cents / 100:,.2f} (you can change it).")
+    if entry.delivery_mode:
+        details.append("Delivery: pickup at the event." if entry.delivery_mode == "pickup"
+                       else "Delivery: ships after the event.")
+    if entry.is_selling and (ends["endsAuction"] or ends["endsFixedListing"]):
+        details.append("Approving ends its current " + ("auction (bidders are told it was withdrawn)."
+                                                        if ends["endsAuction"] else "listing."))
+    try:
+        notifications_dao.create_and_push(
+            db, user_id=piece.user_id, type="event_piece_request", actor_id=actor.id,
+            target_type="event", target_id=event.id, title="Piece request", body=line,
+            payload={"pieceId": str(piece.id), "mode": entry.mode, "priceCents": entry.price_cents,
+                     "deliveryMode": entry.delivery_mode, **ends},
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Piece request notification failed for piece %s", piece.id)
+    artist = db.get(User, piece.user_id)
+    if artist is not None and artist.email:
+        send_email(artist.email, f"Piece request: {event.title}",
+                   simple_event_email(event, "Piece request", [line, *details,
+                                      "Open Studio 3 to approve or decline."]))
+
+
+def respond_to_invite(event_id: str, accept: bool):
+    from src.modules.events import people_service
+
+    body = request.get_json(silent=True) or {}
+    db = SessionLocal()
+    try:
+        user = get_user_by_id(db, _viewer_id())
+        event = events_dao.get_event(db, _uuid(event_id, "event"))
+        if user is None or event is None:
+            raise AppError("Event not found.", 404)
+        result = people_service.respond(db, event, user, accept=accept, role=body.get("role"))
+        data = event_to_dict(db, event, viewer_id=user.id)
+        data["invite"] = result
+        return data, 200
+    finally:
+        db.close()
+
+
+def respond_to_piece(event_id: str, piece_id: str, approve: bool):
+    body = request.get_json(silent=True) or {}
+    db = SessionLocal()
+    try:
+        artist = get_user_by_id(db, _viewer_id())
+        event = events_dao.get_event_for_update(db, _uuid(event_id, "event"))
+        if artist is None or event is None:
+            raise AppError("Event not found.", 404)
+        entry = db.query(EventPiece).filter_by(event_id=event.id,
+                                               piece_id=_uuid(piece_id, "piece")).with_for_update().one_or_none()
+        if entry is None:
+            raise AppError("Piece request not found.", 404)
+        lineup_service.respond(db, event, entry, artist, approve=approve,
+                               price_cents=body.get("priceCents"))
+        db.commit()
+        _tell_host_piece(db, event, entry, artist, approve)
+        return lineup_entry_to_dict(db, entry, viewer_id=artist.id, full=True), 200
+    finally:
+        db.close()
+
+
+def _tell_host_piece(db, event: Event, entry: EventPiece, artist: User, approved: bool) -> None:
+    """Spec: "Request accepted or declined — Host"."""
+    from src.modules.notifications import notifications_dao
+
+    piece = db.get(Piece, entry.piece_id)
+    verb = "approved" if approved else "declined"
+    try:
+        notifications_dao.create_and_push(
+            db, user_id=event.host_id, type="event_piece_response", actor_id=artist.id,
+            target_type="event", target_id=event.id, title=event.title,
+            body=f"{artist.name or '@' + artist.username} {verb} \"{piece.title if piece else 'a piece'}\".",
+            payload={"pieceId": str(entry.piece_id), "approved": approved},
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Piece response notification failed for event %s", event.id)
+
+
+def my_event_invites():
+    from src.modules.events import people_service
+
+    db = SessionLocal()
+    try:
+        viewer_id = _viewer_id()
+        rows = people_service.pending_invites(db, viewer_id)
+        return {"invites": [
+            {"role": row.role, "invitedAt": row.invited_at.isoformat() if row.invited_at else None,
+             "event": event_card(db, event, viewer_id)}
+            for row, event in rows
+        ]}, 200
+    finally:
+        db.close()
+
+
+def my_piece_requests():
+    """Pieces of mine that hosts want at their events, waiting for my answer."""
+    db = SessionLocal()
+    try:
+        viewer_id = _viewer_id()
+        rows = db.execute(
+            select(EventPiece, Event).join(Event, Event.id == EventPiece.event_id)
+            .join(Piece, Piece.id == EventPiece.piece_id)
+            .where(Piece.user_id == viewer_id, EventPiece.approval_status == "waiting",
+                   Event.status.in_(("draft", "published")))
+            .order_by(EventPiece.created_at)
+        ).all()
+        return {"requests": [
+            {**lineup_entry_to_dict(db, entry, viewer_id=viewer_id, full=True),
+             "preview": lineup_service.preview_tagging(db, db.get(Piece, entry.piece_id)),
+             "event": event_card(db, event, viewer_id)}
+            for entry, event in rows
+        ]}, 200
     finally:
         db.close()

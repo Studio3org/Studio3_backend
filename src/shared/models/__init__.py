@@ -8,7 +8,7 @@ from src.shared.models.username_history import UsernameHistory
 from src.shared.models.piece import Piece
 from src.shared.models.piece_media import PieceMedia
 from src.shared.models.post import Post
-from src.shared.models.social import Follow, Like, Comment, Collection, CollectionItem, Save
+from src.shared.models.social import Follow, Like, Comment, Collection, CollectionItem, Save, CollectionHidden
 from src.shared.models.series import Series, SeriesPiece
 from src.shared.models.notification import Notification
 from src.shared.models.device import Device
@@ -21,10 +21,14 @@ from src.shared.models.ledger import LedgerAccount, LedgerTransaction, LedgerEnt
 from src.shared.models.payout import Payout
 from src.shared.models.refund import Refund
 from src.shared.models.ticketing import (
+    EventPayout,
+    HostFeeDebt,
     Ticket,
     TicketOrder,
     TicketOrderItem,
     TicketType,
+    WaitlistEntry,
+    WaitlistHold,
     WalletAppleRegistration,
 )
 from src.shared.models.shipment import Shipment
@@ -37,6 +41,7 @@ from src.shared.models.event import (
     EventPiece,
     EventRsvp,
     EventSave,
+    PieceExhibition,
 )
 
 __all__ = [
@@ -86,4 +91,10 @@ __all__ = [
     "AuditEvent",
     "EventRsvp",
     "EventSave",
+    "EventPayout",
+    "HostFeeDebt",
+    "WaitlistEntry",
+    "WaitlistHold",
+    "PieceExhibition",
+    "CollectionHidden",
 ]

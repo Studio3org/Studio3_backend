@@ -227,7 +227,9 @@ def test_the_tagging_preview_says_what_would_be_ended(db, client, auth_headers):
     assert body["ownedByViewer"] is True
 
 
-def test_a_host_cannot_sell_another_artists_work_over_http(db, client, auth_headers):
+def test_a_host_tagging_another_artists_work_for_sale_waits_for_the_artist(db, client, auth_headers):
+    """Phase 5 (spec "Artist approval"): the host may ask, but nothing about the piece's own
+    listing changes until its artist approves."""
     host, artist = make_user(db, seller=True), make_user(db, seller=True)
     piece = make_piece(db, artist, price_cents=300_00, status="live")
     event = make_event(db, host)
@@ -238,7 +240,10 @@ def test_a_host_cannot_sell_another_artists_work_over_http(db, client, auth_head
         headers=auth_headers(host),
     )
 
-    assert response.status_code == 403
+    assert response.status_code == 201, response.get_json()
+    assert response.get_json()["data"]["approvalStatus"] == "waiting"
+    db.expire_all()
+    assert db.get(type(piece), piece.id).status == "live", "the artist's listing is untouched"
 
 
 def test_a_billed_artist_can_add_their_own_work(db, client, auth_headers):
@@ -390,7 +395,13 @@ def test_setting_the_bill_replaces_rather_than_appends(db, client, auth_headers)
                           headers=auth_headers(host))
 
     assert response.status_code == 200
-    artists = [p["username"] for p in response.get_json()["data"]["artists"]]
+    # Phase 5: people are invited and listed once they accept; the host sees the invites.
+    invites = [(p["username"], p["status"]) for p in response.get_json()["data"]["invites"]]
+    assert invites == [(b.username, "invited")]
+    assert response.get_json()["data"]["artists"] == []
+    client.post(f"/api/events/{event.id}/invite/accept", headers=auth_headers(b))
+    artists = [p["username"] for p in client.get(f"/api/events/{event.id}",
+                                                 headers=auth_headers(host)).get_json()["data"]["artists"]]
     assert artists == [b.username]
 
 

@@ -288,6 +288,79 @@ def my_tickets():
     return _ok("OK", data, status)
 
 
+@user_bp.get("/me/deletion-check")
+@auth_required
+@async_handler
+def deletion_check():
+    """B34 SettingsDelete: what has to finish before this account can be deleted."""
+    from src.modules.user import account_rules
+    from src.shared.config.database import SessionLocal
+    from src.shared.models.user import User
+
+    db = SessionLocal()
+    try:
+        user = db.get(User, uuid.UUID(g.user["id"]))
+        blockers = account_rules.deletion_blockers(db, user)
+        return _ok("OK", {"canDelete": not blockers, "blockers": blockers}, 200)
+    finally:
+        db.close()
+
+
+@user_bp.get("/me/seller-terms")
+@auth_required
+@async_handler
+def seller_terms():
+    """B34 SettingsSelling "Includes fees": this account's own rates and the terms they sell
+    under. Rates come from the account (and settings), never from the app."""
+    from src.shared.constants import CURRENT_TERMS_VERSION
+    from src.shared.config import commission
+    from src.shared.config.database import SessionLocal
+    from src.shared.models.user import User
+
+    db = SessionLocal()
+    try:
+        user = db.get(User, uuid.UUID(g.user["id"]))
+        art = commission.resolve_bps(user, commission.SALE_ART)
+        tickets = commission.resolve_bps(user, commission.SALE_TICKET)
+        until = getattr(user, "commission_override_until", None)
+        reduced = commission.override_active(user)
+        return _ok("OK", {
+            "artCommissionBps": art,
+            "artCommissionPercent": art / 100,
+            "ticketFeeBps": tickets,
+            "ticketFeePercent": tickets / 100,
+            "reducedRate": reduced,
+            "reducedRateUntil": until.isoformat() if (reduced and until) else None,
+            "buyersPayFees": False,
+            "termsVersion": CURRENT_TERMS_VERSION,
+            "termsUrl": "/terms",
+        }, 200)
+    finally:
+        db.close()
+
+
+@user_bp.get("/me/event-invites")
+@auth_required
+@async_handler
+def my_event_invites():
+    """Events I've been invited to as a co-host or featured artist, waiting for my answer."""
+    from src.modules.events import events_controller
+
+    data, status = events_controller.my_event_invites()
+    return _ok("OK", data, status)
+
+
+@user_bp.get("/me/piece-requests")
+@auth_required
+@async_handler
+def my_piece_requests():
+    """Hosts asking to show, sell or auction my pieces at their events."""
+    from src.modules.events import events_controller
+
+    data, status = events_controller.my_piece_requests()
+    return _ok("OK", data, status)
+
+
 @user_bp.get("/me/saved/posts")
 @auth_required
 @async_handler
@@ -354,3 +427,27 @@ def download_local_media(key):
     response = Response(data, mimetype=content_type)
     response.headers["X-Content-Type-Options"] = "nosniff"
     return response
+
+
+# B32: hiding a piece from your own Collection (`/api/collection/<pieceId>/hide`).
+collection_bp = Blueprint("collection", __name__)
+
+
+@collection_bp.post("/<piece_id>/hide")
+@auth_required
+@async_handler
+def hide_collected(piece_id):
+    from src.modules.user import collected
+
+    data, status = collected.set_hidden(piece_id, True)
+    return _ok("Hidden from your Collection.", data, status)
+
+
+@collection_bp.delete("/<piece_id>/hide")
+@auth_required
+@async_handler
+def unhide_collected(piece_id):
+    from src.modules.user import collected
+
+    data, status = collected.set_hidden(piece_id, False)
+    return _ok("Back in your Collection.", data, status)

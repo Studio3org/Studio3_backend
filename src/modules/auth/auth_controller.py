@@ -544,7 +544,6 @@ def delete_account():
     in-progress sales), since an account can't be allowed to vanish out from under an active
     auction or order.
     """
-    from src.modules.orders import orders_dao
     from src.modules.pieces import pieces_dao, piece_state, listing_service
     from src.modules.posts import posts_dao
     from src.modules.events import events_dao, event_state, lineup_service, rsvp_service
@@ -572,27 +571,13 @@ def delete_account():
         if not user or not user.password or not _verify_password(password, user.password):
             raise AppError("Password is incorrect.", 401)
 
-        active_listings = pieces_dao.list_user_pieces(db, user.id, for_sale_only=True)
-        if active_listings:
-            raise AppError(
-                "Remove your active listings before deleting your account.", 400
-            )
-        in_progress = orders_dao.count_seller_in_progress(db, user.id)
-        if in_progress:
-            raise AppError(
-                "You have in-progress sales — complete or cancel them before deleting your account.",
-                400,
-            )
-        buyer_in_progress = orders_dao.count_buyer_in_progress(db, user.id)
-        if buyer_in_progress:
-            raise AppError(
-                "You have in-progress purchases — complete or cancel them before deleting your account.",
-                400,
-            )
+        # B34 (Phase 6): one list of what has to finish first — an auction with bids, a piece
+        # on its way, money on its way, an upcoming event with tickets, card fees owed — the
+        # same list GET /me/deletion-check shows. Plain listings and unbid auctions are not on
+        # it: they come down below.
+        from src.modules.user import account_rules
 
-        # Belt-and-suspenders, same as seller_disable: a live auction with bids isn't
-        # caught by the for-sale check above, and can't be left to expire unattended
-        # once nobody is behind the account to receive its payout.
+        account_rules.require_deletable(db, user)
         listing_service.delist_all_for_seller(db, user.id, reason=REASON_SELLER_DEACTIVATED)
 
         # Everything left with this user's name on it that isn't tangled up in someone
@@ -605,6 +590,10 @@ def delete_account():
             posts_dao.delete_post(db, post)
 
         for event in events_dao.list_for_host(db, user.id, viewer_id=user.id):
+            if account_rules.event_has_tickets(db, event.id):
+                # Buyers' tickets and receipts point at it: it stays, under the anonymized
+                # host. (An upcoming one with tickets was refused above.)
+                continue
             event_title = event.title
             was_published = event.status == EVENT_PUBLISHED
             if was_published:

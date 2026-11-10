@@ -27,9 +27,14 @@ from src.shared.utils.logger import get_logger
 logger = get_logger(__name__)
 
 EVENT_REMINDER = "event_reminder"
-# Reminded once the event is under a day away, and not in its last hour.
+# The day-before reminder: once the event is under a day away, and more than 2 hours out (from
+# there the 2-hour reminder takes over, so nobody gets both in one run).
 AHEAD = timedelta(hours=24)
-TOO_LATE = timedelta(hours=1)
+TOO_LATE = timedelta(hours=2)
+# The ticketing spec's second reminder, "2 hours before" (hourly job, so it lands 1 to 2 hours
+# before), skipped in the last 10 minutes.
+SOON = timedelta(hours=2)
+TOO_LATE_SOON = timedelta(minutes=10)
 
 
 def _zone(name: Optional[str]) -> Optional[ZoneInfo]:
@@ -63,30 +68,32 @@ def reminder_message(event, now: datetime) -> str:
     return f"{event.title} is {day} at {_clock(start)}{where}."
 
 
-def due_events_query(now: datetime):
+def due_events_query(now: datetime, *, soon: bool = False):
+    low, high = (TOO_LATE_SOON, SOON) if soon else (TOO_LATE, AHEAD)
     return (
         select(Event)
         .where(
             Event.status == EVENT_PUBLISHED,
-            Event.starts_at > now + TOO_LATE,
-            Event.starts_at <= now + AHEAD,
+            Event.starts_at > now + low,
+            Event.starts_at <= now + high,
         )
         .order_by(Event.starts_at)
     )
 
 
-def claim(db: Session, event_id: uuid.UUID, now: datetime) -> list[uuid.UUID]:
+def claim(db: Session, event_id: uuid.UUID, now: datetime, *, soon: bool = False) -> list[uuid.UUID]:
     """Mark everyone going and not yet reminded, and return who they are. Committed, so a
     concurrent run claims nobody twice: the update takes each row once."""
+    column = EventRsvp.reminded_soon_at if soon else EventRsvp.reminded_at
     claimed = list(
         db.execute(
             update(EventRsvp)
             .where(
                 EventRsvp.event_id == event_id,
                 EventRsvp.status == RSVP_GOING,
-                EventRsvp.reminded_at.is_(None),
+                column.is_(None),
             )
-            .values(reminded_at=now)
+            .values({column.key: now})
             .returning(EventRsvp.user_id)
         ).scalars()
     )
@@ -117,23 +124,41 @@ def remind(db: Session, event, user_ids: list[uuid.UUID], now: datetime) -> int:
                 body=message,
             )
             sent += 1
+            _email(event, user, message)
         except Exception:
             db.rollback()
             logger.exception("Event reminder failed for %s on event %s", user_id, event.id)
     return sent
 
 
+def _email(event, user, message: str) -> None:
+    """Spec: reminders to ticket holders also go by email."""
+    if not getattr(user, "email", None):
+        return
+    try:
+        from src.shared.notification.email_service import send_email
+        from src.shared.templates.event_emails import simple_event_email
+
+        send_email(user.email, f"Reminder: {event.title}",
+                   simple_event_email(event, "Event reminder",
+                                      [message, "Your tickets are in the Studio 3 app."]))
+    except Exception:  # noqa: BLE001
+        logger.exception("Reminder email failed for %s", user.id)
+
+
 def send_event_reminders(db: Optional[Session] = None, now: Optional[datetime] = None) -> int:
-    """Remind everyone going to an event in the next day. Returns how many were sent."""
+    """The day before and 2 hours before, everyone going hears once each. Returns how many
+    were sent."""
     own = db is None
     db = db or SessionLocal()
     try:
         now = now or datetime.now(timezone.utc)
         sent = 0
-        for event in list(db.execute(due_events_query(now)).scalars()):
-            user_ids = claim(db, event.id, now)
-            if user_ids:
-                sent += remind(db, event, user_ids, now)
+        for soon in (False, True):
+            for event in list(db.execute(due_events_query(now, soon=soon)).scalars()):
+                user_ids = claim(db, event.id, now, soon=soon)
+                if user_ids:
+                    sent += remind(db, event, user_ids, now)
         return sent
     finally:
         if own:

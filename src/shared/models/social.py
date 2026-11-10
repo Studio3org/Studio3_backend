@@ -84,3 +84,14 @@ class Save(Base):
     target_type = Column(String(16), nullable=False)
     target_id = Column(UUID(as_uuid=True), nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+
+class CollectionHidden(Base):
+    """A piece a collector has hidden from their own Collection tab (B32). The purchase is
+    untouched; deleting the row brings it back."""
+
+    __tablename__ = "collection_hidden"
+
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    piece_id = Column(UUID(as_uuid=True), ForeignKey("pieces.id", ondelete="CASCADE"), primary_key=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)

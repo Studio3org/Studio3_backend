@@ -279,6 +279,37 @@ def tickets_changed(db: Session, ticket_ids) -> None:
                          ",".join(str(i) for i in ids))
 
 
+def event_changed(db: Session, event, ticket_ids) -> None:
+    """The event moved (Phase 4 reschedule): every pass shows the new date. Apple devices are
+    pushed and fetch a pass built from the event as it is now; Google's copy lives in the
+    event's class, which is patched once the caller commits."""
+    tickets_changed(db, ticket_ids)
+    from src.jobs.dispatch import enqueue_after_commit
+
+    enqueue_after_commit(db, "src.modules.wallet.wallet_service.push_event_class", str(event.id))
+
+
+def push_event_class(event_id: str) -> None:
+    from src.shared.config.database import SessionLocal
+    from src.shared.models.event import Event
+
+    google = wallet_config.google()
+    if google is None:
+        return
+    issuer, service_account = google
+    db = SessionLocal()
+    try:
+        event = db.get(Event, uuid.UUID(event_id))
+        if event is None:
+            return
+        try:
+            google_pass.patch_class(issuer, service_account, google_pass.event_class(issuer, event))
+        except Exception:  # noqa: BLE001
+            logger.exception("Google Wallet class update failed for event %s", event_id)
+    finally:
+        db.close()
+
+
 def push_updates(ticket_ids_csv: str) -> None:
     """Background: bring Google's copies and Apple devices up to date. Safe to run twice."""
     from src.shared.config.database import SessionLocal

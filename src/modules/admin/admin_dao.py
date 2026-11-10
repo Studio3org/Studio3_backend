@@ -137,6 +137,24 @@ def list_failed_refunds(db: Session) -> list[dict]:
     return [{"refund": r, "order": o} for r, o in rows]
 
 
+def list_event_payouts_needing_attention(db: Session) -> list:
+    """Host ticket payouts that failed (Phase 4), oldest first."""
+    from src.shared.models.ticketing import EVENT_PAYOUT_FAILED, EventPayout
+
+    return list(db.execute(
+        select(EventPayout).where(EventPayout.status == EVENT_PAYOUT_FAILED)
+        .order_by(EventPayout.created_at)
+    ).scalars())
+
+
+def list_open_host_debts(db: Session) -> list:
+    from src.shared.models.ticketing import DEBT_OPEN, HostFeeDebt
+
+    return list(db.execute(
+        select(HostFeeDebt).where(HostFeeDebt.status == DEBT_OPEN).order_by(HostFeeDebt.created_at)
+    ).scalars())
+
+
 def count_failed_payouts(db: Session) -> int:
     return db.execute(
         select(func.count(Payout.id)).where(Payout.status.in_(ATTENTION_PAYOUT_STATUSES))

@@ -21,6 +21,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Column,
     DateTime,
@@ -87,6 +88,18 @@ EVENT_CATEGORIES = (
 ROLE_COHOST = "cohost"
 ROLE_ARTIST = "artist"
 PARTICIPANT_ROLES = (ROLE_COHOST, ROLE_ARTIST)
+
+# Invites (spec "Lineup"): co-hosts and featured artists must accept before they show on the
+# event or can act on it.
+INVITE_INVITED = "invited"
+INVITE_ACCEPTED = "accepted"
+INVITE_DECLINED = "declined"
+INVITE_STATUSES = (INVITE_INVITED, INVITE_ACCEPTED, INVITE_DECLINED)
+
+# Piece approval (spec "Art at events"): someone else's piece waits for its artist.
+APPROVAL_WAITING = "waiting"
+APPROVAL_APPROVED = "approved"
+APPROVAL_DECLINED = "declined"
 
 # --- lineup modes -------------------------------------------------------------------------
 # Shown only. Nothing about the piece's own listing changes.
@@ -167,6 +180,16 @@ class Event(Base):
     age_limit = Column(String(4), nullable=False, default="all", server_default="all")
     visibility = Column(String(8), nullable=False, default=VISIBILITY_PUBLIC,
                         server_default=VISIBILITY_PUBLIC)
+    # Rescheduling (B28): when the host last moved the event, and what they told guests.
+    # Tickets stay valid, and anyone can get a full refund until the new start (spec).
+    rescheduled_at = Column(DateTime(timezone=True), nullable=True)
+    reschedule_message = Column(Text, nullable=True)
+    # When bidding on the event's auctions ends: the host's choice, at the latest 30 minutes
+    # before the event ends (spec). Null = exactly 30 minutes before.
+    auction_ends_at = Column(DateTime(timezone=True), nullable=True)
+    # B26: when every ticket was last seen gone, and when savers were last told it reopened.
+    sold_out_at = Column(DateTime(timezone=True), nullable=True)
+    savers_notified_at = Column(DateTime(timezone=True), nullable=True)
 
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
@@ -203,6 +226,10 @@ class EventParticipant(Base):
     )
     role = Column(String(16), nullable=False)
     sort_order = Column(Integer, default=0, server_default="0", nullable=False)
+    status = Column(String(12), default=INVITE_ACCEPTED, server_default=INVITE_ACCEPTED,
+                    nullable=False)
+    invited_at = Column(DateTime(timezone=True), nullable=True)
+    responded_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
 
 
@@ -245,11 +272,22 @@ class EventPiece(Base):
     # Pickup is the norm at an event: the piece changes hands in the room.
     delivery_mode = Column(String(16), nullable=True)
     sort_order = Column(Integer, default=0, server_default="0", nullable=False)
+    approval_status = Column(String(12), default=APPROVAL_APPROVED,
+                             server_default=APPROVAL_APPROVED, nullable=False)
+    requested_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"),
+                             nullable=True)
+    responded_at = Column(DateTime(timezone=True), nullable=True)
+    # Whether approving it ended the piece's own listing or auction (spec "ends listing").
+    listing_ended = Column(Boolean, default=False, server_default="false", nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
 
     @property
     def is_selling(self) -> bool:
         return self.mode in SELLING_MODES
+
+    @property
+    def is_approved(self) -> bool:
+        return self.approval_status == APPROVAL_APPROVED
 
 
 class EventSave(Base):
@@ -310,3 +348,23 @@ class EventRsvp(Base):
     # When the day-before reminder went out (BACKEND_CHANGES B14). Set before sending, so a
     # second run of the job cannot remind anyone twice; kept through a cancel and re-RSVP.
     reminded_at = Column(DateTime(timezone=True), nullable=True)
+    # The second reminder, 2 hours before (ticketing spec "Notifications").
+    reminded_soon_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class PieceExhibition(Base):
+    """"Exhibited" on a piece's record (B26; spec "After the event"): one row per piece per
+    event it was shown at. The event's details are copied, so the record outlives the event."""
+
+    __tablename__ = "piece_exhibitions"
+    __table_args__ = (UniqueConstraint("piece_id", "event_id", name="uq_piece_exhibition"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    piece_id = Column(UUID(as_uuid=True), ForeignKey("pieces.id", ondelete="CASCADE"), nullable=False,
+                      index=True)
+    event_id = Column(UUID(as_uuid=True), ForeignKey("events.id", ondelete="SET NULL"), nullable=True)
+    title = Column(String(140), nullable=False)
+    venue_name = Column(String(200), nullable=True)
+    city = Column(String(120), nullable=True)
+    starts_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)

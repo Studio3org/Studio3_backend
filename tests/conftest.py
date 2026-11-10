@@ -264,6 +264,10 @@ def stripe_stub(monkeypatch):
         "src.modules.payments.refunds_service",
         # Event ticket checkout and its hold sweep.
         "src.modules.events.ticketing_service",
+        # Phase 4: ticket refunds, host payouts, cancelling a checkout on a cancelled event.
+        "src.modules.events.ticket_refunds",
+        "src.modules.events.host_payouts",
+        "src.modules.events.event_changes",
     ):
         monkeypatch.setattr(f"{target}.get_stripe", lambda _s=stub: _s, raising=False)
     # Accounts v2 goes through a separate client, so it needs its own patch.
@@ -291,6 +295,9 @@ def stripe_enabled(monkeypatch, stripe_stub):
         "src.modules.orders.stale_orders",
         "src.modules.payments.refunds_service",
         "src.modules.events.ticketing_service",
+        "src.modules.events.ticket_refunds",
+        "src.modules.events.host_payouts",
+        "src.modules.events.event_changes",
     ):
         monkeypatch.setattr(f"{target}.stripe_configured", lambda: True, raising=False)
     return stripe_stub

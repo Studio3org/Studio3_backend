@@ -43,6 +43,9 @@ ACCOUNT_SELLER_PAYABLE = "seller_payable"        # liability: owed to a specific
 # close captures would sit in Stripe with no ledger record until — or unless — the winner
 # completed checkout.
 ACCOUNT_AUCTION_ESCROW = "auction_escrow"
+# asset: card fees a host owes the platform after cancelling an event (spec: the host pays
+# them). Recovered from the host's next ticket payout.
+ACCOUNT_HOST_RECEIVABLE = "host_receivable"
 
 PLATFORM_ACCOUNT_TYPES = (
     ACCOUNT_PLATFORM_CLEARING,
@@ -52,6 +55,7 @@ PLATFORM_ACCOUNT_TYPES = (
     ACCOUNT_SHIPPING_COSTS,
     ACCOUNT_TAX_PAYABLE,
     ACCOUNT_AUCTION_ESCROW,
+    ACCOUNT_HOST_RECEIVABLE,
 )
 
 # Transaction types.
@@ -72,6 +76,11 @@ TXN_TICKET_ORDER_PAID = "ticket_order_paid"
 # One-off correction for refunds booked before BE-1 was fixed, which treated the Stripe fee as
 # returned (scripts/fix_be1_refund_ledger.py).
 TXN_REFUND_FEE_CORRECTION = "refund_fee_correction"
+# Phase 4: tickets refunded (some or all of an order), a host's card-fee debt after cancelling,
+# and the host's ticket payout after the event.
+TXN_TICKET_REFUNDED = "ticket_refunded"
+TXN_HOST_FEE_DEBT = "host_fee_debt"
+TXN_EVENT_PAYOUT = "event_payout"
 
 DEBIT = "debit"
 CREDIT = "credit"

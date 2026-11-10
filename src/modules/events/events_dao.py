@@ -83,7 +83,8 @@ def create_event(
         category=validate_category(category),
         starts_at=starts_at,
         ends_at=ends_at,
-        timezone=tz,
+        # The location decides the zone; the host's phone is only a fallback (B28).
+        timezone=_zone(latitude, longitude) or tz,
         venue_name=(venue_name or "").strip() or None,
         address=(address or "").strip() or None,
         city=city_from_address(address),
@@ -99,6 +100,12 @@ def create_event(
     else:
         db.flush()
     return event
+
+
+def _zone(latitude, longitude) -> Optional[str]:
+    from src.shared.config.timezones import zone_for
+
+    return zone_for(latitude, longitude)
 
 
 def city_from_address(address: Optional[str]) -> Optional[str]:

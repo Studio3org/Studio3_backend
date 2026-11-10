@@ -90,24 +90,26 @@ def test_featuring_a_piece_leaves_its_listing_completely_alone(db):
     assert db.query(Hold).filter_by(bid_id=bid.id).one().status != HOLD_RELEASED
 
 
-def test_a_host_cannot_sell_another_artists_work(db):
-    """The featured-pieces picker offers every billed artist's work, so this is reachable
-    from the UI. Ending someone else's auction and refunding their bidders is not a host's
-    decision to make."""
+def test_a_host_cannot_end_another_artists_auction(db):
+    """Ending someone else's auction and refunding their bidders is not a host's decision to
+    make. Since Phase 5 the host may *ask* (the piece waits for the artist); only the artist's
+    approval ends the auction."""
     host = make_user(db, seller=True)
     artist = make_user(db, seller=True)
     piece, auction = _live_auction_piece(db, artist)
     event = make_event(db, host)
     make_event_participant(db, event, artist, role="artist")
 
-    with pytest.raises(AppError) as excinfo:
-        lineup_service.add_piece(
-            db, event, piece, host, mode=PIECE_BID, price_cents=500_00
-        )
+    entry = lineup_service.add_piece(db, event, piece, host, mode=PIECE_BID, price_cents=500_00)
 
-    assert excinfo.value.status_code == 403
+    assert entry.approval_status == "waiting"
     db.expire_all()
     assert db.get(Auction, auction.id).status == AUCTION_LIVE, "host ended another artist's auction"
+
+    lineup_service.respond(db, event, entry, artist, approve=True)
+    db.commit()
+    db.expire_all()
+    assert db.get(Auction, auction.id).status != AUCTION_LIVE, "the artist's approval ends it"
 
 
 def test_a_host_may_feature_another_artists_work(db):

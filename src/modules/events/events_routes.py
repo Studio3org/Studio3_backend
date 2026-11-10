@@ -240,3 +240,119 @@ def wallet_pass(event_id, order_id):
         return _ok("OK", result, 200)
     return Response(result["body"], mimetype=result["mimetype"], headers={
         "Content-Disposition": f'attachment; filename="{result["filename"]}"'})
+
+
+# --- Phase 4: refunds, reschedule, cancel preview, waitlist, check-in -------------------------
+
+@events_bp.post("/<event_id>/orders/<order_id>/refund")
+@auth_required
+@async_handler
+def refund_ticket_order(event_id, order_id):
+    data, status = events_controller.refund_ticket_order(event_id, order_id)
+    return _ok("Refunded.", data, status)
+
+
+@events_bp.post("/<event_id>/reschedule")
+@onboarding_required
+@async_handler
+def reschedule_event(event_id):
+    data, status = events_controller.reschedule(event_id)
+    return _ok("Event rescheduled.", data, status)
+
+
+@events_bp.get("/<event_id>/cancel-preview")
+@onboarding_required
+@async_handler
+def cancel_preview(event_id):
+    data, status = events_controller.cancel_preview(event_id)
+    return _ok("OK", data, status)
+
+
+@events_bp.post("/<event_id>/waitlist")
+@auth_required
+@async_handler
+def join_waitlist(event_id):
+    data, status = events_controller.join_waitlist(event_id)
+    return _ok("You're on the waitlist.", data, status)
+
+
+@events_bp.delete("/<event_id>/waitlist")
+@auth_required
+@async_handler
+def leave_waitlist(event_id):
+    data, status = events_controller.leave_waitlist(event_id)
+    return _ok("You've left the waitlist.", data, status)
+
+
+@events_bp.post("/<event_id>/waitlist/hold/release")
+@auth_required
+@async_handler
+def release_waitlist_hold(event_id):
+    data, status = events_controller.release_waitlist_hold(event_id)
+    return _ok("Released.", data, status)
+
+
+@events_bp.post("/<event_id>/tickets/<code>/check-in")
+@auth_required
+@async_handler
+def check_in(event_id, code):
+    data, status = events_controller.check_in(event_id, code)
+    return _ok(data.get("message") or "OK", data, status)
+
+
+@events_bp.post("/<event_id>/check-in/sync")
+@auth_required
+@async_handler
+def check_in_sync(event_id):
+    data, status = events_controller.check_in_sync(event_id)
+    return _ok("Synced.", data, status)
+
+
+@events_bp.get("/<event_id>/guests")
+@auth_required
+@async_handler
+def guest_list(event_id):
+    data, status = events_controller.guest_list(event_id)
+    return _ok("OK", data, status)
+
+
+@events_bp.get("/<event_id>/check-in/manifest")
+@auth_required
+@async_handler
+def check_in_manifest(event_id):
+    data, status = events_controller.check_in_manifest(event_id)
+    return _ok("OK", data, status)
+
+
+# --- Phase 5: invites and piece requests -------------------------------------------------------
+
+@events_bp.post("/<event_id>/invite/accept")
+@auth_required
+@async_handler
+def accept_invite(event_id):
+    data, status = events_controller.respond_to_invite(event_id, True)
+    return _ok("Invite accepted.", data, status)
+
+
+@events_bp.post("/<event_id>/invite/decline")
+@auth_required
+@async_handler
+def decline_invite(event_id):
+    data, status = events_controller.respond_to_invite(event_id, False)
+    return _ok("Invite declined.", data, status)
+
+
+@events_bp.post("/<event_id>/pieces/<piece_id>/approve")
+@onboarding_required
+@async_handler
+def approve_piece(event_id, piece_id):
+    data, status = events_controller.respond_to_piece(event_id, piece_id, True)
+    return _ok("Piece approved.", data, status)
+
+
+@events_bp.post("/<event_id>/pieces/<piece_id>/decline")
+@auth_required
+@async_handler
+def decline_piece(event_id, piece_id):
+    data, status = events_controller.respond_to_piece(event_id, piece_id, False)
+    return _ok("Piece declined.", data, status)

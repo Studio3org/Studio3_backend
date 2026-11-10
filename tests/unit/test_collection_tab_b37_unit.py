@@ -47,7 +47,7 @@ def listing(monkeypatch):
     monkeypatch.setattr(collected, "find_user_by_username", lambda db, name: state.owner if name == "kofi" else None)
     monkeypatch.setattr(collected.social_dao, "can_view_content", lambda db, user, viewer: state.can_view)
     monkeypatch.setattr(collected.block_dao, "is_blocked_either_way", lambda db, a, b: state.blocked)
-    monkeypatch.setattr(collected, "collected_pieces", lambda db, buyer: state.pieces)
+    monkeypatch.setattr(collected, "collected_pieces", lambda db, buyer, **_: state.pieces)
     return state
 
 
