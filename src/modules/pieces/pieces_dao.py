@@ -180,6 +180,10 @@ def piece_to_dict(piece: Piece, media: Optional[list[PieceMedia]] = None) -> dic
         "packageWidthCm": piece.package_width_cm,
         "packageHeightCm": piece.package_height_cm,
         "declaredValueCents": piece.declared_value_cents,
+        # Phase 8 (Convelio): item type, packing and materials.
+        "shippingItemType": piece.shipping_item_type,
+        "shippingPacking": piece.shipping_packing,
+        "shippingMaterials": piece.shipping_materials or [],
         "location": piece.location,
         "mediaAspectRatio": piece.media_aspect_ratio,
         "yearCreated": piece.year_created,

@@ -17,10 +17,10 @@ Responses keep the usual envelope `{success, message, data}`. Errors are `{succe
 | 5. Co-host and artist invites, piece approvals, bidding end | Done, on `development` (`5063d2f`) | Invite inbox and accept/decline; piece request screen; "Waiting for" in Lineup; bidding end picker; Exhibited on piece pages |
 | 6. Account and settings (going public, selling off, deletion check, hide from collection) | Done, on `development` (`5063d2f`) | Drop the one-by-one approvals; new turn-off message; Delete account reads the check; Hide from my Collection; fees from seller-terms |
 | 7a. Auctions v2 (charge at close, 12-hour fix window, second-chance offer) | Done, on `development` (`a655a20`) | Card check and Ship to at the first bid; new increments; no extensions; payment-failed and second-chance screens |
-| 7b. Shipping, insurance and tax in the charge at close | Done (not yet committed); works once Convelio is on | Show the automatic charge; keep the auction checkout only as the fallback |
-| 8. Convelio shipping and checkout pricing | Done, on `development` (`5fea30f`); Convelio is off until switched on | New checkout (speed, delivery type, insurance, live quote, pending quote); listing fields; pickup address screen; shipment tracker; piece-page estimate |
+| 7b. Shipping, insurance and tax in the charge at close | Done, on `development` (`c8b0f19`); runs wherever Convelio is on | Show the automatic charge; keep the auction checkout only as the fallback |
+| 8. Convelio shipping and checkout pricing | Done, on `development` (`5fea30f`); on by default wherever a Convelio key is set | New checkout (speed, delivery type, insurance, live quote, pending quote); listing fields; pickup address screen; shipment tracker; piece-page estimate |
 
-The shared dev database (Aiven) is at migration `060_convelio_shipping`, so a build pointed at it can use everything through Phase 8.
+The shared dev database (Aiven) is at migration `061_auction_auto_checkout`, so a build pointed at it can use everything through Phase 7b.
 
 ---
 
@@ -898,8 +898,8 @@ If the winner abandons the checkout (the 15-minute sweep cancels the order), the
 
 ## Phase 8: Convelio shipping and checkout pricing (B19, B31, B32)
 
-Built to the Convelio plan and Convelio's v2 API. **Convelio is off until the server switches it on** (`CONVELIO_ENABLED`). Until then, checkout keeps the flat rates and the current app works unchanged.
-- **Switching on:** only after the app below ships. With Convelio on, checkout needs a `quoteId`.
+Built to the Convelio plan and Convelio's v2 API. **Every shipment goes through Convelio** wherever the server has a Convelio key (`CONVELIO_ENABLED` defaults to on). The flat rates remain only as a fallback, for a server without a key or with `CONVELIO_ENABLED=false`. **Until the new app ships, an installed app can't check out on a server that has a Convelio key**: it sends `shippingMethod`, not a quote, and gets `400`.
+- **With Convelio on**, checkout needs a `quoteId`.
 - **Checking which mode is on:** `GET /api/pieces/:id/shipping-quote` returns `live: true` or `false`.
 
 ### 8.1 What the artist fills in (listing, `SettingsSelling`)
@@ -918,8 +918,18 @@ Convelio prices on the **packed** piece. Before a piece can be shipped, the piec
 
 The piece's owner sees `shippingReady: {ready, missing: ["weight", "pickup address", …]}` on the piece detail.
 
+**Listing for sale now requires these when Convelio is on** (the default wherever a key is set). Creating a piece with `isForSale: true`, or turning sale on with `PATCH`, is refused with `400` and a message naming what's missing:
+- `packageLengthCm`, `packageWidthCm`, `packageHeightCm` and `weightKg`;
+- the artist's pickup address.
+
+For example: "To sell this piece, add its package weight, package length, pickup address (Settings, Selling). The courier prices shipping on them."
+
+- A piece that isn't for sale needs none of this.
+- Any later edit to an already-listed piece's price or listing terms runs the same check.
+- `shippingItemType`, `shippingPacking` and `shippingMaterials` are accepted on create and `PATCH`, checked against Convelio's lists (`400` otherwise), and returned on the piece.
+
 **App changes:**
-- [ ] Listing form: packed size in inches, weight in pounds, packing, item type, and materials or framing.
+- [ ] Listing form: packed size in inches, weight in pounds, packing, item type, and materials or framing. **Required to list for sale while Convelio is on.** Show the `400` message, and send the artist to the Pickup address screen when it names it.
 - [ ] A Pickup address screen in Settings, Selling.
 - [ ] Show `shippingReady.missing` to the artist.
 
@@ -1074,5 +1084,5 @@ Once the order is paid, the auction is sold, and the piece's `viewerOrder` (8.4)
 - [ ] Make sure the first bid sends `addressId` (7a.1). Without it, the winner falls back to checkout.
 
 **Server-side only (for awareness):**
-- **Deploy:** migration `061_auction_auto_checkout`. No new settings: it runs whenever `CONVELIO_ENABLED` is on.
+- **Deploy:** migration `061_auction_auto_checkout`. No new settings: it runs wherever Convelio is on (the default when a key is set).
 - **Same payment path:** the follow-on charge is an ordinary order payment (metadata `kind: auction_balance`), so refunds, payouts and the ledger treat it like any sale.

@@ -108,10 +108,10 @@ services:
         sync: false
       - key: APPLE_WWDR_CERT
         sync: false
-      # Convelio shipping. Off until the app with the new checkout ships; the sandbox
-      # (sk_test_) key is right for staging.
+      # Convelio for every shipment (the default); the sandbox (sk_test_) key is right for
+      # staging. "false" switches back to the flat rates.
       - key: CONVELIO_ENABLED
-        value: "false"
+        value: "true"
       - key: CONVELIO_API_KEY
         sync: false
       - key: SHIPPING_QUOTE_VALID_HOURS
@@ -186,10 +186,10 @@ services:
         sync: false
       - key: APPLE_WWDR_CERT
         sync: false
-      # Convelio shipping. Off until the app with the new checkout ships; the sandbox
-      # (sk_test_) key is right for staging.
+      # Convelio for every shipment (the default); the sandbox (sk_test_) key is right for
+      # staging. "false" switches back to the flat rates.
       - key: CONVELIO_ENABLED
-        value: "false"
+        value: "true"
       - key: CONVELIO_API_KEY
         sync: false
       - key: SHIPPING_QUOTE_VALID_HOURS

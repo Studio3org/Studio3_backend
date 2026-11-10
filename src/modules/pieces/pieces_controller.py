@@ -86,13 +86,54 @@ def _resolve_listing(db, body, current, user) -> dict:
     )
 
 
-def _validate_sale_detail_fields(body):
+def _shipping_meta(body: dict) -> dict:
+    """Convelio's item type, packing and materials (Phase 8), checked against its lists."""
+    from src.modules.shipping import convelio_mapper
+
+    out = {}
+    if "shippingItemType" in body:
+        value = body.get("shippingItemType") or None
+        if value is not None and value not in convelio_mapper.ITEM_TYPES:
+            raise AppError("shippingItemType must be one of: " + ", ".join(convelio_mapper.ITEM_TYPES), 400)
+        out["shipping_item_type"] = value
+    if "shippingPacking" in body:
+        value = body.get("shippingPacking") or None
+        if value is not None and value not in convelio_mapper.PACKINGS:
+            raise AppError("shippingPacking must be not_packed or wood_crated.", 400)
+        out["shipping_packing"] = value
+    if "shippingMaterials" in body:
+        value = body.get("shippingMaterials")
+        if value is not None and (not isinstance(value, list)
+                                  or any(m not in convelio_mapper.MATERIALS for m in value)):
+            raise AppError("shippingMaterials must be a list from: " + ", ".join(convelio_mapper.MATERIALS), 400)
+        out["shipping_materials"] = value or None
+    return out
+
+
+def _require_shippable(body: dict, seller) -> None:
+    """With Convelio on, every shipment goes through it, so a piece listed for sale needs
+    what Convelio prices on — its packed size and weight — and its artist a pickup address.
+    Otherwise it would be listed and then impossible to buy."""
+    from src.modules.shipping import shipping_config
+
+    if not shipping_config.enabled():
+        return
+    missing = [label.lower() for key, label in _SHIPPING_FIELDS if not body.get(key)]
+    if seller is not None and not getattr(seller, "pickup_address_id", None):
+        missing.append("pickup address (Settings, Selling)")
+    if missing:
+        raise AppError("To sell this piece, add its " + ", ".join(missing)
+                       + ". The courier prices shipping on them.", 400)
+
+
+def _validate_sale_detail_fields(body, seller=None):
     """Presentation-tier requirements for a sale listing — medium, dimensions, packaging.
 
     Separate from listing_rules, which owns the invariants the database also enforces.
     """
     if not body.get("isForSale"):
         return
+    _require_shippable(body, seller)
     if not body.get("medium"):
         raise AppError("Medium is required for sale listings.", 400)
     if not body.get("dimensions"):
@@ -206,7 +247,7 @@ def create():
         for image in images:
             validate_user_media_url(user.username, image["mediaUrl"])
         listing = _resolve_listing(db, body, None, user)
-        _validate_sale_detail_fields(body)
+        _validate_sale_detail_fields(body, seller=user)
         auction = None
         cover = images[0]
         piece = create_piece(
@@ -241,6 +282,7 @@ def create():
             edition=body.get("edition"),
             signed=body.get("signed"),
             mediums=body.get("mediums"),
+            **_shipping_meta(body),
             status="draft" if body.get("status") == "draft" else "live",
             draft_step=drafts.step_from(body) if body.get("status") == "draft" else None,
         )
@@ -424,6 +466,8 @@ def patch(piece_id: str):
         ]:
             if key in body:
                 setattr(piece, attr, body[key])
+        for attr, value in _shipping_meta(body).items():
+            setattr(piece, attr, value)
         if "materials" in body:
             piece.materials = body["materials"]
         if "styleTags" in body:
@@ -440,7 +484,7 @@ def patch(piece_id: str):
             listing_rules.assert_terms_editable(db, piece)
             auction_sync.assert_not_event_auction(db, piece)
             listing = _resolve_listing(db, body, piece, user)
-            _validate_sale_detail_fields({**piece_to_dict(piece), **body})
+            _validate_sale_detail_fields({**piece_to_dict(piece), **body}, seller=user)
             piece.is_for_sale = listing["is_for_sale"]
             piece.listing_type = listing["listing_type"]
             piece.price_cents = listing["price_cents"]

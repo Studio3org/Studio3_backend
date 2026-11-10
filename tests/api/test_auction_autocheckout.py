@@ -116,7 +116,7 @@ def test_pickup_at_the_event_keeps_the_checkout(db, stripe_enabled, convelio):
 
 
 def test_with_convelio_off_the_winner_checks_out_as_before(db, stripe_enabled, monkeypatch):
-    monkeypatch.delenv("CONVELIO_ENABLED", raising=False)
+    monkeypatch.setenv("CONVELIO_ENABLED", "false")
     artist, piece, auction, winner = _won(db, stripe_enabled)
 
     auction_closer.close_expired_auctions()

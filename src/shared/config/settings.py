@@ -103,8 +103,9 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "Flat sales tax on art and tickets, in basis points (825 = 8.25%).", default="825"),
     # --- shipping (Phase 8, Convelio) -------------------------------------------------------
     EnvVar("CONVELIO_ENABLED",
-           "Live Convelio shipping at checkout. Off: the flat rates (installed apps keep working).",
-           default="false"),
+           "Convelio for every shipment (on by default; needs CONVELIO_API_KEY). false = the "
+           "flat-rate fallback.",
+           default="true"),
     EnvVar("CONVELIO_API_KEY", "Convelio API key (sk_test_ sandbox / sk_live_ production). Also "
            "verifies their webhook signatures.", secret=True),
     EnvVar("CONVELIO_BASE_URL", "Override the Convelio API URL (defaults from the key's prefix)."),

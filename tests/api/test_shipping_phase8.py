@@ -279,3 +279,64 @@ def test_stripe_tax_prices_the_artwork_and_the_shipping_by_address(db, client, a
     assert call["shipping_cost"] == {"amount": 365_00}
     assert call["customer_details"]["address"]["state"] == "CA"
     assert db.get(Order, uuid.UUID(order["id"])).tax_calculation_id == "taxcalc_1"
+
+
+# --- listing: Convelio needs the packed size, weight and a pickup address ----------------------
+
+def _media(client, headers):
+    response = client.post("/api/media/presign", json={"purpose": "piece", "contentType": "image/jpeg"},
+                           headers=headers)
+    return response.get_json()["data"]["url"]
+
+
+def _sale_body(client, headers, **extra):
+    return {"mediaUrl": _media(client, headers), "title": "Tide", "isForSale": True, "listingType": "fixed",
+            "priceCents": 900_00, "medium": "Oil on canvas", "dimensions": {"width": 40, "height": 60, "unit": "cm"},
+            **extra}
+
+
+def test_listing_for_sale_needs_packed_size_weight_and_a_pickup_address(db, client, auth_headers, convelio):
+    artist = make_user(db, seller=True)
+    headers = auth_headers(artist)
+
+    bare = client.post("/api/pieces", json=_sale_body(client, headers), headers=headers)
+    assert bare.status_code == 400
+    message = bare.get_json()["message"]
+    assert "package weight" in message and "package length" in message and "pickup address" in message
+
+    sized = dict(weightKg=4, packageLengthCm=70, packageWidthCm=55, packageHeightCm=6,
+                 shippingItemType="fine_art.painting", shippingPacking="not_packed",
+                 shippingMaterials=["framed_glass"])
+    still = client.post("/api/pieces", json=_sale_body(client, headers, **sized), headers=headers)
+    assert still.status_code == 400 and "pickup address" in still.get_json()["message"]
+
+    studio = make_address(db, artist, phone="212-555-0199")
+    client.put("/api/user/me/pickup-address", json={"addressId": str(studio.id)}, headers=headers)
+    listed = client.post("/api/pieces", json=_sale_body(client, headers, **sized), headers=headers)
+    assert listed.status_code == 201, listed.get_json()
+    data = listed.get_json()["data"]
+    assert (data["shippingItemType"], data["shippingPacking"], data["shippingMaterials"]) == (
+        "fine_art.painting", "not_packed", ["framed_glass"])
+
+
+def test_a_piece_not_for_sale_needs_none_of_it_and_bad_values_are_refused(db, client, auth_headers, convelio):
+    artist = make_user(db, seller=True)
+    headers = auth_headers(artist)
+    shown = client.post("/api/pieces", json={"mediaUrl": _media(client, headers), "title": "Study"}, headers=headers)
+    assert shown.status_code == 201
+
+    bad = client.patch(f"/api/pieces/{shown.get_json()['data']['id']}", headers=headers,
+                       json={"shippingItemType": "spaceship"})
+    assert bad.status_code == 400
+
+    turned_on = client.patch(f"/api/pieces/{shown.get_json()['data']['id']}", headers=headers,
+                             json={"isForSale": True, "listingType": "fixed", "priceCents": 500_00,
+                                   "medium": "Ink", "dimensions": {"width": 20, "height": 30, "unit": "cm"}})
+    assert turned_on.status_code == 400 and "package weight" in turned_on.get_json()["message"]
+
+
+def test_without_convelio_listing_works_as_before(db, client, auth_headers):
+    artist = make_user(db, seller=True)
+    headers = auth_headers(artist)
+    listed = client.post("/api/pieces", json=_sale_body(client, headers), headers=headers)
+    assert listed.status_code == 201, listed.get_json()

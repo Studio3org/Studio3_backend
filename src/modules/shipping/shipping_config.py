@@ -1,8 +1,9 @@
 """Shipping settings (Phase 8). Everything still waiting on an answer from Convelio or the
 client is a setting here, so the answer changes a value, not the code.
 
-* CONVELIO_ENABLED — off by default. Off, checkout keeps the flat rates (and installed apps
-  keep working); on, a piece is bought on a Convelio quote.
+* CONVELIO_ENABLED — on by default: every shipment goes through Convelio whenever a key is
+  set (CONVELIO_API_KEY). `false` switches back to the flat rates — the fallback for an
+  environment without Convelio.
 * CONVELIO_API_KEY / CONVELIO_BASE_URL — `sk_test_` keys go to the sandbox unless the URL is
   set.
 * SHIPPING_QUOTE_VALID_HOURS — how long a quote can be bought on (pending Convelio's answer).
@@ -35,7 +36,7 @@ def api_key() -> str:
 
 
 def enabled() -> bool:
-    return _flag("CONVELIO_ENABLED", False) and bool(api_key())
+    return _flag("CONVELIO_ENABLED", True) and bool(api_key())
 
 
 def base_url() -> str:
