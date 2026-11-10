@@ -166,3 +166,63 @@ def preview_piece_tagging(event_id, piece_id):
     """What adding this piece would end, so the host can be told before they do it."""
     data, status = events_controller.preview_piece_tagging(event_id, piece_id)
     return _ok("OK", data, status)
+
+
+# --- ticketing (B22) --------------------------------------------------------------------------
+# Buying is `auth_required`, like RSVP: a buyer needs an account, not a finished seller setup.
+# Managing ticket types is `onboarding_required`, like every other host write.
+
+@events_bp.get("/<event_id>/ticket-types")
+@optional_auth
+@async_handler
+def list_ticket_types(event_id):
+    data, status = events_controller.list_ticket_types(event_id)
+    return _ok("OK", data, status)
+
+
+@events_bp.post("/<event_id>/ticket-types")
+@onboarding_required
+@async_handler
+def create_ticket_type(event_id):
+    data, status = events_controller.create_ticket_type(event_id)
+    return _ok("Ticket type added.", data, status)
+
+
+@events_bp.patch("/<event_id>/ticket-types/<type_id>")
+@onboarding_required
+@async_handler
+def update_ticket_type(event_id, type_id):
+    data, status = events_controller.update_ticket_type(event_id, type_id)
+    return _ok("Ticket type updated.", data, status)
+
+
+@events_bp.delete("/<event_id>/ticket-types/<type_id>")
+@onboarding_required
+@async_handler
+def delete_ticket_type(event_id, type_id):
+    data, status = events_controller.delete_ticket_type(event_id, type_id)
+    return _ok("Ticket type removed.", data, status)
+
+
+@events_bp.post("/<event_id>/orders/quote")
+@optional_auth
+@async_handler
+def quote_tickets(event_id):
+    data, status = events_controller.quote_tickets(event_id)
+    return _ok("OK", data, status)
+
+
+@events_bp.post("/<event_id>/orders")
+@auth_required
+@async_handler
+def place_ticket_order(event_id):
+    data, status = events_controller.place_ticket_order(event_id)
+    return _ok("Order placed.", data, status)
+
+
+@events_bp.get("/<event_id>/orders/<order_id>")
+@auth_required
+@async_handler
+def get_ticket_order(event_id, order_id):
+    data, status = events_controller.get_ticket_order(event_id, order_id)
+    return _ok("OK", data, status)

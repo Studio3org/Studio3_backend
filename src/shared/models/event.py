@@ -51,6 +51,19 @@ EVENT_STATUSES = (EVENT_DRAFT, EVENT_PUBLISHED, EVENT_CANCELLED, EVENT_ARCHIVED)
 # Statuses in which an event appears in public listings.
 EVENT_PUBLIC_STATUSES = (EVENT_PUBLISHED, EVENT_ARCHIVED)
 
+# How long before the start a ticket can still be refunded by its buyer (ticketing spec).
+REFUND_POLICY_7D = "7d"
+REFUND_POLICY_24H = "24h"
+REFUND_POLICY_NONE = "none"
+REFUND_POLICIES = (REFUND_POLICY_7D, REFUND_POLICY_24H, REFUND_POLICY_NONE)
+
+AGE_LIMITS = ("all", "18", "21")
+
+# Link-only events open from their link but never appear in browse, search or feeds (B28).
+VISIBILITY_PUBLIC = "public"
+VISIBILITY_LINK = "link"
+VISIBILITIES = (VISIBILITY_PUBLIC, VISIBILITY_LINK)
+
 # The union of what a host can pick in the create flow and what a browser can filter by on
 # the events tab — both are real surfaces in the app, and each offers categories the other
 # does not. Anything outside this set is refused rather than stored, so a typo cannot create
@@ -146,6 +159,14 @@ class Event(Base):
     # {"question", "answer"} in the host's order, or null for none. A column rather than a
     # table: they belong to the event, are few, and are only ever read and written whole.
     faqs = Column(JSONB, nullable=True)
+
+    # Ticketing (spec 25 Oct, B22/B28). Defaults are what every event was before: no refunds,
+    # all ages, listed publicly.
+    refund_policy = Column(String(8), nullable=False, default=REFUND_POLICY_NONE,
+                           server_default=REFUND_POLICY_NONE)
+    age_limit = Column(String(4), nullable=False, default="all", server_default="all")
+    visibility = Column(String(8), nullable=False, default=VISIBILITY_PUBLIC,
+                        server_default=VISIBILITY_PUBLIC)
 
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)

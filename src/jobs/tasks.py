@@ -108,3 +108,19 @@ def reconcile_ledger() -> None:
     from src.modules.admin.reconciliation import reconcile
 
     _run("ledger-reconcile", reconcile)
+
+
+@celery_app.task(name="jobs.run")
+def run_job(path: str, *args) -> None:
+    """On-demand work queued by src.jobs.dispatch.enqueue (ticket emails and the like)."""
+    from src.jobs.dispatch import run_inline
+
+    _run(f"job:{path.rsplit('.', 1)[-1]}", lambda: run_inline(path, *args))
+
+
+@celery_app.task(name="events.expire_ticket_holds")
+def expire_ticket_holds() -> None:
+    """Release checkout holds nobody paid for, so the tickets go back on sale."""
+    from src.modules.events.ticketing_service import expire_holds as run
+
+    _run("ticket-holds", run)

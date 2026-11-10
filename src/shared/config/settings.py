@@ -99,6 +99,12 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "Commission on original art, in basis points (2000 = 20%).", default="2000"),
     EnvVar("PLATFORM_TICKET_COMMISSION_BPS",
            "Commission on event tickets, in basis points (800 = 8%).", default="800"),
+    EnvVar("SALES_TAX_RATE_BPS",
+           "Flat sales tax on art and tickets, in basis points (825 = 8.25%).", default="825"),
+    EnvVar("TICKET_SIGNING_KEY",
+           "Base64 32-byte Ed25519 seed that signs ticket QR codes. Derived from SECRET_KEY "
+           "when unset; set it in production so rotating SECRET_KEY keeps tickets valid.",
+           secret=True),
     EnvVar("CONNECT_ACCOUNT_COUNTRY", "Country for new Stripe Connect Express accounts.",
            default="US"),
     EnvVar("CONNECT_ONBOARDING_BASE_URL", "Base for Connect return/refresh redirects.",

@@ -87,6 +87,13 @@ celery_app.conf.update(
             "schedule": 300.0,
             "options": {"expires": 290},
         },
+        "expire-ticket-holds": {
+            "task": "events.expire_ticket_holds",
+            # Every minute against a ten-minute hold: an abandoned checkout's tickets are back
+            # on sale within eleven minutes, and a quiet minute costs one indexed query.
+            "schedule": 60.0,
+            "options": {"expires": 55},
+        },
         "expire-waitlist-offers": {
             "task": "events.expire_waitlist_offers",
             "schedule": 300.0,

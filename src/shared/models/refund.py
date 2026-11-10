@@ -41,6 +41,11 @@ class Refund(Base):
     order_id = Column(
         UUID(as_uuid=True), ForeignKey("orders.id", ondelete="CASCADE"), nullable=True, index=True
     )
+    # A ticket order's refund carries this instead of order_id (event tickets, Phase 3+).
+    ticket_order_id = Column(
+        UUID(as_uuid=True), ForeignKey("event_ticket_orders.id", ondelete="CASCADE"),
+        nullable=True, index=True,
+    )
     # One full refund per payment, ever — so this is also the duplicate guard.
     payment_intent_id = Column(String(255), nullable=False, unique=True)
     leg = Column(String(16), nullable=False)

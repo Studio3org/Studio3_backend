@@ -277,6 +277,17 @@ def my_drafts():
     return _ok("OK", data, status)
 
 
+@user_bp.get("/me/tickets")
+@auth_required
+@async_handler
+def my_tickets():
+    """The viewer's tickets, optionally for one event (?eventId=). Each carries its QR value."""
+    from src.modules.events import events_controller
+
+    data, status = events_controller.my_tickets()
+    return _ok("OK", data, status)
+
+
 @user_bp.get("/me/saved/posts")
 @auth_required
 @async_handler

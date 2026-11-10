@@ -20,10 +20,14 @@ def test_every_scheduled_task_is_registered():
     )
 
 
+# Tasks queued on demand (src/jobs/dispatch.enqueue) rather than by beat.
+ON_DEMAND = {"jobs.run"}
+
+
 def test_every_registered_task_is_scheduled_or_deliberately_manual():
     """Catches the reverse: a task written but never wired into the schedule."""
     scheduled = {entry["task"] for entry in celery_app.conf.beat_schedule.values()}
-    unscheduled = _own_tasks() - scheduled
+    unscheduled = _own_tasks() - scheduled - ON_DEMAND
     assert not unscheduled, f"registered but never scheduled: {sorted(unscheduled)}"
 
 

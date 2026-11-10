@@ -197,6 +197,22 @@ def _stripe_fee_for_charge(charge) -> int:
 
 
 def _on_payment_succeeded(db: Session, intent) -> None:
+    from src.modules.events import ticketing_service
+
+    if ticketing_service.owns_intent(intent):
+        # Event tickets: their own order table, stock and hold (ticketing_service).
+        charge_id = intent.get("latest_charge")
+        charge = (
+            get_stripe().Charge.retrieve(charge_id, expand=["balance_transaction"])
+            if charge_id else None
+        )
+        ticketing_service.on_payment_succeeded(
+            db, intent,
+            stripe_fee_cents=_stripe_fee_for_charge(charge) if charge else 0,
+            charge_id=charge_id,
+        )
+        return
+
     order = _order_for_intent(db, intent)
     if not order:
         logger.error("payment_intent.succeeded for unknown order: %s", intent["id"])
@@ -274,6 +290,11 @@ def _notify_paid(db: Session, order: Order) -> None:
 
 
 def _on_payment_failed(db: Session, intent) -> None:
+    from src.modules.events import ticketing_service
+
+    if ticketing_service.owns_intent(intent):
+        ticketing_service.on_payment_failed(db, intent)
+        return
     order = _order_for_intent(db, intent)
     if not order:
         logger.error("payment_intent.payment_failed for unknown order: %s", intent["id"])

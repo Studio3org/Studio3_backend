@@ -29,6 +29,7 @@ from src.shared.models.ledger import (
     TXN_REFUND_FEE_CORRECTION,
     TXN_REFUND_ISSUED,
     TXN_SHIPPING_COST_RECORDED,
+    TXN_TICKET_ORDER_PAID,
     TXN_TRANSFER_REVERSED,
 )
 from src.shared.models.order import Order
@@ -276,7 +277,8 @@ def book_auction_refunded(db: Session, auction, hold, commit: bool = True):
 
 
 def book_late_payment_refunded(
-    db: Session, order: Order, intent_id: str, stripe_fee_cents: int, commit: bool = True
+    db: Session, order, intent_id: str, stripe_fee_cents: int, commit: bool = True,
+    *, ledger_order_id=...,
 ):
     """A payment that succeeded after its order was cancelled, refunded straight back.
 
@@ -300,7 +302,8 @@ def book_late_payment_refunded(
         txn_type=TXN_LATE_PAYMENT_REFUNDED,
         entries=entries,
         idempotency_key=f"late_payment_refunded:{intent_id}",
-        order_id=order.id,
+        # An art order links its ledger rows; a ticket order passes None (the FK is to orders).
+        order_id=order.id if ledger_order_id is ... else ledger_order_id,
         description=f"Late payment {intent_id} refunded for cancelled order {order.id}",
         commit=commit,
     )
@@ -323,5 +326,40 @@ def book_refund_fee_correction(db: Session, order_id, fee_cents: int, commit: bo
         idempotency_key=f"be1_fix:{order_id}",
         order_id=order_id,
         description=f"Correct refund fee booked as returned for order {order_id} (BE-1)",
+        commit=commit,
+    )
+
+
+def book_ticket_order_paid(db: Session, order, host_id, stripe_fee_cents: int, commit: bool = True):
+    """Book a paid ticket order.
+
+        debit  platform_clearing   total - stripe_fee   (what landed in Stripe)
+        debit  stripe_fees         stripe_fee
+        credit seller_payable      subtotal - fee       (the host's share, held until the event)
+        credit platform_revenue    fee                  (Studio 3's 8%, from the host's side)
+        credit tax_payable         tax
+
+    Buyers pay the ticket prices plus tax and nothing else (ticketing spec); Studio 3's fee
+    comes out of what the host is owed, at the rate snapshotted on the order. The ledger rows
+    carry no order_id — that column points at art orders — so the idempotency key is what
+    ties them to the ticket order.
+    """
+    fee = commission_cents(order.subtotal_cents, order.fee_bps)
+    currency = platform_currency().upper()
+    entries = [
+        (get_platform_account(db, ACCOUNT_PLATFORM_CLEARING, currency), DEBIT,
+         order.total_cents - stripe_fee_cents),
+        (get_platform_account(db, ACCOUNT_STRIPE_FEES, currency), DEBIT, stripe_fee_cents),
+        (get_seller_account(db, host_id, currency), CREDIT, order.subtotal_cents - fee),
+        (get_platform_account(db, ACCOUNT_PLATFORM_REVENUE, currency), CREDIT, fee),
+        (get_platform_account(db, ACCOUNT_TAX_PAYABLE, currency), CREDIT, order.tax_cents),
+    ]
+    return ledger_service.post_transaction(
+        db,
+        txn_type=TXN_TICKET_ORDER_PAID,
+        entries=entries,
+        idempotency_key=f"ticket_order_paid:{order.id}",
+        order_id=None,
+        description=f"Tickets paid for event {order.event_id} (ticket order {order.id})",
         commit=commit,
     )

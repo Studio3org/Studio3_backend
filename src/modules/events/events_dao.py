@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from src.shared.models.event import (
     EVENT_CATEGORIES,
     EVENT_PUBLISHED,
+    VISIBILITY_PUBLIC,
     ROLE_ARTIST,
     ROLE_COHOST,
     RSVP_GOING,
@@ -298,7 +299,10 @@ def _published_upcoming(now: datetime):
     midnight is still happening, and dropping it from "upcoming" the moment it began is how
     a listing loses the events someone is most likely to be looking for right now.
     """
-    return select(Event).where(Event.status == EVENT_PUBLISHED, Event.ends_at > now)
+    # Link-only events open from their link but are never listed (B28).
+    return select(Event).where(
+        Event.status == EVENT_PUBLISHED, Event.ends_at > now, Event.visibility == VISIBILITY_PUBLIC
+    )
 
 
 class EventFilter:
@@ -428,7 +432,7 @@ def list_for_host(
     """A host's own events. Drafts are included only for the host themselves."""
     stmt = select(Event).where(Event.host_id == host_id)
     if viewer_id != host_id:
-        stmt = stmt.where(Event.status == EVENT_PUBLISHED)
+        stmt = stmt.where(Event.status == EVENT_PUBLISHED, Event.visibility == VISIBILITY_PUBLIC)
     return list(db.execute(stmt.order_by(Event.starts_at.desc())).scalars())
 
 
@@ -469,7 +473,8 @@ def city_summaries(db: Session) -> list[dict]:
     now = datetime.now(timezone.utc)
     rows = db.execute(
         select(Event.city, func.count(Event.id))
-        .where(Event.status == EVENT_PUBLISHED, Event.ends_at > now, Event.city.is_not(None))
+        .where(Event.status == EVENT_PUBLISHED, Event.ends_at > now, Event.city.is_not(None),
+               Event.visibility == VISIBILITY_PUBLIC)
         .group_by(Event.city)
     ).all()
     grouped: dict[str, dict] = {}
@@ -496,7 +501,8 @@ def category_summaries(db: Session, *, where: EventFilter = NO_FILTER) -> list[d
     rows = db.execute(
         where.apply(
             select(Event.category, Event.cover_media_url, Event.starts_at).where(
-                Event.status == EVENT_PUBLISHED, Event.ends_at > now, Event.category.is_not(None)
+                Event.status == EVENT_PUBLISHED, Event.ends_at > now, Event.category.is_not(None),
+                Event.visibility == VISIBILITY_PUBLIC,
             )
         ).order_by(Event.category.asc(), Event.starts_at.asc())
     ).all()

@@ -67,6 +67,8 @@ TXN_AUCTION_REFUNDED = "auction_refunded"
 # A payment that succeeded after its order was cancelled, refunded straight back. Only the
 # Stripe fee it cost remains on the books.
 TXN_LATE_PAYMENT_REFUNDED = "late_payment_refunded"
+# A ticket order paid at checkout: the host's share is owed to them until the event is over.
+TXN_TICKET_ORDER_PAID = "ticket_order_paid"
 # One-off correction for refunds booked before BE-1 was fixed, which treated the Stripe fee as
 # returned (scripts/fix_be1_refund_ledger.py).
 TXN_REFUND_FEE_CORRECTION = "refund_fee_correction"

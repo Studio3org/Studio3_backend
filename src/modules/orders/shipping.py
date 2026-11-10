@@ -8,5 +8,4 @@ SHIPPING_RATES_CENTS = {
     "free": 0,
 }
 
-# Placeholder — matches the Flutter mock's hardcoded 8.25%, now computed server-side.
-FLAT_TAX_RATE = 0.0825
+# Sales tax moved to src/shared/config/tax.py (integer cents, configurable rate, BE-11).

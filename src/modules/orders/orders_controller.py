@@ -27,7 +27,8 @@ from src.modules.addresses import addresses_dao
 from src.modules.orders import orders_dao
 from src.modules.pieces import listing_rules, piece_state
 from src.modules.bids import auction_dao, auction_winner, bid_dao
-from src.modules.orders.shipping import SHIPPING_RATES_CENTS, FLAT_TAX_RATE
+from src.modules.orders.shipping import SHIPPING_RATES_CENTS
+from src.shared.config.tax import tax_cents as compute_tax_cents
 from src.modules.notifications import notifications_dao
 from src.modules.payments import money
 from src.modules.orders import stale_orders
@@ -84,7 +85,7 @@ def collect(piece_id: str):
 
         artwork_cents = piece.price_cents
         shipping_cents = SHIPPING_RATES_CENTS[shipping_method]
-        tax_cents = round(artwork_cents * FLAT_TAX_RATE)
+        tax_cents = compute_tax_cents(artwork_cents)
         total_cents = artwork_cents + shipping_cents + tax_cents
 
         order = orders_dao.create_order(
@@ -158,7 +159,7 @@ def auction_checkout(piece_id: str):
 
         artwork_cents = winning.amount_cents
         shipping_cents = SHIPPING_RATES_CENTS[shipping_method]
-        tax_cents = round(artwork_cents * FLAT_TAX_RATE)
+        tax_cents = compute_tax_cents(artwork_cents)
         total_cents = artwork_cents + shipping_cents + tax_cents
 
         # What the close already collected. Read from the hold rather than assumed to be the

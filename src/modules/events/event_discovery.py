@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.modules.pieces import piece_state
-from src.shared.models.event import EVENT_PUBLISHED, Event, EventPiece
+from src.shared.models.event import EVENT_PUBLISHED, VISIBILITY_PUBLIC, Event, EventPiece
 from src.shared.models.piece import Piece
 from src.shared.models.social import Follow
 from src.shared.models.user import User
@@ -41,7 +41,10 @@ def _now() -> datetime:
 
 
 def _upcoming(now: datetime):
-    return select(Event).where(Event.status == EVENT_PUBLISHED, Event.ends_at > now)
+    # Link-only events never reach feeds, Explore or profiles (B28).
+    return select(Event).where(
+        Event.status == EVENT_PUBLISHED, Event.ends_at > now, Event.visibility == VISIBILITY_PUBLIC
+    )
 
 
 # --- profiles -----------------------------------------------------------------------------------

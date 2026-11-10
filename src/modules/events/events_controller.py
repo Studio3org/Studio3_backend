@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from flask import g, request
-from sqlalchemy import func
+from sqlalchemy import func, select
 
 from src.shared.config.database import SessionLocal
 from src.shared.models.event import (
@@ -22,6 +22,7 @@ from src.shared.utils.app_error import AppError
 from src.shared.utils.logger import get_logger
 from src.modules.admin import audit_service
 from src.shared.models import audit
+from src.modules.events import ticketing_service
 from src.modules.events import event_discovery, event_state, events_dao, lineup_service, rsvp_service
 from src.modules.pieces.pieces_dao import get_piece
 from src.modules.user.user_dao import get_user_by_id
@@ -95,6 +96,8 @@ def create():
             capacity=body.get("capacity"),
             faqs=body.get("faqs"),
         )
+        if _apply_ticketing_fields(db, event, body):
+            db.commit()
         return event_to_dict(db, event, viewer_id=host.id), 201
     finally:
         db.close()
@@ -131,6 +134,7 @@ def patch(event_id: str):
             event.capacity = events_dao.validate_capacity(db, event, body.get("capacity"))
         if "faqs" in body:
             event.faqs = events_dao.validate_faqs(body.get("faqs"))
+        _apply_ticketing_fields(db, event, body)
 
         if "startsAt" in body or "endsAt" in body:
             starts_at = (
@@ -158,6 +162,48 @@ def patch(event_id: str):
         return event_to_dict(db, event, viewer_id=viewer_id), 200
     finally:
         db.close()
+
+
+def _apply_ticketing_fields(db, event: Event, body: dict) -> bool:
+    """refundPolicy, ageLimit and visibility (ticketing spec; B28). Returns whether any was set.
+
+    The refund policy is a promise to buyers, so it can't change once a paid ticket has sold:
+    someone who bought under "up to 7 days before" keeps that."""
+    from src.shared.models.event import AGE_LIMITS, REFUND_POLICIES, VISIBILITIES
+    from src.shared.models.ticketing import ORDER_PAID, TicketOrder
+
+    changed = False
+    if "refundPolicy" in body:
+        policy = str(body.get("refundPolicy") or "").strip().lower()
+        if policy not in REFUND_POLICIES:
+            raise AppError(f"refundPolicy must be one of: {', '.join(REFUND_POLICIES)}.", 400)
+        if policy != event.refund_policy and event.id is not None:
+            sold = db.execute(
+                select(TicketOrder.id).where(
+                    TicketOrder.event_id == event.id, TicketOrder.status == ORDER_PAID,
+                    TicketOrder.total_cents > 0,
+                ).limit(1)
+            ).first()
+            if sold:
+                raise AppError(
+                    "Paid tickets have sold under the current refund policy, so it can't change.",
+                    409,
+                )
+        event.refund_policy = policy
+        changed = True
+    if "ageLimit" in body:
+        age = str(body.get("ageLimit") or "all").strip().lower()
+        if age not in AGE_LIMITS:
+            raise AppError(f"ageLimit must be one of: {', '.join(AGE_LIMITS)}.", 400)
+        event.age_limit = age
+        changed = True
+    if "visibility" in body:
+        visibility = str(body.get("visibility") or "").strip().lower()
+        if visibility not in VISIBILITIES:
+            raise AppError(f"visibility must be one of: {', '.join(VISIBILITIES)}.", 400)
+        event.visibility = visibility
+        changed = True
+    return changed
 
 
 def set_people(event_id: str):
@@ -567,7 +613,7 @@ def upcoming_event_card(db, host_id: uuid.UUID, viewer_id: Optional[uuid.UUID]) 
 
 
 def set_rsvp(event_id: str):
-    """Say you're coming, or take it back. Free — an RSVP is a headcount, not a ticket."""
+    """Say you're coming, or take it back. Free; going also issues a free ticket."""
     body = request.get_json() or {}
     going = bool(body.get("going", True))
     db = SessionLocal()
@@ -583,7 +629,12 @@ def set_rsvp(event_id: str):
         if not event or (event.status == "draft" and event.host_id != viewer_id):
             raise AppError("Event not found.", 404)
 
-        rsvp_service.set_rsvp(db, event, user, going=going)
+        # Since tickets, going issues a free ticket with a QR code and not going gives free
+        # tickets back (ticketing spec: "Reserve creates the tickets right away").
+        if going:
+            ticketing_service.reserve(db, event, user)
+        else:
+            ticketing_service.release(db, event, user)
         return {
             "going": going,
             "rsvpCount": rsvp_service.going_count(db, event.id),
@@ -685,9 +736,9 @@ def event_card(db, event: Event, viewer_id: Optional[uuid.UUID]) -> dict:
         "venueName": event.venue_name,
         "city": event.city,
         "featured": event.featured_at is not None,
-        # Entry is free and open — attending is never gated. Sent as a field rather than
-        # left to the client to assume, so paid ticketing can change it in one place.
-        "isFree": True,
+        # True unless the event sells a paid ticket type; ticketCount is the viewer's own.
+        **ticketing_service.card_ticket_fields(db, event, viewer_id),
+        "ageLimit": event.age_limit,
         "hostUsername": host.username if host else None,
         "hostName": host.name if host else None,
         "hostAvatarUrl": host.image if host else None,
@@ -730,6 +781,13 @@ def event_to_dict(db, event: Event, viewer_id: Optional[uuid.UUID]) -> dict:
             for f in (event.faqs or [])
             if isinstance(f, dict)
         ],
+        # Ticketing (B22): the types on sale (all of them, with sales figures, for the host),
+        # whether any cost money, and how many the viewer holds. `waitlist` arrives with
+        # Phase 4 and is left out until then, as B22 asks.
+        **ticketing_service.event_ticket_fields(db, event, viewer_id),
+        "refundPolicy": event.refund_policy,
+        "refundPolicyText": ticketing_service.refund_policy_line(event),
+        "visibility": event.visibility,
     })
     if viewer_id is not None:
         base.update(_host_follow(db, event, viewer_id))
@@ -807,3 +865,116 @@ def _int_arg(name: str, default: int) -> int:
         return int(raw)
     except ValueError:
         raise AppError(f"{name} must be a number.", 400) from None
+
+
+# --- ticketing (B22) --------------------------------------------------------------------------
+
+def _published_or_host(db, event_id: str) -> Event:
+    """An event the viewer may buy from or read tickets of: published, or their own draft."""
+    viewer_id = _viewer_id()
+    event = events_dao.get_event(db, _uuid(event_id, "event"))
+    if not event or (event.status == "draft" and event.host_id != viewer_id):
+        raise AppError("Event not found.", 404)
+    return event
+
+
+def list_ticket_types(event_id: str):
+    db = SessionLocal()
+    try:
+        event = _published_or_host(db, event_id)
+        return {"ticketTypes": ticketing_service.event_ticket_fields(
+            db, event, _viewer_id())["ticketTypes"]}, 200
+    finally:
+        db.close()
+
+
+def _host_types_response(db, event: Event, viewer_id) -> dict:
+    return {"ticketTypes": ticketing_service.event_ticket_fields(db, event, viewer_id)["ticketTypes"]}
+
+
+def create_ticket_type(event_id: str):
+    db = SessionLocal()
+    try:
+        event, viewer_id = _require_host(db, event_id)
+        if event.status in event_state.TERMINAL_STATUSES:
+            raise AppError("This event can no longer be edited.", 409)
+        created = ticketing_service.create_type(db, event, request.get_json() or {})
+        data = _host_types_response(db, event, viewer_id)
+        data["id"] = str(created.id)
+        return data, 201
+    finally:
+        db.close()
+
+
+def update_ticket_type(event_id: str, type_id: str):
+    db = SessionLocal()
+    try:
+        event, viewer_id = _require_host(db, event_id)
+        if event.status in event_state.TERMINAL_STATUSES:
+            raise AppError("This event can no longer be edited.", 409)
+        ticketing_service.update_type(db, event, _uuid(type_id, "ticket type"),
+                                      request.get_json() or {})
+        return _host_types_response(db, event, viewer_id), 200
+    finally:
+        db.close()
+
+
+def delete_ticket_type(event_id: str, type_id: str):
+    db = SessionLocal()
+    try:
+        event, viewer_id = _require_host(db, event_id)
+        outcome = ticketing_service.remove_type(db, event, _uuid(type_id, "ticket type"))
+        data = _host_types_response(db, event, viewer_id)
+        data["result"] = outcome
+        return data, 200
+    finally:
+        db.close()
+
+
+def quote_tickets(event_id: str):
+    body = request.get_json() or {}
+    db = SessionLocal()
+    try:
+        event = _published_or_host(db, event_id)
+        return ticketing_service.quote(db, event, body.get("items"), _viewer_id()), 200
+    finally:
+        db.close()
+
+
+def place_ticket_order(event_id: str):
+    body = request.get_json() or {}
+    db = SessionLocal()
+    try:
+        event = _published_or_host(db, event_id)
+        buyer = get_user_by_id(db, _viewer_id())
+        if buyer is None:
+            raise AppError("User not found.", 404)
+        result = ticketing_service.place_order(db, event, buyer, body.get("items"), body.get("email"))
+        return result, 201
+    finally:
+        db.close()
+
+
+def get_ticket_order(event_id: str, order_id: str):
+    """For the checkout screen to read after Stripe returns: `paid` once the webhook issued
+    the tickets."""
+    from src.shared.models.ticketing import TicketOrder
+
+    db = SessionLocal()
+    try:
+        order = db.get(TicketOrder, _uuid(order_id, "order"))
+        if not order or str(order.event_id) != event_id or order.buyer_id != _viewer_id():
+            raise AppError("Order not found.", 404)
+        return ticketing_service.order_to_dict(db, order), 200
+    finally:
+        db.close()
+
+
+def my_tickets():
+    raw = request.args.get("eventId")
+    db = SessionLocal()
+    try:
+        event_id = _uuid(raw, "event") if raw else None
+        return {"tickets": ticketing_service.my_tickets(db, _viewer_id(), event_id)}, 200
+    finally:
+        db.close()

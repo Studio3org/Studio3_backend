@@ -257,7 +257,7 @@ def refund_paid_order(
         db.close()
 
 
-def refund_late_payment(db, order: Order, intent: dict, stripe_fee_cents: int) -> None:
+def refund_late_payment(db, order, intent: dict, stripe_fee_cents: int) -> None:
     """A payment that succeeded after its order was cancelled or failed (PAY-2).
 
     Called from the payment webhook inside its own transaction. The order is not revived —
@@ -265,6 +265,16 @@ def refund_late_payment(db, order: Order, intent: dict, stripe_fee_cents: int) -
     a Stripe failure so the webhook answers 5xx and Stripe redelivers; the refund row and the
     idempotency key make the redelivery safe.
     """
+    _refund_late(db, order, intent, stripe_fee_cents, ticket=False)
+
+
+def refund_late_ticket_payment(db, ticket_order, intent: dict, stripe_fee_cents: int) -> None:
+    """The same for event tickets: a payment for a checkout whose hold already expired and
+    whose tickets have gone to someone else."""
+    _refund_late(db, ticket_order, intent, stripe_fee_cents, ticket=True)
+
+
+def _refund_late(db, order, intent: dict, stripe_fee_cents: int, *, ticket: bool) -> None:
     intent_id = intent["id"]
     refund = db.execute(
         select(Refund).where(Refund.payment_intent_id == intent_id)
@@ -273,7 +283,8 @@ def refund_late_payment(db, order: Order, intent: dict, stripe_fee_cents: int) -
         return
     if refund is None:
         refund = Refund(
-            order_id=order.id,
+            order_id=None if ticket else order.id,
+            ticket_order_id=order.id if ticket else None,
             payment_intent_id=intent_id,
             leg=LEG_LATE,
             amount_cents=int(intent.get("amount_received") or intent.get("amount") or 0),
@@ -292,9 +303,13 @@ def refund_late_payment(db, order: Order, intent: dict, stripe_fee_cents: int) -
             raise
     refund.status = REFUND_SUCCEEDED
     refund.failure_reason = None
-    money.book_late_payment_refunded(db, order, intent_id, stripe_fee_cents, commit=False)
+    money.book_late_payment_refunded(
+        db, order, intent_id, stripe_fee_cents, commit=False,
+        ledger_order_id=None if ticket else order.id,
+    )
     logger.warning(
-        "Refunded late payment %s on %s order %s.", intent_id, order.status, order.id
+        "Refunded late payment %s on %s %s %s.",
+        intent_id, order.status, "ticket order" if ticket else "order", order.id,
     )
 
 

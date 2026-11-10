@@ -11,7 +11,7 @@ Responses keep the usual envelope `{success, message, data}`. Errors are `{succe
 | 1. Security | Done on branch `phase2` | Small: error messages on sign-in and code screens |
 | 2. Refunds and cancellation | Done on branch `phase2` | Order detail: cancel buttons, artist cancel confirmation, buyer "Report an issue" |
 | 2A. Quick fixes | Done on branch `phase2` | Use the piece on order rows; logout-all message; founding-rate end date |
-| 3. Ticketing core | Not started | — |
+| 3. Ticketing core | Done (not yet committed) | Host ticket-type screens; free tickets through `/orders`; checkout polling; tickets screen already works |
 | 4. Ticket refunds, waitlist, check-in | Not started | — |
 | 5. Event invites and approvals | Not started | — |
 | 6. Auction winner deadline | Not started | — |
@@ -153,3 +153,118 @@ Inbox type `order`, `targetType: "order"`, `targetId` = the order ID. A tap shou
 - **Bidding again after a card hold expired:** this no longer leaves two active bids. The earlier one becomes `outbid`.
 - **Cancelling an auction that hasn't opened** (draft or scheduled) with `POST /api/pieces/:id/auction/cancel` now actually cancels it. Before, it answered 200 and left it in place.
 - **`docs/API.md`** now lists every status relist accepts: `needs_seller_action`, `closed_no_bids` and `closed_reserve_not_met`.
+
+---
+
+## Phase 3: Ticketing core (B22, plus age limit and visibility from B28)
+
+Built to the ticketing spec of 25 Oct 2026. The endpoints the app already calls on `origin/main` (`/orders/quote`, `/orders`, `/user/me/tickets`, the event detail fields) keep exactly the shapes `lib/models/event_order.dart` and `studio_event.dart` read. Most of the buyer side works with no app change.
+
+### 3.1 New fields on events
+
+**Event card** (every list), added:
+- `isFree`: now real. `false` when any open ticket type costs money.
+- `ticketCount`: how many tickets the viewer holds.
+- `ageLimit`: `"all"`, `"18"` or `"21"`.
+
+**Event detail** (`GET /api/events/:id`), added:
+
+| Field | Type | Notes |
+|---|---|---|
+| `ticketTypes` | array | See 3.2. Empty for an event with no ticket types (free RSVP event) |
+| `refundPolicy` | `"7d"` / `"24h"` / `"none"` | |
+| `refundPolicyText` | string | e.g. "Refunds up to 7 days before the event." |
+| `visibility` | `"public"` / `"link"` | Link-only events never appear in browse, search, feeds, Explore or profiles, but open from their link |
+
+`waitlist` is still not sent. It arrives in Phase 4, and B22 says to leave it out until then.
+
+**Create and edit** (`POST /api/events`, `PATCH /api/events/:id`) accept:
+- `refundPolicy`, `ageLimit` and `visibility`, with the values above. Anything else returns 400.
+- `refundPolicy` can't change once a paid ticket has sold: 409 "Paid tickets have sold under the current refund policy, so it can't change."
+
+### 3.2 Ticket types
+
+Each entry in `ticketTypes`:
+
+```json
+{"id": "…", "name": "VIP", "priceCents": 2500, "includes": "Drinks",
+ "left": 7, "perOrderLimit": 4, "saleStartsAt": null, "saleEndsAt": null,
+ "onSale": true, "soldOut": false}
+```
+
+- `left` is `null` for no cap, and `0` when sold out. Show "Only N left" in red when it's 5 or fewer (spec).
+- The host's own view also gets `quantity`, `sold`, `hostNetCents` (what they receive per ticket, e.g. a $25 ticket = 2300) and `closed`.
+
+**Host endpoints** (host only, otherwise 404):
+
+| Method | Path | Body | Notes |
+|---|---|---|---|
+| GET | `/api/events/:id/ticket-types` | — | Also open to anyone for a published event |
+| POST | `/api/events/:id/ticket-types` | `{name, priceCents, includes?, quantity?, perOrderLimit?, saleStartsAt?, saleEndsAt?, sortOrder?}` | `201` with `{id, ticketTypes}`. **Paid types need a seller profile:** otherwise `403` "Set up your seller profile to sell paid tickets…", and the app should open seller setup. The minimum paid price is $0.50 |
+| PATCH | `/api/events/:id/ticket-types/:typeId` | any of the above | A type that has sold can't change price (409), and its quantity can't go below what's sold (409) |
+| DELETE | `/api/events/:id/ticket-types/:typeId` | — | Deletes it if nobody bought it; otherwise **closes** it (`result: "closed"`), and its tickets stay valid |
+
+**App changes:**
+- [ ] Hosting, Tickets step: replace the "Free RSVP with a cap" screen with ticket types: name, price or free, what's included, quantity, max per order, sale start and end.
+- [ ] Show "You receive $X per ticket" from `hostNetCents`.
+- [ ] Add pickers for refund policy, age limit (Details), and public or link-only (Details).
+
+### 3.3 Buying
+
+**Quote:** `POST /api/events/:id/orders/quote` with `{"items": [{"ticketTypeId", "quantity"}]}` returns:
+
+```json
+{"subtotalCents": 5000, "serviceFeeCents": 0, "taxCents": 413, "totalCents": 5413,
+ "refundPolicy": "Refunds up to 7 days before the event.", "items": [...]}
+```
+
+**Buyers never pay a fee:** `serviceFeeCents` is always `0` (spec).
+
+**Order:** `POST /api/events/:id/orders` with the same `items`, plus an optional `email` (where the tickets are sent; the account email by default).
+
+| Case | Response |
+|---|---|
+| Paid | `201` `{id, orderId, clientSecret, status: "pending_payment", totalCents, holdExpiresAt}`. The tickets are **held for 10 minutes**. Present the PaymentSheet with `clientSecret` |
+| Free only | `201` with `clientSecret: null` and `status: "paid"`: the tickets are issued already |
+| Sold out, over the per-order limit, sale not open, or event over | `409` with a message to show ("Only 2 VIP left.", "VIP is sold out.") |
+| Host buying their own tickets | `400` "You're hosting this one." |
+
+After the PaymentSheet succeeds, the tickets are issued by the server when Stripe confirms. This usually takes a second or two.
+
+**Poll:** `GET /api/events/:id/orders/:orderId` returns `{status, ticketCount, …}` until `status` is `"paid"`. If the 10 minutes run out before payment, `status` becomes `"expired"` and the tickets go back on sale.
+
+**My tickets:** `GET /api/user/me/tickets?eventId=` returns `{tickets: [{id, eventId, orderId, code, ticketTypeName, number, status, scannedAt}]}`.
+- `code` is the value to draw as the QR. It's signed, so a made-up code won't pass the door.
+- `number` is a short code like `S3-T-8KQ2XM`, for typing at the door.
+
+**App changes:**
+- [ ] `EventCheckoutPage`: after `presentPaymentSheet`, poll `GET …/orders/:orderId` (about every 1 second, for up to 20 seconds) and open the confirmation once it's `paid`, instead of only reloading the event.
+- [ ] Optionally show a countdown from `holdExpiresAt`.
+- [ ] **Free tickets:** when the choice is free, call `POST /api/events/:id/orders` with the chosen `items`, not `setRsvp`. RSVP still works (3.4), but it can't say how many or which type, so a choice of 2 free tickets only gets 1 through RSVP.
+- [x] `EventTicketPage`, `my_events_page.dart` (`ticketCount`) and `event_order.dart` already read the right fields.
+
+### 3.4 The free one-tap RSVP
+
+`POST /api/events/:id/rsvp {going}` keeps its request and response, so installed apps keep working. Behind it:
+
+| Event | `going: true` | `going: false` |
+|---|---|---|
+| No ticket types | Issues one **General Admission** ticket with a QR code, capped by the event's `capacity` as before (409 when full) | Voids the free ticket |
+| Has a free ticket type | Issues one ticket of the first free type with stock left | Voids the viewer's free tickets |
+| Paid types only | `409` "This event needs a ticket. Choose tickets to continue." | — |
+| Viewer holds paid tickets | — | Free tickets are voided, then `409` "Your paid tickets are still valid…". Refunds come in Phase 4 |
+
+Buying any ticket marks the buyer as going. `viewerIsGoing`, `rsvpCount`, `scope=going`, the guest list and the event reminders all include ticket holders.
+
+### 3.5 Emails
+
+The server sends the tickets and the receipt by email (spec: "the app, not Stripe"): the event, the local time with its zone, each ticket's type and number, and the receipt for paid orders. The QR code itself is shown in the app, and from Phase 3A in Google and Apple Wallet.
+
+### 3.6 Server-side only (for awareness)
+
+- **Stock is exact under concurrency:** the ticket type's row is locked while counting held and issued tickets. A test proves two buyers can't both get the last ticket.
+- **The 10-minute hold** is released by a job that runs every minute (`events.expire_ticket_holds`) once Stripe agrees nothing was paid. A payment that arrives after its hold gets the tickets if they're still available, and is otherwise refunded automatically.
+- **Ledger:** the host's share (price minus the 8% ticket fee, snapshotted per order) is owed to the host and paid out after the event (Phase 4).
+- **Tax:** sales tax is now whole-cent arithmetic for art and tickets (`SALES_TAX_RATE_BPS`, default 8.25%).
+- **QR codes:** signed with Ed25519 (`TICKET_SIGNING_KEY`). In Phase 4, door scanners will check them offline with only the public key.
+- **Deploy:** migration `054_event_ticketing`, and Celery beat must be restarted to pick up the new job.
