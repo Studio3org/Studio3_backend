@@ -71,7 +71,7 @@ def check_resend_limit(email: str) -> bool:
 @_guard_redis
 def store_otp(email: str, otp: str) -> None:
     r = get_redis_client()
-    r.setex(_key_otp(email), OTP_TTL, otp)
+    r.set(_key_otp(email), otp, ex=OTP_TTL)
 
 
 def _matches(stored, otp: str) -> bool:

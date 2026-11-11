@@ -32,9 +32,6 @@ class FakeRedis:
         self.data[key] = value
         return True
 
-    def setex(self, key, ttl, value):
-        self.data[key] = value
-
     def incr(self, key):
         self.data[key] = int(self.data.get(key, 0)) + 1
         return self.data[key]

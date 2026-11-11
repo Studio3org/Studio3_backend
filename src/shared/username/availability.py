@@ -48,9 +48,8 @@ def _cache_set(result: AvailabilityResult) -> None:
     if result.reason == "invalid":
         return
     try:
-        get_redis_client().setex(
+        get_redis_client().set(
             f"{CACHE_KEY_PREFIX}{result.normalized}",
-            CACHE_TTL_SECONDS,
             json.dumps(
                 {
                     "available": result.available,
@@ -59,6 +58,7 @@ def _cache_set(result: AvailabilityResult) -> None:
                     "suggestions": result.suggestions,
                 }
             ),
+            ex=CACHE_TTL_SECONDS,
         )
     except Exception:
         pass

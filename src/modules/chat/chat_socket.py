@@ -40,7 +40,7 @@ def _authenticate() -> str | None:
 
 def _mark_online(user_id: str) -> None:
     try:
-        get_redis_client().setex(f"presence:{user_id}", PRESENCE_TTL_SECONDS, "1")
+        get_redis_client().set(f"presence:{user_id}", "1", ex=PRESENCE_TTL_SECONDS)
     except Exception:
         pass  # Presence is best-effort; never block the socket on Redis hiccups.
 
