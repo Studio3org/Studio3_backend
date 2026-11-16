@@ -10,6 +10,58 @@ Celery beat scheduler — with Postgres on RDS and Redis on ElastiCache.
 
 ---
 
+## Where production stands (16 Nov 2026)
+
+Read this first if you are coming back to the server rather than building it.
+
+| | |
+|---|---|
+| Deployed | `main` at `b0882ce`, on 16 Nov 2026 |
+| Database | Migrated to `061_auction_auto_checkout` |
+| Stripe | **Live** keys (`sk_live_`) |
+| Convelio | **Sandbox** key (`sk_test_`) while the team tests |
+| Convelio webhooks | Sandbox webhooks registered to `https://api.studio-3.co/api/webhooks/convelio` |
+
+**Live Stripe with sandbox Convelio means real money but no courier.** It is fine for team
+testing and not for real buyers:
+
+- Buying a piece or tickets only charges when someone finishes checkout.
+- **Auctions charge on their own.** When an auction closes, the winner's saved card is charged
+  off-session for the hammer price. With Convelio on, shipping, insurance and tax follow on
+  the same card automatically. To test auctions, bid on $1 pieces, or cancel the auction
+  before it closes.
+- Shipping paid with a sandbox key is real money, but the sandbox never sends a courier.
+  Refund any such order from the admin console.
+- With Convelio on, listing a piece for sale requires its packed size, weight and the artist's
+  pickup address.
+
+Before real buyers use the app, go through [Going live](#going-live).
+
+### Day-to-day deploys
+
+```bash
+git checkout main && git pull
+git status --short                 # must print nothing: deploy.sh uploads this folder, not a branch
+./deploy/deploy.sh
+```
+
+`deploy.sh` runs any new migrations as the API starts, then checks liveness and readiness.
+
+**If SSH times out, your home IP has changed.** Home broadband rotates it, and only the IPs on
+the security group can SSH in. Add the new one; don't widen the rule to `0.0.0.0/0`:
+
+```bash
+MYIP=$(curl -4 -s https://checkip.amazonaws.com)
+aws ec2 authorize-security-group-ingress --group-id sg-040550c52cf32a489 \
+  --ip-permissions "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=$MYIP/32,Description=home-$(date +%F)}]"
+```
+
+Also set `SSH_CIDR=$MYIP/32` in `deploy/config.env`. The security group is `studio3-ec2-sg`
+and the instance is `i-0b90d1b994bf222b2` at `23.23.29.249`. Old IPs pile up on the rule; remove
+them now and then with `aws ec2 revoke-security-group-ingress`.
+
+---
+
 ## Before you start
 
 You need an AWS account with billing enabled, and the repository checked out.
@@ -313,14 +365,73 @@ purchase end to end — checkout, webhook, buyer confirmation, payout.
 
 ---
 
+## 12. Convelio shipping
+
+Convelio quotes shipping at checkout, books the courier once the order is paid, and sends
+tracking back to us through webhooks.
+
+**Settings in `deploy/config.env`:**
+
+```ini
+CONVELIO_ENABLED=true
+CONVELIO_API_KEY='sk_test_...'     # the sandbox key now; sk_live_... at launch
+# CONVELIO_BASE_URL               leave unset: the key's prefix picks sandbox or production
+SHIPPING_QUOTE_VALID_HOURS=24
+SHIPPING_INSURANCE_DEFAULT=true
+ORDER_AUTO_COMPLETE_DAYS=7
+```
+
+Convelio is only on when `CONVELIO_ENABLED=true` **and** a key is set. With no key, checkout
+falls back to the flat shipping rate.
+
+**Register the webhooks, once for each key.** Run this from `Backend/Server`, with the same key
+loaded as the server uses. The first command only lists what's missing; `--apply` registers it:
+
+```bash
+.venv/bin/python scripts/register_convelio_webhooks.py https://api.studio-3.co
+.venv/bin/python scripts/register_convelio_webhooks.py https://api.studio-3.co --apply
+```
+
+It should end with "all five events are registered". The five events are
+`custom_quote_ready`, `quote_paid`, `order_created`, `shipment_status_changed` and
+`document_ready`. Sandbox and live webhooks are registered separately, so run it again after
+changing the key.
+
+Check: `curl -X POST https://api.studio-3.co/api/webhooks/convelio -d '{}'` should answer
+**401**, because an unsigned call is rejected.
+
+**Limits:** 100,000 Convelio calls a month across all endpoints. After that every call gets a
+429, including checkout quotes and bookings.
+
+---
+
 ## Going live
 
-Everything above is still Stripe **test** mode. Switching means:
+**Stripe** is already live since 16 Nov 2026. If it ever has to be set up again:
 
-1. `sk_live_` and `pk_live_` keys
-2. New webhook endpoints in live mode, with new signing secrets
-3. **Artists must onboard again** — test-mode connected accounts do not carry over
-4. Deciding `PLATFORM_COMMISSION_BPS` for real
+1. `sk_live_` and `pk_live_` keys.
+2. A live webhook endpoint at `https://api.studio-3.co/api/payments/webhook`, with these events:
+   `payment_intent.succeeded`, `payment_intent.payment_failed`, `charge.refunded`,
+   `charge.dispute.created`, `charge.dispute.closed`, `account.updated`, `transfer.created`,
+   `transfer.failed` and `transfer.reversed`. Its signing secret goes in
+   `STRIPE_WEBHOOK_SECRET`; a test-mode secret won't verify live events.
+3. Connect activated in live mode. **Artists must onboard again**, because test-mode connected
+   accounts don't carry over.
+4. `PLATFORM_COMMISSION_BPS` decided for real.
+
+**Convelio, still to do before real buyers:**
+
+1. Put the `sk_live_` key in `CONVELIO_API_KEY` in `deploy/config.env`, straight from the
+   password manager, and run `./deploy/deploy.sh`. It only works on
+   `https://api.convelio.com/v2`, which the code picks from the key.
+2. Register the live webhooks: the two commands in step 12, with the live key loaded.
+3. **Check how live webhooks are signed.** Convelio says production deliveries are signed with
+   "your live secret token". We asked whether that is the `sk_live_` API key or a separate
+   token, and are waiting on their answer. If it's the key, nothing changes. If it's separate,
+   the server needs one new setting (for example `CONVELIO_WEBHOOK_SECRET`) **before** going
+   live, or every live webhook is rejected with 401 and orders never move past paid.
+4. Still waiting on Convelio: instant prices and estimates for US routes, quote validity,
+   cancellations, coverage, transit times, and dimensions being swapped in their responses.
 
 ---
 
